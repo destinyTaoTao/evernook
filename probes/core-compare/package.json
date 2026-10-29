@@ -1,0 +1,20 @@
+{
+  "name": "@evernook/r0-core-comparison",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.11.0 <25" },
+  "scripts": {
+    "compare": "node src/compare.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-timeout=30000 test/*.test.ts"
+  },
+  "dependencies": {
+    "@memtensor/memos-local-plugin": "2.0.16-beta.1",
+    "@huggingface/transformers": "4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "5.9.3"
+  }
+}
