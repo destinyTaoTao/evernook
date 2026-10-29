@@ -1,0 +1,37 @@
+probes/dsh/src/display-barrier.ts
+  s_ad9a013bbcc220::t_3bc3437fcf66f7 1-34
+probes/dsh/src/run.ts
+  s_ad9a013bbcc220::t_6e8335994a41af 14,35,37
+probes/dsh/test/display.test.ts
+  s_ad9a013bbcc220::t_91361aa84cde87 1-11,13-14,16-26,28-33,36,38-44,68-69
+  s_ad9a013bbcc220::t_6fc039d9822611 12,15,45-67
+  s_ad9a013bbcc220::t_3bc3437fcf66f7 27,34-35,37
+probes/dsh/test/crash.test.ts
+  s_ad9a013bbcc220::t_6fc039d9822611 10,16,55-61
+probes/dsh/README.md
+  s_ad9a013bbcc220::t_6e8335994a41af 32-35
+docs/reports/r0-dsh-display-2026-10-29.md
+  s_ad9a013bbcc220::t_7bd7773839361b 25-28
+  s_ad9a013bbcc220::t_e3b8c95624cbe1 29-38
+  s_ad9a013bbcc220::t_6e8335994a41af 1-24
+probes/dsh/src/host.ts
+  s_ad9a013bbcc220::t_3bc3437fcf66f7 10,49-52,99-102
+probes/dsh/test/crash-worker.ts
+  s_ad9a013bbcc220::t_6fc039d9822611 6,20,28-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "703444859ea745447a917c3398ad08c623ec2d4f",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
