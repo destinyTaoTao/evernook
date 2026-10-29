@@ -1,0 +1,40 @@
+probes/credentials/test_vault.py
+  s_ad9a013bbcc220::t_7a32e68ed59540 6-8,21,45,68-69,71-91,105-110,112-139,182-183,185-214
+  s_ad9a013bbcc220::t_3638b0c159144b 1-5,15-20,22-23,35-44,46-67,215-218
+  s_ad9a013bbcc220::t_d3c6729cfe3fd5 9-11,92-104,140-142,144-181
+  s_ad9a013bbcc220::t_1dcd0c890ee977 12-14,24-34,70,111,143,184
+probes/credentials/requirements.txt
+  s_ad9a013bbcc220::t_a67880dddf0b90 1-187
+probes/credentials/run_probe.py
+  s_ad9a013bbcc220::t_1dcd0c890ee977 1-84
+probes/credentials/local_ui.py
+  s_ad9a013bbcc220::t_d3c6729cfe3fd5 1-35
+docs/reports/r0-credentials-2026-10-29.md
+  s_ad9a013bbcc220::t_bf567ffb5fdcf5 26,42-51
+  s_ad9a013bbcc220::t_6b71924af15d05 1-25,27-41,52-57
+probes/credentials/vault_probe.py
+  s_ad9a013bbcc220::t_d2b5fef194d400 1-217
+probes/credentials/crash_worker.py
+  s_ad9a013bbcc220::t_d3c6729cfe3fd5 1-17
+probes/credentials/requirements.in
+  s_ad9a013bbcc220::t_3638b0c159144b 1-2
+probes/credentials/README.md
+  s_ad9a013bbcc220::t_bf567ffb5fdcf5 23
+  s_ad9a013bbcc220::t_6b71924af15d05 1-22,24-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b441bc545adf97370748172d362b5f93d08d6f5a",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
