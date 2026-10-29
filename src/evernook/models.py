@@ -1,0 +1,65 @@
+"""Caller-visible values for the version 1 ordinary-text contract."""
+from dataclasses import dataclass, field
+
+
+class MemoryFailure(Exception):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class Access:
+    client_id: str
+    token: str = field(repr=False)
+    contract_version: int = 1
+
+
+@dataclass(frozen=True)
+class Source:
+    entry: str
+    session: str
+    branch: str
+    event: str
+
+
+@dataclass(frozen=True)
+class Event:
+    source: Source
+    role: str
+    sequence: int
+    occurred_at: str | None
+    completion: str
+    text: str = field(repr=False)
+    sensitive: bool = False
+    protected_source: bool = False
+
+
+@dataclass(frozen=True)
+class Receipt:
+    message_id: str
+    received_at: str
+    status: str
+    representation: str
+    original_saved: bool
+    content_version: int = 1
+
+
+@dataclass(frozen=True)
+class StoredMessage:
+    event: Event
+    receipt: Receipt
+
+
+@dataclass(frozen=True)
+class Page:
+    messages: tuple[StoredMessage, ...]
+    next_offset: int | None
+
+
+@dataclass(frozen=True)
+class RuntimeStatus:
+    messages: int
+    pending_jobs: int
+    backup_enabled: bool = False
+    vault_enabled: bool = False
