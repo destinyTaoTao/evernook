@@ -10,7 +10,7 @@ import tempfile
 from typing import cast
 import unittest
 
-from evernook import Access, Change, DerivedContext, Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Access, Capture, Change, DerivedContext, Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
 
 
 class BoundaryTests(unittest.TestCase):
@@ -35,6 +35,9 @@ class BoundaryTests(unittest.TestCase):
             lambda access: self.runtime.review_archive(access, "id"),
             lambda access: self.runtime.publish_context(access, DerivedContext("result", "id", 1, "synthetic")),
             lambda access: self.runtime.read_context(access, "result"),
+            lambda access: self.runtime.submit_capture(access, Capture(self.event, "message")),
+            lambda access: self.runtime.read_capture(access, "id"),
+            lambda access: self.runtime.read_attachment(access, "id", "attachment"),
         ]
         for access, error in [(replace(self.access, token="wrong"), "unauthorized"),
                               (replace(self.access, client_id="wrong"), "unauthorized"),

@@ -9,7 +9,7 @@ import sys
 from typing import Any
 from unittest.mock import patch
 
-from evernook import Access, Change, Event, ImportantMark, MemoryRuntime, Source
+from evernook import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryRuntime, Source
 
 
 def main() -> None:
@@ -19,6 +19,11 @@ def main() -> None:
     runtime = MemoryRuntime(config)
     event = Event(Source("test", "crash-session", "main", "1"), "assistant", 1,
                   None, "partial", "合成中断片段\r\n🙂e\u0301")
+    if sys.argv[2] == "bounded_oversize":
+        captured = runtime.submit_capture(access, Capture(Event(Source("test", "crash-session", "main", "large"),
+            "user", 2, None, "complete", "x" * 1048577), "message"))
+        print(json.dumps({"gaps": captured.gaps, "original_saved": captured.message.original_saved}), flush=True)
+        return
     real_connect = sqlite3.connect
 
     def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
@@ -31,6 +36,18 @@ def main() -> None:
         connection.set_trace_callback(before_commit)
         return connection
 
+    if sys.argv[2].startswith("capture_"):
+        input_receipt = runtime.submit(access, Event(Source("test", "crash-session", "main", "input"),
+            "user", 0, None, "complete", "synthetic tool request"))
+        capture = Capture(event, "tool_call", input_receipt.message_id, "synthetic-tool",
+            (AttachmentInput("a1", "synthetic.txt", "text/plain", (b"synthetic", b" attachment")),))
+        if sys.argv[2] == "capture_before_commit":
+            with patch("sqlite3.connect", connect):
+                runtime.submit_capture(access, capture)
+            raise AssertionError("kill point not reached")
+        capture_receipt = runtime.submit_capture(access, capture)
+        print(json.dumps({"message_id": capture_receipt.message.message_id}), flush=True)
+        os._exit(87)
     if sys.argv[2].startswith("change_"):
         target = runtime.submit(access, event)
         evidence = runtime.submit(access, Event(Source("test", "crash-session", "main", "evidence"),

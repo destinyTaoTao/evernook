@@ -8,7 +8,7 @@ _SIGNALS = re.compile(
     r"|\bbearer\s+\S+"
     r"|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----"
     r"|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|AKIA[A-Z0-9]{16})\b"
-    r"|[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@",
+    r"|[a-z][a-z0-9+.-]{0,31}://[^\s/@:]+:[^\s/@]+@",
     re.IGNORECASE,
 )
 

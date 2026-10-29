@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from .models import (
-    Access, ArchiveView, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
+    Access, ArchiveView, AttachmentInfo, AttachmentInput, Capture, CaptureReceipt, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
     Receipt, RuntimeStatus, Source, StoredMessage,
 )
@@ -126,7 +126,7 @@ class MemoryRuntime:
             raise MemoryFailure("idempotency_material_unavailable")
         with self._connection() as db:
             version = int(db.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise MemoryFailure("unsupported_storage_version")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""BEGIN IMMEDIATE;
@@ -148,7 +148,12 @@ class MemoryRuntime:
                 CREATE TABLE IF NOT EXISTS source_context (
                   id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES messages(id), source_version INTEGER NOT NULL,
                   fingerprint BLOB NOT NULL, context TEXT NOT NULL, receipt TEXT NOT NULL);
-                PRAGMA user_version=3;
+                CREATE TABLE IF NOT EXISTS captures (
+                  message_id TEXT PRIMARY KEY REFERENCES messages(id), input_id TEXT REFERENCES messages(id), manifest TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS attachments (
+                  message_id TEXT NOT NULL REFERENCES captures(message_id), attachment_id TEXT NOT NULL,
+                  content BLOB NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(message_id,attachment_id));
+                PRAGMA user_version=4;
                 COMMIT;""")
 
     def _authorize(self, access: Access) -> None:
@@ -167,7 +172,7 @@ class MemoryRuntime:
 
     def handshake(self, access: Access) -> dict[str, object]:
         self._authorize(access)
-        return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "storage_version": 3,
+        return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
                 "archive_review": self._archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
@@ -192,21 +197,26 @@ class MemoryRuntime:
         self._validate_event(event)
         if event.source.entry != self._entry:
             raise MemoryFailure("unauthorized_source")
-        source = _json(asdict(event.source))
         fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
         retained = replace(event, text="[PROTECTED:ORIGINAL_NOT_SAVED]") if event.sensitive or event.protected_source or credential_signal(event.text) else event
-        projected = retained is not event
-        receipt = Receipt(str(uuid4()), datetime.now(timezone.utc).isoformat(), "projection_only" if projected else "committed", "projection" if projected else "original", not projected)
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT fingerprint, receipt FROM messages WHERE source=?", (source,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("source_conflict")
-                return Receipt(**json.loads(existing["receipt"]))
-            db.execute("INSERT INTO messages VALUES (?,?,?,?,?,?,?)", (receipt.message_id, source, fingerprint, _json(asdict(retained)), _json(asdict(receipt)), _time(event.occurred_at) if event.occurred_at is not None else None, receipt.received_at))
-            db.execute("INSERT INTO jobs VALUES (?,?)", (receipt.message_id, "pending"))
+            receipt = self._persist_event(db, event, retained, fingerprint)
             db.execute("COMMIT")
+        return receipt
+
+    @staticmethod
+    def _persist_event(db: sqlite3.Connection, event: Event, retained: Event, fingerprint: bytes) -> Receipt:
+        source = _json(asdict(event.source))
+        existing = db.execute("SELECT fingerprint, receipt FROM messages WHERE source=?", (source,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("source_conflict")
+            return Receipt(**json.loads(existing["receipt"]))
+        projected = retained is not event
+        receipt = Receipt(str(uuid4()), datetime.now(timezone.utc).isoformat(), "projection_only" if projected else "committed", "projection" if projected else "original", not projected)
+        db.execute("INSERT INTO messages VALUES (?,?,?,?,?,?,?)", (receipt.message_id, source, fingerprint, _json(asdict(retained)), _json(asdict(receipt)), _time(event.occurred_at) if event.occurred_at is not None else None, receipt.received_at))
+        db.execute("INSERT INTO jobs VALUES (?,?)", (receipt.message_id, "pending"))
         return receipt
 
     def _validate_event(self, event: Event) -> None:
@@ -439,3 +449,188 @@ class MemoryRuntime:
             row = db.execute("""SELECT c.context FROM source_context c LEFT JOIN visibility v ON v.message_id=c.source_id
                 WHERE c.id=? AND COALESCE(v.status,'active')='active' AND c.source_version=COALESCE(v.version,1)""", (result_id,)).fetchone()
             return DerivedContext(**json.loads(row["context"])) if row is not None else None
+
+    @staticmethod
+    def _capture_receipt(encoded: str) -> CaptureReceipt:
+        value = json.loads(encoded)
+        value["message"] = Receipt(**value["message"])
+        value["attachments"] = tuple(AttachmentInfo(**item) for item in value["attachments"])
+        value["gaps"] = tuple(value["gaps"])
+        return CaptureReceipt(**value)
+
+    def submit_capture(self, access: Access, capture: Capture) -> CaptureReceipt:
+        self._authorize(access)
+        if not isinstance(capture, Capture):
+            raise MemoryFailure("invalid_capture")
+        event = capture.event
+        stream_fingerprint: str | None = None
+        stream_oversize = False
+        if capture.text_chunks is not None:
+            if (not isinstance(event, Event) or event.text or not isinstance(capture.text_chunks, tuple)
+                    or len(capture.text_chunks) > 4096 or any(not isinstance(chunk, str) for chunk in capture.text_chunks)):
+                raise MemoryFailure("invalid_capture")
+            self._validate_event(event)
+            stream_oversize = sum(len(chunk) for chunk in capture.text_chunks) > 1048576
+            keyed_stream = hmac.new(self._fingerprint_key, digestmod=hashlib.sha256)
+            for chunk in capture.text_chunks:
+                keyed_stream.update(chunk.encode("utf-8", errors="surrogatepass"))
+            stream_fingerprint = keyed_stream.hexdigest()
+            event = replace(event, text="" if stream_oversize else "".join(capture.text_chunks),
+                            protected_source=event.protected_source or event.completion != "complete")
+        body_gap: str | None = "size_limit" if stream_oversize else None
+        try:
+            self._validate_event(event)
+        except MemoryFailure as error:
+            if error.code not in {"message_too_large", "invalid_encoding"}:
+                raise
+            self._validate_event(replace(event, text=""))
+            body_gap = "size_limit" if error.code == "message_too_large" else "invalid_encoding"
+        if event.source.entry != self._entry:
+            raise MemoryFailure("unauthorized_source")
+        if not isinstance(capture.kind, str) or capture.kind not in {"message", "tool_call", "tool_result"} or type(capture.provided) is not bool or not isinstance(capture.attachments, tuple) or len(capture.attachments) > 16:
+            raise MemoryFailure("invalid_capture")
+        if not capture.provided:
+            if event.text:
+                raise MemoryFailure("invalid_capture")
+            body_gap = "entry_not_provided"
+        if capture.input_id is not None:
+            _identifier(capture.input_id)
+        if capture.tool_name is not None:
+            _identifier(capture.tool_name)
+        if capture.kind != "message" and (capture.input_id is None or capture.tool_name is None):
+            raise MemoryFailure("invalid_capture")
+        descriptors: list[dict[str, object]] = []
+        infos: list[AttachmentInfo] = []
+        objects: list[tuple[str, bytes, str]] = []
+        protected = event.sensitive or event.protected_source or credential_signal(event.text)
+        attachment_ids: set[str] = set()
+        for attachment in capture.attachments:
+            if not isinstance(attachment, AttachmentInput):
+                raise MemoryFailure("invalid_attachment")
+            _identifier(attachment.attachment_id)
+            _identifier(attachment.label)
+            _identifier(attachment.media_type)
+            if attachment.attachment_id in attachment_ids:
+                raise MemoryFailure("duplicate_attachment")
+            attachment_ids.add(attachment.attachment_id)
+            if (type(attachment.complete) is not bool or type(attachment.protected) is not bool
+                    or (attachment.expected_size is not None and (type(attachment.expected_size) is not int or attachment.expected_size < 0))
+                    or (attachment.expected_sha256 is not None and (not isinstance(attachment.expected_sha256, str)
+                        or len(attachment.expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in attachment.expected_sha256)))
+                    or (attachment.chunks is not None and (not isinstance(attachment.chunks, tuple)
+                        or any(not isinstance(chunk, bytes) for chunk in attachment.chunks)))):
+                raise MemoryFailure("invalid_attachment")
+            chunks = attachment.chunks or ()
+            size = sum(len(chunk) for chunk in chunks)
+            keyed = hmac.new(self._fingerprint_key, digestmod=hashlib.sha256)
+            for byte_chunk in chunks:
+                keyed.update(byte_chunk)
+            descriptors.append({"id": attachment.attachment_id, "label": attachment.label,
+                "media_type": attachment.media_type, "fingerprint": keyed.hexdigest(), "provided": attachment.chunks is not None,
+                "expected_size": attachment.expected_size, "expected_sha256": attachment.expected_sha256,
+                "complete": attachment.complete, "protected": attachment.protected})
+            gap: str | None = None
+            if protected or attachment.protected:
+                gap = "protected_original_not_saved"
+            elif attachment.chunks is None:
+                gap = "entry_not_provided"
+            elif not attachment.complete:
+                gap = "incomplete_attachment"
+            elif size > 1048576:
+                gap = "size_limit"
+            elif attachment.media_type not in {"text/plain", "text/markdown", "application/json"}:
+                gap = "unsupported_format"
+            data = b"" if gap else b"".join(chunks)
+            if gap is None:
+                try:
+                    text = data.decode("utf-8", errors="strict")
+                    if credential_signal(text):
+                        gap = "protected_original_not_saved"
+                except UnicodeError:
+                    gap = "invalid_encoding"
+            digest = hashlib.sha256(data).hexdigest() if gap is None else None
+            if gap is None and ((attachment.expected_size is not None and attachment.expected_size != size)
+                    or (attachment.expected_sha256 is not None and attachment.expected_sha256 != digest)):
+                gap, digest = "integrity_mismatch", None
+            infos.append(AttachmentInfo(attachment.attachment_id, attachment.label, attachment.media_type,
+                                        size if attachment.chunks is not None else None, digest, gap is None, gap))
+            if gap is not None:
+                continue
+            assert digest is not None
+            objects.append((attachment.attachment_id, data, digest))
+        fingerprint = hmac.digest(self._fingerprint_key, _json({"event": asdict(event), "kind": capture.kind,
+            "input_id": capture.input_id, "tool_name": capture.tool_name, "provided": capture.provided,
+            "stream_fingerprint": stream_fingerprint, "attachments": descriptors}).encode("utf-8", errors="surrogatepass"), hashlib.sha256)
+        retained = replace(event, text="[PROTECTED:ORIGINAL_NOT_SAVED]") if protected else event
+        if body_gap is not None:
+            retained = replace(event, text=f"[CAPTURE_GAP:{body_gap}]")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if capture.input_id is not None:
+                self._state(db, capture.input_id)
+            receipt = self._persist_event(db, event, retained, fingerprint)
+            existing = db.execute("SELECT manifest FROM captures WHERE message_id=?", (receipt.message_id,)).fetchone()
+            if existing is not None:
+                return self._check_capture(db, self._capture_receipt(existing["manifest"]))
+            gaps = tuple(f"attachment:{info.attachment_id}:{info.gap}" for info in infos if info.gap is not None)
+            if protected:
+                gaps += ("protected_original_not_saved",)
+            if body_gap is not None:
+                gaps += (body_gap,)
+            if event.completion != "complete":
+                gaps += ("incomplete_output",)
+            result = CaptureReceipt(receipt, capture.kind, capture.input_id, capture.tool_name, tuple(infos), gaps, not gaps)
+            db.execute("INSERT INTO captures VALUES (?,?,?)", (receipt.message_id, capture.input_id, _json(asdict(result))))
+            for attachment_id, data, digest in objects:
+                db.execute("INSERT INTO attachments VALUES (?,?,?,?)", (receipt.message_id, attachment_id, data, digest))
+            db.execute("COMMIT")
+        return result
+
+    def read_capture(self, access: Access, message_id: str) -> CaptureReceipt | None:
+        self._authorize(access)
+        _identifier(message_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            row = db.execute(f"""SELECT c.manifest FROM captures c JOIN messages ON messages.id=c.message_id
+                WHERE c.message_id=? AND {_RECALLABLE}""", (message_id,)).fetchone()
+            if row is None:
+                return None
+            receipt = self._capture_receipt(row["manifest"])
+            return self._check_capture(db, receipt)
+
+    def _check_capture(self, db: sqlite3.Connection, receipt: CaptureReceipt) -> CaptureReceipt:
+        infos: list[AttachmentInfo] = []
+        gaps = list(receipt.gaps)
+        for info in receipt.attachments:
+            if info.saved:
+                try:
+                    self._attachment_data(db, receipt.message.message_id, info)
+                except MemoryFailure as error:
+                    info = replace(info, saved=False, gap=error.code)
+                    gaps.append(f"attachment:{info.attachment_id}:{error.code}")
+            infos.append(info)
+        return replace(receipt, attachments=tuple(infos), gaps=tuple(gaps), complete=not gaps)
+
+    @staticmethod
+    def _attachment_data(db: sqlite3.Connection, message_id: str, info: AttachmentInfo) -> bytes:
+        row = db.execute("SELECT content,sha256 FROM attachments WHERE message_id=? AND attachment_id=?", (message_id, info.attachment_id)).fetchone()
+        if row is None:
+            raise MemoryFailure("attachment_missing")
+        data = bytes(row["content"])
+        if len(data) != info.size or row["sha256"] != info.sha256 or hashlib.sha256(data).hexdigest() != info.sha256:
+            raise MemoryFailure("attachment_corrupt")
+        return data
+
+    def read_attachment(self, access: Access, message_id: str, attachment_id: str) -> bytes | None:
+        self._authorize(access)
+        _identifier(message_id)
+        _identifier(attachment_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            row = db.execute(f"""SELECT c.manifest FROM captures c JOIN messages ON messages.id=c.message_id
+                WHERE c.message_id=? AND {_RECALLABLE}""", (message_id,)).fetchone()
+            if row is None:
+                return None
+            receipt = self._capture_receipt(row["manifest"])
+            info = next((item for item in receipt.attachments if item.attachment_id == attachment_id), None)
+            return self._attachment_data(db, message_id, info) if info is not None and info.saved else None

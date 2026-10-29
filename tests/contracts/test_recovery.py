@@ -115,6 +115,42 @@ class RecoveryTests(unittest.TestCase):
                 request = Change("synthetic-change", receipt.message_id, 1, "suppress", evidence.receipt.message_id, "synthetic suppression")
                 self.assertEqual(runtime.change(self.access, request), state)
 
+    def test_capture_process_exit_rolls_back_or_recovers_manifest_message_and_attachment_together(self) -> None:
+        worker = Path(__file__).with_name("crash_worker.py")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+        before = subprocess.run([sys.executable, str(worker), str(self.config), "capture_before_commit"],
+                                capture_output=True, text=True, timeout=20, env=environment)
+        self.assertEqual(before.returncode, 86, before.stderr)
+        reopened = MemoryRuntime(self.config)
+        self.assertIsNone(reopened.read_source(self.access, self.event.source))
+        self.assertEqual(reopened.status(self.access).messages, 1)
+        self.assertEqual(reopened.status(self.access).pending_jobs, 1)
+        after = subprocess.run([sys.executable, str(worker), str(self.config), "capture_after_receipt"],
+                               capture_output=True, text=True, timeout=20, env=environment)
+        self.assertEqual(after.returncode, 87, after.stderr)
+        message_id = json.loads(after.stdout)["message_id"]
+        recovered = MemoryRuntime(self.config)
+        captured = recovered.read_capture(self.access, message_id)
+        assert captured is not None
+        self.assertEqual(captured.gaps, ("incomplete_output",))
+        self.assertFalse(captured.complete)
+        self.assertEqual(recovered.read_attachment(self.access, message_id, "a1"), b"synthetic attachment")
+        message = recovered.read(self.access, message_id)
+        assert message is not None
+        self.assertEqual(message.event, self.event)
+        self.assertEqual(recovered.status(self.access).messages, 2)
+        self.assertEqual(recovered.status(self.access).pending_jobs, 2)
+
+    def test_oversize_capture_worker_reports_gap_without_pathological_detection_scan(self) -> None:
+        worker = Path(__file__).with_name("crash_worker.py")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+        result = subprocess.run([sys.executable, str(worker), str(self.config), "bounded_oversize"],
+                                capture_output=True, text=True, timeout=20, env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(result.stdout)
+        self.assertIn("size_limit", receipt["gaps"])
+        self.assertFalse(receipt["original_saved"])
+
 
 if __name__ == "__main__":
     unittest.main()

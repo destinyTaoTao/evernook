@@ -1,6 +1,6 @@
 # T06 显式重要交代
 
-对应 [#7](https://github.com/destinyTaoTao/evernook/issues/7)。沿用 [本地 Python 接口及身份边界](python-text-v1.md)；不依赖抽取、向量、后台消费者或保险库。T06 握手新增 `important=true`，初始存储为 v2；当前 [T07](changes-v1.md) 升至 v3，外部契约仍为 1。启动在一个事务中兼容补齐旧表，原始消息、回执和任务不重写；拒绝未知存储版本。
+对应 [#7](https://github.com/destinyTaoTao/evernook/issues/7)。沿用 [本地 Python 接口及身份边界](python-text-v1.md)；不依赖抽取、向量、后台消费者或保险库。T06 握手新增 `important=true`，初始存储为 v2；当前 [T08](capture-v1.md) 升至 v4，外部契约仍为 1。启动在一个事务中兼容补齐旧表，原始消息、回执和任务不重写；拒绝未知存储版本。
 
 ## 标记与回取
 

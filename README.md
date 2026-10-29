@@ -6,7 +6,7 @@ Local-first, evidence-backed long-term memory for AI companions.
 
 EverNook 面向个人桌宠与 AI 陪伴场景：保存多年对话，逐字回取重要交代，在多轮交流中保持上下文，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 
-> **当前状态：R1 普通文本底座已有本地 Python 实现，尚无生产记忆服务。** [调用与边界](docs/contracts/python-text-v1.md)覆盖受认证的保存/回取、敏感投影与故障恢复；[采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
+> **当前状态：R1 本地 Python 底座已支持普通原文、重要交代、更正/抑制及工具/文本附件采集，尚无生产记忆服务。** [调用与边界](docs/contracts/python-text-v1.md)列出安装、认证和保存语义，[工具与附件](docs/contracts/capture-v1.md)明确支持格式及未保存缺口；R0 [采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
 
 ## 我们希望做到什么
 

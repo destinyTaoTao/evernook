@@ -152,3 +152,48 @@ class ContextReceipt:
     source_id: str
     source_version: int
     committed_at: str
+
+
+@dataclass(frozen=True)
+class AttachmentInput:
+    attachment_id: str
+    label: str
+    media_type: str
+    chunks: tuple[bytes, ...] | None = field(repr=False)
+    expected_size: int | None = None
+    expected_sha256: str | None = None
+    complete: bool = True
+    protected: bool = False
+
+
+@dataclass(frozen=True)
+class Capture:
+    event: Event
+    kind: str
+    input_id: str | None = None
+    tool_name: str | None = None
+    attachments: tuple[AttachmentInput, ...] = ()
+    provided: bool = True
+    text_chunks: tuple[str, ...] | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
+class AttachmentInfo:
+    attachment_id: str
+    label: str
+    media_type: str
+    size: int | None
+    sha256: str | None
+    saved: bool
+    gap: str | None
+
+
+@dataclass(frozen=True)
+class CaptureReceipt:
+    message: Receipt
+    kind: str
+    input_id: str | None
+    tool_name: str | None
+    attachments: tuple[AttachmentInfo, ...]
+    gaps: tuple[str, ...]
+    complete: bool
