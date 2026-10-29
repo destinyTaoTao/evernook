@@ -1,0 +1,49 @@
+tests/contracts/test_recovery.py
+  s_ad9a013bbcc220::t_29cb3ed3b34e1a 14,76-95
+  s_ad9a013bbcc220::t_ec2af339d181ea 96
+src/evernook/models.py
+  s_ad9a013bbcc220::t_cbf7a20984b7dd 66
+  s_ad9a013bbcc220::t_92ccf24167e567 67-99
+tests/contracts/test_important.py
+  s_ad9a013bbcc220::t_02b5d3844c3df4 23-27
+  s_ad9a013bbcc220::t_566ad64c035575 40-58,70
+  s_ad9a013bbcc220::t_c47ab1020cbbcc 1-3,8-10,12-22,28-39,138-140
+  s_ad9a013bbcc220::t_478598fe144a80 71-121,123-129,131-137
+  s_ad9a013bbcc220::t_3ea729ded917df 5,122,130
+  s_ad9a013bbcc220::t_518c05a253069e 4,6-7,11,59-69
+tests/contracts/test_boundary.py
+  s_ad9a013bbcc220::t_478598fe144a80 13,31-32
+src/evernook/__init__.py
+  s_ad9a013bbcc220::t_92ccf24167e567 2,5
+tests/contracts/crash_worker.py
+  s_ad9a013bbcc220::t_29cb3ed3b34e1a 12,34-43
+src/evernook/runtime.py
+  s_ad9a013bbcc220::t_92ccf24167e567 17,114,123-126,247-281,284-285,288-292,295
+  s_ad9a013bbcc220::t_cbf7a20984b7dd 245-246
+  s_ad9a013bbcc220::t_ab3ce871ebd54b 282-283,286-287,293-294,296-300
+  s_ad9a013bbcc220::t_275c416465010e 145-146
+docs/contracts/important-v1.md
+  s_ad9a013bbcc220::t_961cd0f327dcf8 1-34
+docs/contracts/python-text-v1.md
+  s_ad9a013bbcc220::t_961cd0f327dcf8 25
+docs/reports/r1-important-2026-10-29.md
+  s_ad9a013bbcc220::t_771833e4e0ec6d 21,25
+  s_ad9a013bbcc220::t_961cd0f327dcf8 1-14,16-20,22-24
+  s_ad9a013bbcc220::t_26f3ad0089f6fd 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03721b403674da303f9bacc0f601c1027b62877d",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
