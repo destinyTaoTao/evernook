@@ -1,0 +1,71 @@
+docs/contracts/mcp-v1.md
+  s_ad9a013bbcc220::t_dc7e8747dacda1 1-51,54-70
+  s_ad9a013bbcc220::t_5dc94e72d2c250 52-53
+src/evernook/runtime.py
+  s_ad9a013bbcc220::t_a7520f93939e0e 146,268-273,275-276
+  s_ad9a013bbcc220::t_6832055c7114b3 6,11,15,75-114,122-145,147-157,165-172,205,244,249-252,255,260,263,265,295,297,496-497,561,587
+  s_ad9a013bbcc220::t_bfafc66cb277f9 115-121,158-164,274
+  s_ad9a013bbcc220::t_ff3736b71f9938 277
+docs/contracts/changes-v1.md
+  s_ad9a013bbcc220::t_dc7e8747dacda1 34
+src/evernook/paths.py
+  s_ad9a013bbcc220::t_a7520f93939e0e 51,83-87
+CONTRIBUTING.md
+  s_ad9a013bbcc220::t_f21aa208e28edd 12
+pyproject.toml
+  s_ad9a013bbcc220::t_ea5f738ad8e163 8,14
+  s_ad9a013bbcc220::t_54168ccbe190a6 15
+src/evernook/__init__.py
+  s_ad9a013bbcc220::t_6832055c7114b3 8,14
+tests/contracts/test_pairing.py
+  s_ad9a013bbcc220::t_d7fd2aa04f0be7 6,10,69-90
+  s_ad9a013bbcc220::t_6b1ef4bbf29f1c 59-61
+  s_ad9a013bbcc220::t_18b91a3c3d8717 1-5,7-9,11-58,62-68,91,109-111
+  s_ad9a013bbcc220::t_1213e3b6545114 92-108
+tests/contracts/contract_assertions.py
+  s_ad9a013bbcc220::t_e37b51ddfce5bf 1-18
+docs/contracts/python-text-v1.md
+  s_ad9a013bbcc220::t_dc7e8747dacda1 3,27
+  s_ad9a013bbcc220::t_f21aa208e28edd 25
+docs/reports/r1-mcp-2026-10-29.md
+  s_ad9a013bbcc220::t_f21aa208e28edd 1-21,23,26-29,31-33
+  s_ad9a013bbcc220::t_d48318a4bef00c 22,24-25,34
+  s_ad9a013bbcc220::t_5dc94e72d2c250 30
+tests/contracts/test_mcp.py
+  s_ad9a013bbcc220::t_e97e2ad1d52c85 83-84
+  s_ad9a013bbcc220::t_56bb2fbeda85f4 250
+  s_ad9a013bbcc220::t_0d8df68f38fc1a 4-5,12,15,134,169-209
+  s_ad9a013bbcc220::t_2d2ed30a0059b6 6,220-249,251-252
+  s_ad9a013bbcc220::t_afbf8ee3af80b9 211-219,253
+  s_ad9a013bbcc220::t_7e7049b047d5f5 19,94-120
+  s_ad9a013bbcc220::t_e37b51ddfce5bf 20,49
+  s_ad9a013bbcc220::t_8b3eb0bf944296 1-3,7,9-10,13-14,16,18,21-48,50-82,85-93,210,254-256
+  s_ad9a013bbcc220::t_81952a6afd2815 8,11,17,121-133,135-168
+src/evernook/mcp_server.py
+  s_ad9a013bbcc220::t_a7520f93939e0e 130
+  s_ad9a013bbcc220::t_e4bf387730403c 5-6,21,37-68,88,91,101-102,106-108
+  s_ad9a013bbcc220::t_56bb2fbeda85f4 8,10,132-145
+  s_ad9a013bbcc220::t_e97e2ad1d52c85 71-87,89-90,96,104
+  s_ad9a013bbcc220::t_8e974bef561732 1-4,7,9,11-19,22-34,69-70,93-94,98-100,103,105,109-119,121-129,131,148-165
+  s_ad9a013bbcc220::t_85ef064270aa90 20,35-36,92,95,97,120,146-147
+tests/contracts/test_text.py
+  s_ad9a013bbcc220::t_e37b51ddfce5bf 4,10,97
+README.md
+  s_ad9a013bbcc220::t_7ff61d33b9b64e 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f836573c5eed1d2dcf44bc0d1e4d699440494581",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
