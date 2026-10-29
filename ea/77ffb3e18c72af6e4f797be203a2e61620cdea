@@ -1,0 +1,58 @@
+tests/contracts/test_changes.py
+  s_ad9a013bbcc220::t_69e7d9d23c3e5c 166-184,216
+  s_ad9a013bbcc220::t_a4b25131021aa3 8,136-157
+  s_ad9a013bbcc220::t_598d2a730d39b7 107-110
+  s_ad9a013bbcc220::t_17e2e87eed9cd4 4,46-61
+  s_ad9a013bbcc220::t_d7d71c365d5f25 5-6,62-106,111-129
+  s_ad9a013bbcc220::t_055a32cc01568f 7,11-12,185-215
+  s_ad9a013bbcc220::t_6f5459dabb2e19 14,130-135,158-164
+  s_ad9a013bbcc220::t_00e8ff15797a19 1-3,9-10,13,15-45,165,217-219
+src/evernook/runtime.py
+  s_ad9a013bbcc220::t_e2268942e9129d 287-288,317-319,322-323
+  s_ad9a013bbcc220::t_e98c15add68ee2 26-28,73,76-77,83,106-111,113,129,141-147,151,170-171,240,250,261-262,333-371,375-394,396-397
+  s_ad9a013bbcc220::t_db8a6340d5aa45 373-374
+  s_ad9a013bbcc220::t_f4745e20680a34 148-150,398-401,404-441
+  s_ad9a013bbcc220::t_00b169ebc3ef4a 17-21,372,395,402-403
+tests/contracts/crash_worker.py
+  s_ad9a013bbcc220::t_a4b25131021aa3 12,34-45
+docs/contracts/python-text-v1.md
+  s_ad9a013bbcc220::t_c2563b6faae5ea 25,33
+src/evernook/__init__.py
+  s_ad9a013bbcc220::t_00b169ebc3ef4a 2-6,9-13
+tests/contracts/test_important.py
+  s_ad9a013bbcc220::t_f4745e20680a34 123
+  s_ad9a013bbcc220::t_e2268942e9129d 26,124-125
+docs/contracts/changes-v1.md
+  s_ad9a013bbcc220::t_c2563b6faae5ea 1-23,25-42
+  s_ad9a013bbcc220::t_4c4f6729fb2227 24
+src/evernook/models.py
+  s_ad9a013bbcc220::t_f4745e20680a34 138-154
+  s_ad9a013bbcc220::t_e98c15add68ee2 100-137
+tests/contracts/test_recovery.py
+  s_ad9a013bbcc220::t_a4b25131021aa3 14,97-116
+  s_ad9a013bbcc220::t_e81930129541ce 117
+tests/contracts/test_boundary.py
+  s_ad9a013bbcc220::t_69e7d9d23c3e5c 13,33-37
+docs/contracts/important-v1.md
+  s_ad9a013bbcc220::t_c2563b6faae5ea 3,34
+docs/reports/r1-changes-2026-10-29.md
+  s_ad9a013bbcc220::t_00b169ebc3ef4a 1-14,16-20,22-24
+  s_ad9a013bbcc220::t_9e559139709c0f 15
+  s_ad9a013bbcc220::t_4c4f6729fb2227 21,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea77ffb3e18c72af6e4f797be203a2e61620cdea",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
