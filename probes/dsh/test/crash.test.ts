@@ -7,12 +7,13 @@ import test from 'node:test';
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { Evidence, openProbe } from '../src/host.ts';
+import { readPersistedChunks } from '../src/display-barrier.ts';
 
 class NeverCalledAdapter extends LlmAdapter {
   async *stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { throw new Error('recovery must not call a model'); }
 }
 
-for (const stage of ['host-flushed', 'sink-committed', 'partial-stream']) {
+for (const stage of ['host-flushed', 'sink-committed', 'partial-stream', 'displayed-durable']) {
   test(`forced process exit at ${stage}: recover confirmed input and expose lost stream range`, async () => {
     const root = await mkdtemp(join(process.env.EVERNOOK_PROBE_RUN_ROOT ?? tmpdir(), 'evernook-crash-'));
     console.log(`Synthetic crash evidence: ${root}`);
@@ -51,6 +52,13 @@ for (const stage of ['host-flushed', 'sink-committed', 'partial-stream']) {
       await probe.rescan(SessionId('synthetic-crash'), recovered);
       assert.match(recovered.context(), /合成崩溃输入：37 元，原文🙂/);
       assert.doesNotMatch(JSON.stringify(recovered.events('synthetic-crash')), /未完成合成片段/);
+      if (stage === 'displayed-durable') {
+        const chunks = readPersistedChunks(root, 'synthetic-crash');
+        assert.deepEqual(chunks.map(record => record.ordinal), [0, 1]);
+        assert.equal(new Set(chunks.map(record => record.attempt)).size, 1);
+        assert.deepEqual(chunks[1].chunk, { type: 'text-delta', index: 0, text: '未完成合成片段：部分流。' });
+        assert.equal(chunks.filter(record => record.chunk.type === 'finish').length, 0);
+      }
       assert.doesNotMatch(JSON.stringify(recovered.events('synthetic-crash')), /"type":"turn\/end"/);
       // The open turn and absent assistant record are the explicit recovery gap.
       assert.match(JSON.stringify(recovered.events('synthetic-crash')), /"type":"turn\/start"/);

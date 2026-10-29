@@ -11,7 +11,7 @@ if (flag !== '--output' || !output || extra.length) throw new Error('Usage: npm 
 assertExternalPath(output);
 mkdirSync(output); // Never overwrite earlier evidence runs.
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
-const command = ['--test', '--test-timeout=30000', '--test-reporter=spec', 'test/host.test.ts', 'test/crash.test.ts'];
+const command = ['--test', '--test-timeout=30000', '--test-reporter=spec', 'test/host.test.ts', 'test/crash.test.ts', 'test/display.test.ts'];
 const startedAt = new Date().toISOString();
 const result = spawnSync(process.execPath, command, {
   cwd: packageRoot, env: { ...process.env, EVERNOOK_PROBE_RUN_ROOT: output, NO_COLOR: '1' },
@@ -32,9 +32,9 @@ const manifest = {
   host: 'real Cordis/dsh core composition; desktop/CLI default profiles not exercised',
   packages,
   command: [process.execPath, ...command],
-  sha256: Object.fromEntries(['package-lock.json', 'src/host.ts', 'test/host.test.ts', 'test/crash.test.ts', 'test/crash-worker.ts'].map(path => [path, hash(path)])),
+  sha256: Object.fromEntries(['package-lock.json', 'src/host.ts', 'src/display-barrier.ts', 'test/host.test.ts', 'test/crash.test.ts', 'test/crash-worker.ts', 'test/display.test.ts'].map(path => [path, hash(path)])),
   exitCode: result.status, signal: result.signal, error: result.error?.message,
-  limitations: ['Synthetic data only', 'Process kill is not a power-loss test', 'File references do not archive attachment bytes in the sink', 'No production memory service or GUI acceptance'],
+  limitations: ['Synthetic data only', 'Process kill is not a power-loss test', 'File references do not archive attachment bytes in the sink', 'No production memory service or GUI acceptance', 'Stream barrier tested at native live-publication event, not installed desktop pixels or arbitrary other plugin order'],
 };
 writeFileSync(join(output, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 process.stdout.write(result.stdout);
