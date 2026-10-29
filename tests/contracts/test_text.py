@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from dataclasses import replace
+from dataclasses import asdict, replace
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import unittest
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize
+from contract_assertions import assert_original_roundtrip
 
 
 class TextContractTests(unittest.TestCase):
@@ -93,6 +94,7 @@ class TextContractTests(unittest.TestCase):
             self.assertIsNotNone(stored)
             assert stored is not None
             self.assertEqual(stored.event, event)
+            assert_original_roundtrip(self, event, asdict(receipt), asdict(stored))
             self.assertEqual(reopened.read_source(access, event.source), stored)
             self.assertEqual(reopened.list_messages(access, since="2021-02-03T02:20:30Z", until="2021-02-03T02:20:31Z").messages, (stored,))
             self.assertEqual(reopened.submit(access, event), receipt)

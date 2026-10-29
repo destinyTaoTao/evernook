@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
 from pathlib import Path
 import secrets
 import sqlite3
+import tempfile
 from typing import Any
 from uuid import uuid4
 
@@ -70,6 +72,104 @@ def _identifier(value: str) -> None:
         raise MemoryFailure("sensitive_metadata")
 
 
+@dataclass(frozen=True)
+class _Identity:
+    client_id: str
+    entry: str
+    token: str = field(repr=False)
+    archive_review: bool = False
+
+
+def _identities(value: dict[str, Any]) -> dict[str, _Identity]:
+    version = value.get("schema_version")
+    if type(version) is not int or version not in (1, 2, 3):
+        raise MemoryFailure("invalid_credentials")
+    if version == 3:
+        if set(value) != {"schema_version", "clients"} or not isinstance(value["clients"], list) or not value["clients"]:
+            raise MemoryFailure("invalid_credentials")
+        rows = value["clients"]
+    else:
+        fields = {"schema_version", "client_id", "entry", "token"}
+        if version == 2:
+            fields.add("archive_review")
+        if set(value) != fields:
+            raise MemoryFailure("invalid_credentials")
+        rows = [{"client_id": value["client_id"], "entry": value["entry"], "token": value["token"],
+                 "archive_review": value.get("archive_review", False)}]
+    result: dict[str, _Identity] = {}
+    entries: set[str] = set()
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {"client_id", "entry", "token", "archive_review"}
+                or any(not isinstance(row[key], str) for key in ("client_id", "entry", "token"))
+                or type(row["archive_review"]) is not bool or len(row["token"]) < 40):
+            raise MemoryFailure("invalid_credentials")
+        _identifier(row["client_id"])
+        _identifier(row["entry"])
+        if row["client_id"] in result or row["entry"] in entries:
+            raise MemoryFailure("invalid_credentials")
+        result[row["client_id"]] = _Identity(**row)
+        entries.add(row["entry"])
+    return result
+
+
+def _access_record(value: dict[str, Any]) -> Access:
+    if (set(value) != {"client_id", "token", "contract_version"} or not isinstance(value["client_id"], str)
+            or not isinstance(value["token"], str) or type(value["contract_version"]) is not int):
+        raise MemoryFailure("invalid_access")
+    return Access(**value)
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".pair-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(_json(value))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except OSError:
+        raise MemoryFailure("client_provision_failed") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: Path) -> Access:
+    """Trusted local provisioning only. This operation is never exposed as an MCP tool."""
+    _identifier(client_id)
+    _identifier(entry)
+    runtime = MemoryRuntime(config_path)
+    access_path = external(access_path)
+    if access_path.parent != runtime.root or not access_path.name.startswith("mcp-access") or access_path.suffix != ".json":
+        raise MemoryFailure("invalid_access_location")
+    verify_private_directory(runtime.root, extra_files=(access_path,))
+    with runtime._connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        identities = _identities(_load(runtime.root / "client.json"))
+        identity = identities.get(client_id)
+        if identity is not None and identity.entry != entry:
+            raise MemoryFailure("client_conflict")
+        if any(other.entry == entry and other.client_id != client_id for other in identities.values()):
+            raise MemoryFailure("client_conflict")
+        if identity is None:
+            identity = _Identity(client_id, entry, secrets.token_urlsafe(32))
+        access = Access(client_id, identity.token)
+        if access_path.exists():
+            try:
+                existing_access = _access_record(_load(access_path))
+            except MemoryFailure:
+                raise MemoryFailure("access_file_conflict") from None
+            if existing_access != access:
+                raise MemoryFailure("access_file_conflict")
+        identities[client_id] = identity
+        _atomic_json(runtime.root / "client.json", {"schema_version": 3, "clients": [asdict(row) for row in identities.values()]})
+        if not access_path.exists():
+            _atomic_json(access_path, asdict(access))
+        db.execute("COMMIT")
+    return access
+
+
 def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: bool = False) -> tuple[Path, Access]:
     _identifier(client_id)
     _identifier(entry)
@@ -102,22 +202,7 @@ class MemoryRuntime:
             if external(self.root / name).parent != self.root:
                 raise MemoryFailure("unsafe_runtime_path")
         verify_private_directory(self.root)
-        credentials = _load(self.root / "client.json")
-        if type(credentials.get("schema_version")) is not int or credentials["schema_version"] not in (1, 2):
-            raise MemoryFailure("invalid_credentials")
-        fields = {"schema_version", "client_id", "entry", "token"}
-        if credentials["schema_version"] == 2:
-            fields.add("archive_review")
-        if set(credentials) != fields or type(credentials.get("archive_review", False)) is not bool:
-            raise MemoryFailure("invalid_credentials")
-        self._archive_review: bool = credentials.get("archive_review", False)
-        if any(not isinstance(credentials[key], str) for key in ["client_id", "entry", "token"]) or len(credentials["token"]) < 40:
-            raise MemoryFailure("invalid_credentials")
-        self._client_id: str = credentials["client_id"]
-        self._entry: str = credentials["entry"]
-        self._token: str = credentials["token"]
-        _identifier(self._client_id)
-        _identifier(self._entry)
+        _identities(_load(self.root / "client.json"))
         try:
             self._fingerprint_key = (self.root / "idempotency.key").read_bytes()
         except OSError:
@@ -156,25 +241,39 @@ class MemoryRuntime:
                 PRAGMA user_version=4;
                 COMMIT;""")
 
-    def _authorize(self, access: Access) -> None:
+    def _authorize(self, access: Access) -> _Identity:
         if not isinstance(access, Access):
             raise MemoryFailure("unauthorized")
         if type(access.contract_version) is not int or access.contract_version != 1:
             raise MemoryFailure("incompatible_contract")
-        if access.client_id != self._client_id or not isinstance(access.token, str):
+        if not isinstance(access.client_id, str) or not isinstance(access.token, str):
+            raise MemoryFailure("unauthorized")
+        identity = _identities(_load(self.root / "client.json")).get(access.client_id)
+        if identity is None:
             raise MemoryFailure("unauthorized")
         try:
-            matches = hmac.compare_digest(access.token.encode(), self._token.encode())
+            matches = hmac.compare_digest(access.token.encode(), identity.token.encode())
         except UnicodeError:
             matches = False
         if not matches:
             raise MemoryFailure("unauthorized")
+        return identity
 
     def handshake(self, access: Access) -> dict[str, object]:
-        self._authorize(access)
+        identity = self._authorize(access)
         return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
-                "archive_review": self._archive_review,
+                "archive_review": identity.archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
+
+    def access_from_file(self, access_path: Path) -> Access:
+        """Trusted local launcher bootstrap; never register this method as a model-facing tool."""
+        access_path = external(access_path)
+        if access_path.parent != self.root:
+            raise MemoryFailure("invalid_access_location")
+        verify_private_directory(self.root, extra_files=(access_path,))
+        access = _access_record(_load(access_path))
+        self._authorize(access)
+        return access
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -193,9 +292,9 @@ class MemoryRuntime:
                 connection.close()
 
     def submit(self, access: Access, event: Event) -> Receipt:
-        self._authorize(access)
+        identity = self._authorize(access)
         self._validate_event(event)
-        if event.source.entry != self._entry:
+        if event.source.entry != identity.entry:
             raise MemoryFailure("unauthorized_source")
         fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
         retained = replace(event, text="[PROTECTED:ORIGINAL_NOT_SAVED]") if event.sensitive or event.protected_source or credential_signal(event.text) else event
@@ -394,8 +493,8 @@ class MemoryRuntime:
         return state
 
     def review_archive(self, access: Access, message_id: str) -> ArchiveView:
-        self._authorize(access)
-        if not self._archive_review:
+        identity = self._authorize(access)
+        if not identity.archive_review:
             raise MemoryFailure("archive_forbidden")
         _identifier(message_id)
         with self._connection() as db:
@@ -459,7 +558,7 @@ class MemoryRuntime:
         return CaptureReceipt(**value)
 
     def submit_capture(self, access: Access, capture: Capture) -> CaptureReceipt:
-        self._authorize(access)
+        identity = self._authorize(access)
         if not isinstance(capture, Capture):
             raise MemoryFailure("invalid_capture")
         event = capture.event
@@ -485,7 +584,7 @@ class MemoryRuntime:
                 raise
             self._validate_event(replace(event, text=""))
             body_gap = "size_limit" if error.code == "message_too_large" else "invalid_encoding"
-        if event.source.entry != self._entry:
+        if event.source.entry != identity.entry:
             raise MemoryFailure("unauthorized_source")
         if not isinstance(capture.kind, str) or capture.kind not in {"message", "tool_call", "tool_result"} or type(capture.provided) is not bool or not isinstance(capture.attachments, tuple) or len(capture.attachments) > 16:
             raise MemoryFailure("invalid_capture")

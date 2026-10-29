@@ -48,7 +48,7 @@ def provision_private_directory(root: Path) -> None:
         raise MemoryFailure("runtime_permissions_unavailable") from None
 
 
-def verify_private_directory(root: Path) -> None:
+def verify_private_directory(root: Path, *, extra_files: tuple[Path, ...] = ()) -> None:
     """Check effective file grants before loading secrets; never silently repair existing ACLs."""
     directory = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
     if not ctypes.windll.kernel32.GetSystemDirectoryW(directory, len(directory)):
@@ -80,6 +80,11 @@ def verify_private_directory(root: Path) -> None:
         } catch { exit 1 }
     """
     paths = [root] + [root / name for name in ("runtime.json", "client.json", "idempotency.key", "memory.sqlite3", "memory.sqlite3-wal", "memory.sqlite3-shm")]
+    for path in extra_files:
+        resolved = external(path)
+        if resolved.parent != root:
+            raise MemoryFailure("unsafe_runtime_path")
+        paths.append(resolved)
     try:
         result = subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
                                 input=json.dumps([str(path) for path in paths]), encoding="utf-8",

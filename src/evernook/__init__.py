@@ -5,11 +5,11 @@ from .models import (
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
     Receipt, RuntimeStatus, Source, StoredMessage,
 )
-from .runtime import MemoryRuntime, initialize
+from .runtime import MemoryRuntime, initialize, pair_client
 
 __all__ = [
     "Access", "ArchiveView", "Change", "ChangeRecord", "ContextReceipt", "DerivedContext",
     "AttachmentInfo", "AttachmentInput", "Capture", "CaptureReceipt",
     "Event", "ImportantItem", "ImportantMark", "ImportantPage", "MemoryFailure", "MemoryRuntime",
-    "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize",
+    "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize", "pair_client",
 ]

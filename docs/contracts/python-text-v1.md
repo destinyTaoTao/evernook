@@ -1,6 +1,6 @@
 # T05 本地 Python 文本边界
 
-对应 [#6](https://github.com/destinyTaoTao/evernook/issues/6)，遵循 [R1 基线](r1-memory-v1.md)。实现是模块内调用契约；尚无 HTTP/MCP 服务、调用端配对 UI 或 dsh 生产适配。仅支持 Windows、本机固定 NTFS，Python `3.14.x`；当前实测 `3.14.4`。运行时无第三方依赖。
+对应 [#6](https://github.com/destinyTaoTao/evernook/issues/6)，遵循 [R1 基线](r1-memory-v1.md)。核心是模块内调用契约；T11 增加可选 [stdio MCP 适配](mcp-v1.md)，尚无 HTTP 服务、配对 UI 或 dsh 生产适配。仅支持 Windows、本机固定 NTFS，Python `3.14.x`；当前实测 `3.14.4`。核心运行时无第三方依赖。
 
 ## 安装与调用
 
@@ -22,9 +22,9 @@ saved = MemoryRuntime(config).read(access, receipt.message_id)
 assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲🙂e\u0301乙"
 ```
 
-初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。每次启动用系统 Windows PowerShell 的 .NET ACL 接口核验目录和运行文件没有其他身份授权；失败拒绝启动，不自动修改已有目录权限。`runtime.json` 严格 schema v1，`client.json` 新建为 v2、兼容旧 v1；未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=4`，兼容升级旧 v1–v3，见[工具与附件](capture-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
+初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。每次启动用系统 Windows PowerShell 的 .NET ACL 接口核验目录和运行文件没有其他身份授权；失败拒绝启动，不自动修改已有目录权限。`runtime.json` 严格 schema v1，`client.json` 新建单身份为 v2，配对为 v3、兼容旧 v1/v2；未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=4`，兼容升级旧 v1–v3，见[工具与附件](capture-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
 
-重启时，受信任的本机宿主从目录内 `client.json` 装载 `client_id`、`token` 创建 `Access`，不得记录文件内容。当前每个数据目录只支持一个受信任调用端身份和一个绑定的 `entry`；所有操作都要求 token 和 `contract_version=1`。同用户进程可读取授权文件，本边界不隔离已经控制该 Windows 账户的进程，也不提供身份分发服务。未来传输适配器必须复用入口检查。
+重启时，受信任的本机宿主从私有访问文件装载 `client_id`、`token` 创建 `Access`，不得记录文件内容。T11 的 `pair_client` 可显式登记多个身份及其唯一绑定 `entry`，普通记忆共用同一账本；身份文件兼容 v1/v2，配对时写入 v3 清单。所有普通操作都要求 token 和 `contract_version=1`，每次重新核验登记。`access_from_file` 是可信本机启动操作，不是远程工具。同用户进程可读取授权文件，本边界不隔离已经控制该 Windows 账户的进程。传输适配器复用入口检查，不能通过工具参数授予权限。
 
 ## 保存、读取与失败
 

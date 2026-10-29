@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "evernook"
 version = "0.1.0"
-description = "Local evidence ledger; initial ordinary-text contract"
+description = "Local evidence ledger with an optional authenticated MCP adapter"
 requires-python = ">=3.14,<3.15"
 license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["mypy==1.18.2"]
+dev = ["mypy==1.18.2", "mcp==2.3.0"]
+mcp = ["mcp==2.3.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
