@@ -1,0 +1,77 @@
+probes/core-compare/prepare_models.py
+  s_ad9a013bbcc220::t_c1442541daaa5c 43-44
+  s_ad9a013bbcc220::t_a2e0b3458a604f 1-42,45-80
+probes/core-compare/src/minimal.ts
+  s_ad9a013bbcc220::t_739d12282a5d83 1-44,78-84
+  s_ad9a013bbcc220::t_4ce0bd7abc499b 45-49,51-63,68-77
+  s_ad9a013bbcc220::t_9e7cd684d86f12 50,64-67
+probes/core-compare/package.json
+  s_ad9a013bbcc220::t_a169a1bf2a7860 1-7,9-20
+  s_ad9a013bbcc220::t_296de31ef66970 8
+probes/core-compare/test/minimal.test.ts
+  s_ad9a013bbcc220::t_9346ed204c545a 1-18,22
+  s_ad9a013bbcc220::t_45f4b37efe94c3 23-36
+  s_ad9a013bbcc220::t_a58ba1629010d3 19-21
+probes/core-compare/src/memos.ts
+  s_ad9a013bbcc220::t_537419b75ba911 1-29
+probes/core-compare/src/bridge.ts
+  s_ad9a013bbcc220::t_3cb46d3056bad6 1-15
+probes/core-compare/bridge_probe.py
+  s_ad9a013bbcc220::t_3cb46d3056bad6 1-60
+probes/core-compare/test/memos.test.ts
+  s_ad9a013bbcc220::t_24da0b0cf0bad9 1-20
+probes/core-compare/src/dataset.ts
+  s_ad9a013bbcc220::t_5c6e9d9741fad3 1-44,46-50
+  s_ad9a013bbcc220::t_c1442541daaa5c 45
+probes/core-compare/summarize.py
+  s_ad9a013bbcc220::t_888c4ba2fe0da2 1-53
+docs/adr/0003-r0-evidence-ledger-and-retrieval-reuse.md
+  s_ad9a013bbcc220::t_cad78f387e90b4 1-9
+docs/reports/r0-core-2026-10-29.md
+  s_ad9a013bbcc220::t_4ef7952ac8f467 67-76
+  s_ad9a013bbcc220::t_c7ceed5017c351 1-66
+probes/core-compare/src/compare.ts
+  s_ad9a013bbcc220::t_296de31ef66970 74,78
+  s_ad9a013bbcc220::t_a58ba1629010d3 96,187
+  s_ad9a013bbcc220::t_ed0a8d0d52afa2 9,137,142,146,157,182
+  s_ad9a013bbcc220::t_0cedf596ab0045 32-34,135,138-139
+  s_ad9a013bbcc220::t_3cb46d3056bad6 71,143-145,147-155,158-159
+  s_ad9a013bbcc220::t_c1442541daaa5c 1-8,10-24,26-31,35-70,72-73,75-77,79-89,106-121,134,136,140-141,156,160-181,183-186,188-191
+  s_ad9a013bbcc220::t_9e7cd684d86f12 25,90-95,97-105,122-133
+probes/core-compare/tsconfig.json
+  s_ad9a013bbcc220::t_a169a1bf2a7860 1-12
+probes/core-compare/README.md
+  s_ad9a013bbcc220::t_c7ceed5017c351 1-40
+probes/core-compare/test/offline.test.ts
+  s_ad9a013bbcc220::t_5c6e9d9741fad3 1-14
+probes/core-compare/src/offline.ts
+  s_ad9a013bbcc220::t_4ce0bd7abc499b 1-20
+README.md
+  s_34466fe64c801d::t_4f5ac58926f029 9
+probes/core-compare/package-lock.json
+  s_ad9a013bbcc220::t_7feaeaa1f26543 1-2062
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6fdd01ab4acd9dc83b406fc415cf2d619f3ab8c7",
+  "prompts": {},
+  "sessions": {
+    "s_34466fe64c801d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18690-99a4-7521-b192-084202dd37eb",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    },
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
