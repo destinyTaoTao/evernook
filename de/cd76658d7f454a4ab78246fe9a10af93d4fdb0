@@ -1,0 +1,37 @@
+.gitattributes
+  s_34466fe64c801d::t_2fcf158210979b 1-6
+.gitignore
+  s_34466fe64c801d::t_d0890641dc3a2b 1-50
+AGENTS.md
+  s_34466fe64c801d::t_66b96a6fc85d9d 1-13
+CONTRIBUTING.md
+  s_34466fe64c801d::t_256111c29d9e2f 1-12
+LICENSE
+  s_34466fe64c801d::t_63bdb421ad2dae 1-21
+README.md
+  s_34466fe64c801d::t_ae336c9ed4bcdf 1-64
+docs/architecture.md
+  s_34466fe64c801d::t_42a3725abb119d 1-105
+docs/requirements.md
+  s_34466fe64c801d::t_993683e0ee9a62 1-59
+docs/research.md
+  s_34466fe64c801d::t_e5660159c695a7 1-55
+docs/roadmap.md
+  s_34466fe64c801d::t_fd44562616fb46 1-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "decd76658d7f454a4ab78246fe9a10af93d4fdb0",
+  "prompts": {},
+  "sessions": {
+    "s_34466fe64c801d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18690-99a4-7521-b192-084202dd37eb",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
