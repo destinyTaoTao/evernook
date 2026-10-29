@@ -22,7 +22,7 @@ saved = MemoryRuntime(config).read(access, receipt.message_id)
 assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲🙂e\u0301乙"
 ```
 
-初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。每次启动用系统 Windows PowerShell 的 .NET ACL 接口核验目录和运行文件没有其他身份授权；失败拒绝启动，不自动修改已有目录权限。`runtime.json` 和 `client.json` 分别使用严格 schema v1，未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=2`，由 T06 兼容升级 T05 的 v1，见[重要交代契约](important-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
+初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。每次启动用系统 Windows PowerShell 的 .NET ACL 接口核验目录和运行文件没有其他身份授权；失败拒绝启动，不自动修改已有目录权限。`runtime.json` 严格 schema v1，`client.json` 新建为 v2、兼容旧 v1；未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=3`，兼容升级 T05/T06 的 v1/v2，见[更正与不再召回](changes-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
 
 重启时，受信任的本机宿主从目录内 `client.json` 装载 `client_id`、`token` 创建 `Access`，不得记录文件内容。当前每个数据目录只支持一个受信任调用端身份和一个绑定的 `entry`；所有操作都要求 token 和 `contract_version=1`。同用户进程可读取授权文件，本边界不隔离已经控制该 Windows 账户的进程，也不提供身份分发服务。未来传输适配器必须复用入口检查。
 
@@ -30,6 +30,7 @@ assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲�
 
 - `submit(access, event)`：来源四元组为幂等键，整个请求内容（含角色、时间、序号和安全标记）核对一致才返回原回执；同键改变完成状态也会冲突。流片段/最终消息须分配独立源事件，不能用覆盖更新模拟原件。
 - `read`、`read_source` 返回 `StoredMessage | None`，包含原始事件和稳定回执；`list_messages(since, until, limit, offset)` 返回 `Page`。时间范围为源事件时刻 `[since, until)`，缺失源时间的消息只进入未限定时间的列表。原时间字符串与偏移保持不变，接收时间为 UTC。
+- T07 后，普通读接口过滤被更正/撤销/抑制目标；`state` 查询当前状态，获单独授权的 `review_archive` 才读取旧原件与变更记录。保存回执描述历史提交，不意味着目标当前允许召回。
 - 列表按源时间、入口/会话/分支、源序号、消息 ID 排序；未知时间排在前面。`limit` 为 1–1000，超出通过 `next_offset` 继续。offset 是当前视图分页，并发新增可能移动位置；需要固定导出快照的调用端须等待后续导出契约，不能把本分页当快照。
 - 普通成功为 `committed / original / original_saved=true`；SQLite WAL + `synchronous=FULL`，原文与一个待处理任务在同一短事务中提交后才返回。任务目前仅为账本中的待处理记录，没有运行消费者、模型或外部操作。
 - 保留 Unicode code point、不做归一化；严格 UTF-8，单条文本最大 1 MiB UTF-8 字节。显式保存源时间未知和 `partial/complete/canceled/failed`。不补造完整流、不自动拼接重试。

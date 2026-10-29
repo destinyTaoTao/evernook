@@ -11,7 +11,7 @@ from typing import Any
 import unittest
 from unittest.mock import patch
 
-from evernook import Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Change, Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
 
 
 class RecoveryTests(unittest.TestCase):
@@ -93,6 +93,27 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(runtime.mark_important(self.access, mark), page.item)
                 self.assertEqual(runtime.status(self.access).important_items, 1)
             self.assertEqual(runtime.status(self.access).pending_jobs, 1)
+
+    def test_change_process_exit_rolls_back_or_preserves_visibility_and_idempotent_receipt_together(self) -> None:
+        worker = Path(__file__).with_name("crash_worker.py")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+        for mode, code in [("change_before_commit", 86), ("change_after_receipt", 87)]:
+            result = subprocess.run([sys.executable, str(worker), str(self.config), mode],
+                                    capture_output=True, text=True, timeout=20, env=environment)
+            self.assertEqual(result.returncode, code, result.stderr)
+            runtime = MemoryRuntime(self.config)
+            receipt = runtime.submit(self.access, self.event)
+            state = runtime.state(self.access, receipt.message_id)
+            if mode == "change_before_commit":
+                self.assertEqual((state.version, state.status), (1, "active"))
+                self.assertIsNotNone(runtime.read(self.access, receipt.message_id))
+            else:
+                self.assertEqual((state.version, state.status), (2, "suppressed"))
+                self.assertIsNone(runtime.read(self.access, receipt.message_id))
+                evidence = runtime.read_source(self.access, Source("test", "crash-session", "main", "evidence"))
+                assert evidence is not None
+                request = Change("synthetic-change", receipt.message_id, 1, "suppress", evidence.receipt.message_id, "synthetic suppression")
+                self.assertEqual(runtime.change(self.access, request), state)
 
 
 if __name__ == "__main__":

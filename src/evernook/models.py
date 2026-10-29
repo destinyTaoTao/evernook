@@ -97,3 +97,58 @@ class ImportantPage:
     end: int
     remaining: int
     next_cursor: int | None
+
+
+@dataclass(frozen=True)
+class Change:
+    request_id: str
+    target_id: str
+    expected_version: int
+    action: str
+    evidence_id: str
+    reason: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class MessageState:
+    message_id: str
+    version: int
+    status: str
+    replacement_id: str | None = None
+    change_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ChangeRecord:
+    request: Change
+    state: MessageState
+    recorded_at: str
+
+    @property
+    def reason(self) -> str:
+        return self.request.reason
+
+
+@dataclass(frozen=True)
+class ArchiveView:
+    message: StoredMessage
+    state: MessageState
+    changes: tuple[ChangeRecord, ...]
+    archive_only: bool = True
+
+
+@dataclass(frozen=True)
+class DerivedContext:
+    result_id: str
+    source_id: str
+    source_version: int
+    text: str = field(repr=False)
+    protected: bool = False
+
+
+@dataclass(frozen=True)
+class ContextReceipt:
+    result_id: str
+    source_id: str
+    source_version: int
+    committed_at: str

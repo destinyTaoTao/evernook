@@ -14,9 +14,16 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from .models import Access, Event, ImportantItem, ImportantMark, ImportantPage, MemoryFailure, Page, Receipt, RuntimeStatus, Source, StoredMessage
+from .models import (
+    Access, ArchiveView, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
+    ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
+    Receipt, RuntimeStatus, Source, StoredMessage,
+)
 from .paths import external, provision_private_directory, verify_private_directory
 from .safety import credential_signal
+
+
+_RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
 
 
 def _json(value: object) -> str:
@@ -63,15 +70,17 @@ def _identifier(value: str) -> None:
         raise MemoryFailure("sensitive_metadata")
 
 
-def initialize(root: Path, *, client_id: str, entry: str) -> tuple[Path, Access]:
+def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: bool = False) -> tuple[Path, Access]:
     _identifier(client_id)
     _identifier(entry)
+    if type(allow_archive_review) is not bool:
+        raise MemoryFailure("invalid_permissions")
     root = external(root)
     provision_private_directory(root)
     access = Access(client_id, secrets.token_urlsafe(32))
     config_path = root / "runtime.json"
     config_path.write_text(_json({"schema_version": 1, "data_dir": str(root), "busy_timeout_ms": 5000}), encoding="utf-8")
-    (root / "client.json").write_text(_json({"schema_version": 1, "client_id": client_id, "entry": entry, "token": access.token}), encoding="utf-8")
+    (root / "client.json").write_text(_json({"schema_version": 2, "client_id": client_id, "entry": entry, "token": access.token, "archive_review": allow_archive_review}), encoding="utf-8")
     (root / "idempotency.key").write_bytes(secrets.token_bytes(32))
     MemoryRuntime(config_path)
     return config_path, access
@@ -94,8 +103,14 @@ class MemoryRuntime:
                 raise MemoryFailure("unsafe_runtime_path")
         verify_private_directory(self.root)
         credentials = _load(self.root / "client.json")
-        if set(credentials) != {"schema_version", "client_id", "entry", "token"} or type(credentials["schema_version"]) is not int or credentials["schema_version"] != 1:
+        if type(credentials.get("schema_version")) is not int or credentials["schema_version"] not in (1, 2):
             raise MemoryFailure("invalid_credentials")
+        fields = {"schema_version", "client_id", "entry", "token"}
+        if credentials["schema_version"] == 2:
+            fields.add("archive_review")
+        if set(credentials) != fields or type(credentials.get("archive_review", False)) is not bool:
+            raise MemoryFailure("invalid_credentials")
+        self._archive_review: bool = credentials.get("archive_review", False)
         if any(not isinstance(credentials[key], str) for key in ["client_id", "entry", "token"]) or len(credentials["token"]) < 40:
             raise MemoryFailure("invalid_credentials")
         self._client_id: str = credentials["client_id"]
@@ -111,7 +126,7 @@ class MemoryRuntime:
             raise MemoryFailure("idempotency_material_unavailable")
         with self._connection() as db:
             version = int(db.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise MemoryFailure("unsupported_storage_version")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""BEGIN IMMEDIATE;
@@ -123,7 +138,17 @@ class MemoryRuntime:
                 CREATE TABLE IF NOT EXISTS important (
                   id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages(id),
                   identity TEXT UNIQUE NOT NULL, item TEXT NOT NULL);
-                PRAGMA user_version=2;
+                CREATE TABLE IF NOT EXISTS changes (
+                  request_id TEXT PRIMARY KEY, target_id TEXT NOT NULL REFERENCES messages(id),
+                  evidence_id TEXT NOT NULL REFERENCES messages(id), fingerprint BLOB NOT NULL,
+                  request TEXT NOT NULL, receipt TEXT NOT NULL, recorded_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS visibility (
+                  message_id TEXT PRIMARY KEY REFERENCES messages(id), version INTEGER NOT NULL, status TEXT NOT NULL,
+                  replacement_id TEXT REFERENCES messages(id), change_id TEXT NOT NULL REFERENCES changes(request_id));
+                CREATE TABLE IF NOT EXISTS source_context (
+                  id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES messages(id), source_version INTEGER NOT NULL,
+                  fingerprint BLOB NOT NULL, context TEXT NOT NULL, receipt TEXT NOT NULL);
+                PRAGMA user_version=3;
                 COMMIT;""")
 
     def _authorize(self, access: Access) -> None:
@@ -142,7 +167,8 @@ class MemoryRuntime:
 
     def handshake(self, access: Access) -> dict[str, object]:
         self._authorize(access)
-        return {"contract_version": 1, "ordinary_text": True, "important": True, "storage_version": 2,
+        return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "storage_version": 3,
+                "archive_review": self._archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
     @contextmanager
@@ -211,7 +237,7 @@ class MemoryRuntime:
         self._authorize(access)
         _identifier(message_id)
         with self._connection() as db:
-            row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
+            row = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message_id,)).fetchone()
             return self._stored(row) if row is not None else None
 
     def read_source(self, access: Access, source: Source) -> StoredMessage | None:
@@ -221,7 +247,7 @@ class MemoryRuntime:
         for value in asdict(source).values():
             _identifier(value)
         with self._connection() as db:
-            row = db.execute("SELECT event,receipt FROM messages WHERE source=?", (_json(asdict(source)),)).fetchone()
+            row = db.execute(f"SELECT event,receipt FROM messages WHERE source=? AND {_RECALLABLE}", (_json(asdict(source)),)).fetchone()
             return self._stored(row) if row is not None else None
 
     def list_messages(self, access: Access, *, since: str | None = None, until: str | None = None, limit: int = 100, offset: int = 0) -> Page:
@@ -232,8 +258,8 @@ class MemoryRuntime:
         if start is not None and end is not None and start >= end:
             raise MemoryFailure("invalid_time_range")
         with self._connection() as db:
-            rows = db.execute("""SELECT event,receipt FROM messages
-                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?)
+            rows = db.execute(f"""SELECT event,receipt FROM messages
+                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
                 ORDER BY occurred, json_extract(event,'$.source.entry'), json_extract(event,'$.source.session'),
                          json_extract(event,'$.source.branch'), json_extract(event,'$.sequence'), id
                 LIMIT ? OFFSET ?""", (start, start, end, end, limit + 1, offset)).fetchall()
@@ -258,6 +284,8 @@ class MemoryRuntime:
             row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (mark.message_id,)).fetchone()
             if row is None:
                 raise MemoryFailure("message_not_found")
+            if self._state(db, mark.message_id).status != "active":
+                raise MemoryFailure("not_recallable")
             message = self._stored(row)
             if mark.representation != message.receipt.representation:
                 raise MemoryFailure("representation_mismatch")
@@ -286,9 +314,13 @@ class MemoryRuntime:
         if type(limit) is not int or not 1 <= limit <= 4096 or (cursor is not None and type(cursor) is not int):
             raise MemoryFailure("invalid_page")
         with self._connection() as db:
-            row = db.execute("SELECT important.item, messages.event FROM important JOIN messages ON messages.id=important.message_id WHERE important.id=?", (important_id,)).fetchone()
+            row = db.execute("""SELECT important.item, messages.event, COALESCE(v.status,'active') AS status
+                FROM important JOIN messages ON messages.id=important.message_id
+                LEFT JOIN visibility v ON v.message_id=messages.id WHERE important.id=?""", (important_id,)).fetchone()
             if row is None:
                 raise MemoryFailure("important_not_found")
+            if row["status"] != "active":
+                raise MemoryFailure("not_recallable")
             item = ImportantItem(**json.loads(row["item"]))
             if type(content_version) is not int or content_version != item.content_version:
                 raise MemoryFailure("version_mismatch")
@@ -298,3 +330,112 @@ class MemoryRuntime:
                 raise MemoryFailure("invalid_cursor")
             end = min(start + limit, item.end)
             return ImportantPage(item, text[start:end], start, end, item.end - end, end if end < item.end else None)
+
+    @staticmethod
+    def _state(db: sqlite3.Connection, message_id: str) -> MessageState:
+        row = db.execute("""SELECT messages.id, COALESCE(v.version,1) AS version,
+            COALESCE(v.status,'active') AS status, v.replacement_id, v.change_id
+            FROM messages LEFT JOIN visibility v ON v.message_id=messages.id WHERE messages.id=?""", (message_id,)).fetchone()
+        if row is None:
+            raise MemoryFailure("message_not_found")
+        return MessageState(str(row["id"]), int(row["version"]), str(row["status"]), row["replacement_id"], row["change_id"])
+
+    def state(self, access: Access, message_id: str) -> MessageState:
+        self._authorize(access)
+        _identifier(message_id)
+        with self._connection() as db:
+            return self._state(db, message_id)
+
+    def change(self, access: Access, request: Change) -> MessageState:
+        self._authorize(access)
+        if not isinstance(request, Change) or type(request.expected_version) is not int or request.expected_version < 1:
+            raise MemoryFailure("invalid_change")
+        for value in [request.request_id, request.target_id, request.evidence_id, request.reason]:
+            _identifier(value)
+        if not request.reason.strip() or not isinstance(request.action, str) or request.action not in {"correct", "revoke", "suppress"}:
+            raise MemoryFailure("invalid_change")
+        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT fingerprint,receipt FROM changes WHERE request_id=?", (request.request_id,)).fetchone()
+            if existing is not None:
+                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                    raise MemoryFailure("change_conflict")
+                return MessageState(**json.loads(existing["receipt"]))
+            current = self._state(db, request.target_id)
+            if current.version != request.expected_version:
+                raise MemoryFailure("version_conflict")
+            evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
+            if evidence_row is None or request.evidence_id == request.target_id:
+                raise MemoryFailure("insufficient_evidence")
+            evidence = self._stored(evidence_row)
+            if (evidence.event.role != "user" or evidence.event.completion != "complete"
+                    or not evidence.event.text.strip() or not evidence.receipt.original_saved
+                    or self._state(db, request.evidence_id).status != "active"):
+                raise MemoryFailure("insufficient_evidence")
+            state = MessageState(current.message_id, current.version + 1,
+                {"correct": "corrected", "revoke": "revoked", "suppress": "suppressed"}[request.action],
+                request.evidence_id if request.action == "correct" else None, request.request_id)
+            db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (request.request_id, request.target_id,
+                request.evidence_id, fingerprint, _json(asdict(request)), _json(asdict(state)), datetime.now(timezone.utc).isoformat()))
+            db.execute("INSERT INTO visibility VALUES (?,?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET version=excluded.version, status=excluded.status, replacement_id=excluded.replacement_id, change_id=excluded.change_id",
+                       (state.message_id, state.version, state.status, state.replacement_id, state.change_id))
+            db.execute("COMMIT")
+        return state
+
+    def review_archive(self, access: Access, message_id: str) -> ArchiveView:
+        self._authorize(access)
+        if not self._archive_review:
+            raise MemoryFailure("archive_forbidden")
+        _identifier(message_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            state = self._state(db, message_id)
+            row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
+            records = db.execute("SELECT request,receipt,recorded_at FROM changes WHERE target_id=? ORDER BY json_extract(receipt,'$.version')", (message_id,)).fetchall()
+            changes = tuple(ChangeRecord(Change(**json.loads(record["request"])), MessageState(**json.loads(record["receipt"])), record["recorded_at"]) for record in records)
+            return ArchiveView(self._stored(row), state, changes)
+
+    def publish_context(self, access: Access, context: DerivedContext) -> ContextReceipt:
+        """Commit a caller-produced result only while its evidence version is still recallable."""
+        self._authorize(access)
+        if (not isinstance(context, DerivedContext) or type(context.source_version) is not int
+                or context.source_version < 1 or not isinstance(context.text, str) or type(context.protected) is not bool):
+            raise MemoryFailure("invalid_context")
+        _identifier(context.result_id)
+        _identifier(context.source_id)
+        try:
+            encoded = context.text.encode("utf-8", errors="strict")
+        except UnicodeError:
+            raise MemoryFailure("invalid_encoding") from None
+        if len(encoded) > 1048576:
+            raise MemoryFailure("message_too_large")
+        if context.protected or credential_signal(context.text):
+            raise MemoryFailure("protected_context")
+        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(context)).encode(), hashlib.sha256)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            state = self._state(db, context.source_id)
+            if state.status != "active" or state.version != context.source_version:
+                raise MemoryFailure("stale_source")
+            source = self._stored(db.execute("SELECT event,receipt FROM messages WHERE id=?", (context.source_id,)).fetchone())
+            if not source.receipt.original_saved and context.text != source.event.text:
+                raise MemoryFailure("protected_context")
+            existing = db.execute("SELECT fingerprint,receipt FROM source_context WHERE id=?", (context.result_id,)).fetchone()
+            if existing is not None:
+                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                    raise MemoryFailure("context_conflict")
+                return ContextReceipt(**json.loads(existing["receipt"]))
+            receipt = ContextReceipt(context.result_id, context.source_id, context.source_version, datetime.now(timezone.utc).isoformat())
+            db.execute("INSERT INTO source_context VALUES (?,?,?,?,?,?)", (context.result_id, context.source_id,
+                context.source_version, fingerprint, _json(asdict(context)), _json(asdict(receipt))))
+            db.execute("COMMIT")
+        return receipt
+
+    def read_context(self, access: Access, result_id: str) -> DerivedContext | None:
+        self._authorize(access)
+        _identifier(result_id)
+        with self._connection() as db:
+            row = db.execute("""SELECT c.context FROM source_context c LEFT JOIN visibility v ON v.message_id=c.source_id
+                WHERE c.id=? AND COALESCE(v.status,'active')='active' AND c.source_version=COALESCE(v.version,1)""", (result_id,)).fetchone()
+            return DerivedContext(**json.loads(row["context"])) if row is not None else None

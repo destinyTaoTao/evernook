@@ -9,7 +9,7 @@ import sys
 from typing import Any
 from unittest.mock import patch
 
-from evernook import Access, Event, ImportantMark, MemoryRuntime, Source
+from evernook import Access, Change, Event, ImportantMark, MemoryRuntime, Source
 
 
 def main() -> None:
@@ -31,6 +31,18 @@ def main() -> None:
         connection.set_trace_callback(before_commit)
         return connection
 
+    if sys.argv[2].startswith("change_"):
+        target = runtime.submit(access, event)
+        evidence = runtime.submit(access, Event(Source("test", "crash-session", "main", "evidence"),
+            "user", 2, None, "complete", "synthetic explicit suppression"))
+        request = Change("synthetic-change", target.message_id, 1, "suppress", evidence.message_id, "synthetic suppression")
+        if sys.argv[2] == "change_before_commit":
+            with patch("sqlite3.connect", connect):
+                runtime.change(access, request)
+            raise AssertionError("kill point not reached")
+        state = runtime.change(access, request)
+        print(json.dumps({"message_id": state.message_id, "version": state.version}), flush=True)
+        os._exit(87)
     if sys.argv[2].startswith("important_"):
         receipt = runtime.submit(access, event)
         mark = ImportantMark(receipt.message_id, "original", 1, "synthetic-shared", None, None, event.text)

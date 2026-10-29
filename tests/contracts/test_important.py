@@ -23,7 +23,7 @@ class ImportantTests(unittest.TestCase):
     def test_handshake_exposes_important_capability_and_actual_storage_version(self) -> None:
         capabilities = self.runtime.handshake(self.access)
         self.assertTrue(capabilities["important"])
-        self.assertEqual(capabilities["storage_version"], 2)
+        self.assertEqual(capabilities["storage_version"], 3)
 
     def test_explicit_span_is_durable_immediately_and_repeated_mark_keeps_identity(self) -> None:
         mark = ImportantMark(self.receipt.message_id, "original", 1, "synthetic-shared", 1, 4, "🙂e\u0301")
@@ -120,6 +120,9 @@ class ImportantTests(unittest.TestCase):
         assert original is not None
         # System-boundary fixture: the documented T05 schema has no important table and version 1.
         with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as legacy:
+            legacy.execute("DROP TABLE source_context")
+            legacy.execute("DROP TABLE visibility")
+            legacy.execute("DROP TABLE changes")
             legacy.execute("DROP TABLE important")
             legacy.execute("PRAGMA user_version=1")
         reopened = MemoryRuntime(self.config)
