@@ -63,3 +63,37 @@ class RuntimeStatus:
     pending_jobs: int
     backup_enabled: bool = False
     vault_enabled: bool = False
+    important_items: int = 0
+
+
+@dataclass(frozen=True)
+class ImportantMark:
+    message_id: str
+    representation: str
+    content_version: int
+    scope: str
+    start: int | None
+    end: int | None
+    expected_text: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class ImportantItem:
+    important_id: str
+    message_id: str
+    representation: str
+    content_version: int
+    scope: str
+    start: int
+    end: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ImportantPage:
+    item: ImportantItem
+    text: str = field(repr=False)
+    start: int
+    end: int
+    remaining: int
+    next_cursor: int | None

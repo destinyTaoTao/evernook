@@ -10,7 +10,7 @@ import tempfile
 from typing import cast
 import unittest
 
-from evernook import Access, Event, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Access, Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
 
 
 class BoundaryTests(unittest.TestCase):
@@ -28,6 +28,8 @@ class BoundaryTests(unittest.TestCase):
             lambda access: self.runtime.read(access, "id"),
             lambda access: self.runtime.read_source(access, self.event.source),
             lambda access: self.runtime.list_messages(access),
+            lambda access: self.runtime.mark_important(access, ImportantMark("id", "original", 1, "shared", 0, 1, "x")),
+            lambda access: self.runtime.read_important(access, "id"),
         ]
         for access, error in [(replace(self.access, token="wrong"), "unauthorized"),
                               (replace(self.access, client_id="wrong"), "unauthorized"),

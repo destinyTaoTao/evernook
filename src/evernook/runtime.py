@@ -14,7 +14,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from .models import Access, Event, MemoryFailure, Page, Receipt, RuntimeStatus, Source, StoredMessage
+from .models import Access, Event, ImportantItem, ImportantMark, ImportantPage, MemoryFailure, Page, Receipt, RuntimeStatus, Source, StoredMessage
 from .paths import external, provision_private_directory, verify_private_directory
 from .safety import credential_signal
 
@@ -111,7 +111,7 @@ class MemoryRuntime:
             raise MemoryFailure("idempotency_material_unavailable")
         with self._connection() as db:
             version = int(db.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise MemoryFailure("unsupported_storage_version")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""BEGIN IMMEDIATE;
@@ -120,7 +120,10 @@ class MemoryRuntime:
                   event TEXT NOT NULL, receipt TEXT NOT NULL, occurred REAL, received TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS message_time ON messages(occurred,id);
                 CREATE TABLE IF NOT EXISTS jobs (message_id TEXT PRIMARY KEY REFERENCES messages(id), state TEXT NOT NULL);
-                PRAGMA user_version=1;
+                CREATE TABLE IF NOT EXISTS important (
+                  id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages(id),
+                  identity TEXT UNIQUE NOT NULL, item TEXT NOT NULL);
+                PRAGMA user_version=2;
                 COMMIT;""")
 
     def _authorize(self, access: Access) -> None:
@@ -139,7 +142,8 @@ class MemoryRuntime:
 
     def handshake(self, access: Access) -> dict[str, object]:
         self._authorize(access)
-        return {"contract_version": 1, "ordinary_text": True, "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
+        return {"contract_version": 1, "ordinary_text": True, "important": True, "storage_version": 2,
+                "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -238,5 +242,59 @@ class MemoryRuntime:
     def status(self, access: Access) -> RuntimeStatus:
         self._authorize(access)
         with self._connection() as db:
-            counts = db.execute("SELECT (SELECT count(*) FROM messages), (SELECT count(*) FROM jobs WHERE state='pending')").fetchone()
-            return RuntimeStatus(int(counts[0]), int(counts[1]))
+            counts = db.execute("SELECT (SELECT count(*) FROM messages), (SELECT count(*) FROM jobs WHERE state='pending'), (SELECT count(*) FROM important)").fetchone()
+            return RuntimeStatus(int(counts[0]), int(counts[1]), important_items=int(counts[2]))
+
+    def mark_important(self, access: Access, mark: ImportantMark) -> ImportantItem:
+        self._authorize(access)
+        if not isinstance(mark, ImportantMark):
+            raise MemoryFailure("invalid_mark")
+        _identifier(mark.message_id)
+        _identifier(mark.scope)
+        if not isinstance(mark.representation, str) or mark.representation not in {"original", "projection"} or type(mark.content_version) is not int or not isinstance(mark.expected_text, str):
+            raise MemoryFailure("invalid_mark")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (mark.message_id,)).fetchone()
+            if row is None:
+                raise MemoryFailure("message_not_found")
+            message = self._stored(row)
+            if mark.representation != message.receipt.representation:
+                raise MemoryFailure("representation_mismatch")
+            if mark.content_version != message.receipt.content_version:
+                raise MemoryFailure("version_mismatch")
+            text = message.event.text
+            start, end = (0, len(text)) if mark.start is None and mark.end is None else (mark.start, mark.end)
+            if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(text):
+                raise MemoryFailure("invalid_span")
+            if text[start:end] != mark.expected_text:
+                raise MemoryFailure("span_mismatch")
+            identity = _json([mark.message_id, mark.representation, mark.content_version, mark.scope, start, end])
+            existing = db.execute("SELECT item FROM important WHERE identity=?", (identity,)).fetchone()
+            if existing is not None:
+                return ImportantItem(**json.loads(existing["item"]))
+            item = ImportantItem(str(uuid4()), mark.message_id, mark.representation, mark.content_version,
+                                 mark.scope, start, end, datetime.now(timezone.utc).isoformat())
+            db.execute("INSERT INTO important VALUES (?,?,?,?)", (item.important_id, item.message_id, identity, _json(asdict(item))))
+            db.execute("COMMIT")
+        return item
+
+    def read_important(self, access: Access, important_id: str, *, cursor: int | None = None,
+                       limit: int = 2048, content_version: int = 1) -> ImportantPage:
+        self._authorize(access)
+        _identifier(important_id)
+        if type(limit) is not int or not 1 <= limit <= 4096 or (cursor is not None and type(cursor) is not int):
+            raise MemoryFailure("invalid_page")
+        with self._connection() as db:
+            row = db.execute("SELECT important.item, messages.event FROM important JOIN messages ON messages.id=important.message_id WHERE important.id=?", (important_id,)).fetchone()
+            if row is None:
+                raise MemoryFailure("important_not_found")
+            item = ImportantItem(**json.loads(row["item"]))
+            if type(content_version) is not int or content_version != item.content_version:
+                raise MemoryFailure("version_mismatch")
+            text: str = json.loads(row["event"])["text"]
+            start = item.start if cursor is None else cursor
+            if not item.start <= start < item.end:
+                raise MemoryFailure("invalid_cursor")
+            end = min(start + limit, item.end)
+            return ImportantPage(item, text[start:end], start, end, item.end - end, end if end < item.end else None)

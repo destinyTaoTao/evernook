@@ -11,7 +11,7 @@ from typing import Any
 import unittest
 from unittest.mock import patch
 
-from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
 
 
 class RecoveryTests(unittest.TestCase):
@@ -72,6 +72,27 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(reopened.submit(self.access, self.event), recovered.receipt)
         self.assertEqual(reopened.status(self.access).messages, 1)
         self.assertEqual(reopened.status(self.access).pending_jobs, 1)
+
+    def test_important_mark_process_exit_never_leaves_half_reference_or_loses_acknowledged_mark(self) -> None:
+        worker = Path(__file__).with_name("crash_worker.py")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+        for mode, code in [("important_before_commit", 86), ("important_after_receipt", 87)]:
+            result = subprocess.run([sys.executable, str(worker), str(self.config), mode],
+                                    capture_output=True, text=True, timeout=20, env=environment)
+            self.assertEqual(result.returncode, code, result.stderr)
+            runtime = MemoryRuntime(self.config)
+            original = runtime.read_source(self.access, self.event.source)
+            assert original is not None
+            if mode == "important_before_commit":
+                self.assertEqual(runtime.status(self.access).important_items, 0)
+            else:
+                important_id = json.loads(result.stdout)["important_id"]
+                page = runtime.read_important(self.access, important_id)
+                self.assertEqual(page.text, self.event.text)
+                mark = ImportantMark(original.receipt.message_id, "original", 1, "synthetic-shared", None, None, self.event.text)
+                self.assertEqual(runtime.mark_important(self.access, mark), page.item)
+                self.assertEqual(runtime.status(self.access).important_items, 1)
+            self.assertEqual(runtime.status(self.access).pending_jobs, 1)
 
 
 if __name__ == "__main__":

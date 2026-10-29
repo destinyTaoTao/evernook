@@ -9,7 +9,7 @@ import sys
 from typing import Any
 from unittest.mock import patch
 
-from evernook import Access, Event, MemoryRuntime, Source
+from evernook import Access, Event, ImportantMark, MemoryRuntime, Source
 
 
 def main() -> None:
@@ -31,6 +31,16 @@ def main() -> None:
         connection.set_trace_callback(before_commit)
         return connection
 
+    if sys.argv[2].startswith("important_"):
+        receipt = runtime.submit(access, event)
+        mark = ImportantMark(receipt.message_id, "original", 1, "synthetic-shared", None, None, event.text)
+        if sys.argv[2] == "important_before_commit":
+            with patch("sqlite3.connect", connect):
+                runtime.mark_important(access, mark)
+            raise AssertionError("kill point not reached")
+        item = runtime.mark_important(access, mark)
+        print(json.dumps({"important_id": item.important_id}), flush=True)
+        os._exit(87)
     if sys.argv[2] == "before_commit":
         with patch("sqlite3.connect", connect):
             runtime.submit(access, event)
