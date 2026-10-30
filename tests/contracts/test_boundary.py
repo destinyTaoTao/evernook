@@ -38,6 +38,10 @@ class BoundaryTests(unittest.TestCase):
             lambda access: self.runtime.submit_capture(access, Capture(self.event, "message")),
             lambda access: self.runtime.read_capture(access, "id"),
             lambda access: self.runtime.read_attachment(access, "id", "attachment"),
+            lambda access: self.runtime.search(access, "茶"),
+            self.runtime.lexical_status,
+            self.runtime.refresh_lexical,
+            self.runtime.rebuild_lexical,
         ]
         for access, error in [(replace(self.access, token="wrong"), "unauthorized"),
                               (replace(self.access, client_id="wrong"), "unauthorized"),

@@ -26,6 +26,8 @@ assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲�
 
 重启时，受信任的本机宿主从私有访问文件装载 `client_id`、`token` 创建 `Access`，不得记录文件内容。T11 的 `pair_client` 可显式登记多个身份及其唯一绑定 `entry`，普通记忆共用同一账本；身份文件兼容 v1/v2，配对时写入 v3 清单。所有普通操作都要求 token 和 `contract_version=1`，每次重新核验登记。`access_from_file` 是可信本机启动操作，不是远程工具。同用户进程可读取授权文件，本边界不隔离已经控制该 Windows 账户的进程。传输适配器复用入口检查，不能通过工具参数授予权限。
 
+T14 的 [中文词法/精确检索](lexical-v1.md)增加 `search/lexical_status/refresh_lexical/rebuild_lexical`。可重建 FTS5 派生表按需创建，拥有独立归一化版本，不改变 v4 原文账本格式或原文提交事务；未建或落后时保留扫描原文的精确路径。MCP 仅开放查询和状态，维护端显式刷新，没有自动消费者。
+
 ## 保存、读取与失败
 
 - `submit(access, event)`：来源四元组为幂等键，整个请求内容（含角色、时间、序号和安全标记）核对一致才返回原回执；同键改变完成状态也会冲突。流片段/最终消息须分配独立源事件，不能用覆盖更新模拟原件。

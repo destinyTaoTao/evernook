@@ -151,6 +151,31 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn("size_limit", receipt["gaps"])
         self.assertFalse(receipt["original_saved"])
 
+    def test_index_commit_interruption_preserves_originals_and_recovers_without_half_coverage(self) -> None:
+        worker = Path(__file__).with_name("crash_worker.py")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
+        before = subprocess.run([sys.executable, str(worker), str(self.config), "lexical_before_commit"],
+                                capture_output=True, text=True, timeout=20, env=environment)
+        self.assertEqual(before.returncode, 86, before.stderr)
+        reopened = MemoryRuntime(self.config)
+        pending = reopened.search(self.access, "片段")
+        self.assertEqual((pending.index.state, pending.index.indexed_messages, pending.index.pending_messages), ("behind", 0, 1))
+        self.assertEqual(len(pending.hits), 1)
+        original = reopened.read(self.access, pending.hits[0].message_id)
+        assert original is not None
+        self.assertEqual(original.event, self.event)
+        after = subprocess.run([sys.executable, str(worker), str(self.config), "lexical_after_receipt"],
+                               capture_output=True, text=True, timeout=20, env=environment)
+        self.assertEqual(after.returncode, 87, after.stderr)
+        self.assertEqual(json.loads(after.stdout)["state"], "ready")
+        recovered = MemoryRuntime(self.config)
+        indexed = recovered.search(self.access, "片段")
+        self.assertTrue(indexed.used_index)
+        self.assertEqual(indexed.hits, pending.hits)
+        self.assertEqual(recovered.refresh_lexical(self.access).pending_messages, 0)
+        self.assertEqual(recovered.status(self.access).messages, 1)
+        self.assertEqual(recovered.status(self.access).pending_jobs, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,13 +19,19 @@ from uuid import uuid4
 from .models import (
     Access, ArchiveView, AttachmentInfo, AttachmentInput, Capture, CaptureReceipt, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
-    Receipt, RuntimeStatus, Source, StoredMessage,
+    Receipt, RuntimeStatus, Source, StoredMessage, SearchHit, SearchPage, LexicalStatus,
 )
 from .paths import external, provision_private_directory, verify_private_directory
 from .safety import credential_signal
+from .lexical import NORMALIZATION_VERSION, index_terms, matching_spans, normalize, query_expression
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
+_LEXICAL_INDEXED = f"""SELECT d.message_id FROM lexical_docs d
+    JOIN messages original ON original.id=d.message_id
+    JOIN (SELECT DISTINCT message_id FROM lexical) tokens ON tokens.message_id=d.message_id
+    WHERE d.normalization_version={NORMALIZATION_VERSION}
+      AND d.content_version=json_extract(original.receipt,'$.content_version')"""
 
 
 def _json(value: object) -> str:
@@ -262,6 +268,7 @@ class MemoryRuntime:
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
         return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
+                "lexical": True, "lexical_normalization_version": NORMALIZATION_VERSION,
                 "archive_review": identity.archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
@@ -733,3 +740,136 @@ class MemoryRuntime:
             receipt = self._capture_receipt(row["manifest"])
             info = next((item for item in receipt.attachments if item.attachment_id == attachment_id), None)
             return self._attachment_data(db, message_id, info) if info is not None and info.saved else None
+
+    def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
+               until: str | None = None, limit: int = 10, offset: int = 0) -> SearchPage:
+        self._authorize(access)
+        if (not isinstance(query, str) or not query.strip() or len(query) > 256
+                or not isinstance(mode, str) or mode not in {"exact", "lexical"}):
+            raise MemoryFailure("invalid_query")
+        try:
+            query.encode("utf-8", errors="strict")
+        except UnicodeError:
+            raise MemoryFailure("invalid_encoding") from None
+        if credential_signal(query):
+            raise MemoryFailure("protected_query")
+        words = tuple(dict.fromkeys(normalize(word) for word in ([query] if mode == "exact" else query.split())))
+        if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
+            raise MemoryFailure("invalid_page")
+        start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
+        if start is not None and end is not None and start >= end:
+            raise MemoryFailure("invalid_time_range")
+        with self._connection() as db:
+            db.execute("BEGIN")
+            status = self._lexical_status(db)
+            base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}"""
+            order = " ORDER BY occurred,received,messages.id"
+            parameters: tuple[object, ...] = (start, start, end, end)
+            used_index = status.state in {"ready", "behind"}
+            reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
+            try:
+                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({_LEXICAL_INDEXED}))" if used_index else ""
+                hits = self._search_hits(db, base + condition + order,
+                    parameters + (query_expression(words),) if used_index else parameters, words, limit, offset)
+            except sqlite3.Error:
+                if not used_index:
+                    raise
+                used_index, reason = False, "index_unavailable"
+                status = replace(status, state="unavailable", indexed_messages=0,
+                                 pending_messages=status.source_messages, indexed_watermark=None)
+                hits = self._search_hits(db, base + order, parameters, words, limit, offset)
+            return SearchPage(tuple(hits[:limit]), offset + limit if len(hits) > limit else None, status, used_index, reason)
+
+    def _search_hits(self, db: sqlite3.Connection, sql: str, parameters: tuple[object, ...],
+                     words: tuple[str, ...], limit: int, offset: int) -> list[SearchHit]:
+        hits: list[SearchHit] = []
+        found = 0
+        for row in db.execute(sql, parameters):
+            message = self._stored(row)
+            spans = matching_spans(message.event.text, words)
+            if not spans:
+                continue
+            if found >= offset:
+                hits.append(SearchHit(message.receipt.message_id, message.event.source, message.event.role,
+                    message.event.sequence, message.event.occurred_at, message.receipt.received_at,
+                    message.event.completion, message.receipt.representation, message.receipt.content_version,
+                    int(row["state_version"]), spans))
+            found += 1
+            if len(hits) > limit:
+                break
+        return hits
+
+    @staticmethod
+    def _lexical_status(db: sqlite3.Connection) -> LexicalStatus:
+        counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE}").fetchone()
+        source = int(counts[0])
+        present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name IN ('lexical','lexical_docs')")}
+        if len(present) != 2:
+            return LexicalStatus("not_built", source, 0, source, counts[1], None)
+        try:
+            indexed = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE} AND id IN ({_LEXICAL_INDEXED})").fetchone()
+        except sqlite3.Error:
+            return LexicalStatus("unavailable", source, 0, source, counts[1], None)
+        covered = int(indexed[0])
+        return LexicalStatus("ready" if covered == source else "behind", source, covered, source - covered, counts[1], indexed[1])
+
+    def lexical_status(self, access: Access) -> LexicalStatus:
+        self._authorize(access)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            return self._lexical_status(db)
+
+    @staticmethod
+    def _lexical_schema(db: sqlite3.Connection) -> None:
+        db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS lexical USING fts5(message_id UNINDEXED,terms)")
+        db.execute("""CREATE TABLE IF NOT EXISTS lexical_docs (
+            message_id TEXT PRIMARY KEY REFERENCES messages(id), content_version INTEGER NOT NULL,
+            normalization_version INTEGER NOT NULL)""")
+
+    def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
+        self._authorize(access)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MemoryFailure("invalid_page")
+        try:
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                self._lexical_schema(db)
+                db.execute("COMMIT")
+                rows = db.execute(f"""SELECT event,receipt FROM messages
+                    WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+        except MemoryFailure as error:
+            if error.code != "storage_unavailable":
+                raise
+            return replace(self.lexical_status(access), state="unavailable")
+        for row in rows:
+            message = self._stored(row)
+            terms = index_terms(message.event.text)  # Derive outside the write transaction.
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
+                if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
+                    continue
+                db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
+                db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
+                db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_VERSION))
+                db.execute("COMMIT")
+        return self.lexical_status(access)
+
+    def rebuild_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
+        self._authorize(access)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MemoryFailure("invalid_page")
+        try:
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("DROP TABLE IF EXISTS lexical")
+                db.execute("DROP TABLE IF EXISTS lexical_docs")
+                self._lexical_schema(db)
+                db.execute("COMMIT")
+        except MemoryFailure as error:
+            if error.code != "storage_unavailable":
+                raise
+            return replace(self.lexical_status(access), state="unavailable")
+        return self.refresh_lexical(access, limit=limit)

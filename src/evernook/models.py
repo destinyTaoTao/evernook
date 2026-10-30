@@ -197,3 +197,45 @@ class CaptureReceipt:
     attachments: tuple[AttachmentInfo, ...]
     gaps: tuple[str, ...]
     complete: bool
+
+
+@dataclass(frozen=True)
+class SearchSpan:
+    start: int
+    end: int
+    text: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    message_id: str
+    source: Source
+    role: str
+    sequence: int
+    occurred_at: str | None
+    received_at: str
+    completion: str
+    representation: str
+    content_version: int
+    state_version: int
+    spans: tuple[SearchSpan, ...]
+
+
+@dataclass(frozen=True)
+class LexicalStatus:
+    state: str
+    source_messages: int
+    indexed_messages: int
+    pending_messages: int
+    source_watermark: str | None
+    indexed_watermark: str | None
+    normalization_version: int = 1
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    hits: tuple[SearchHit, ...]
+    next_offset: int | None
+    index: LexicalStatus
+    used_index: bool
+    fallback_reason: str | None

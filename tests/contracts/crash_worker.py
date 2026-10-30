@@ -36,6 +36,31 @@ def main() -> None:
         connection.set_trace_callback(before_commit)
         return connection
 
+    if sys.argv[2].startswith("lexical_"):
+        receipt = runtime.submit(access, event)
+        commits = 0
+
+        def lexical_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            connection: sqlite3.Connection = real_connect(*args, **kwargs)
+
+            def before_index_commit(statement: str) -> None:
+                nonlocal commits
+                if statement.strip().upper() == "COMMIT":
+                    commits += 1
+                    if commits == 2:
+                        os._exit(86)
+
+            connection.set_trace_callback(before_index_commit)
+            return connection
+
+        if sys.argv[2] == "lexical_before_commit":
+            with patch("sqlite3.connect", lexical_connect):
+                runtime.refresh_lexical(access)
+            raise AssertionError("index kill point not reached")
+        status = runtime.refresh_lexical(access)
+        print(json.dumps({"message_id": receipt.message_id, "state": status.state}), flush=True)
+        os._exit(87)
+
     if sys.argv[2].startswith("capture_"):
         input_receipt = runtime.submit(access, Event(Source("test", "crash-session", "main", "input"),
             "user", 0, None, "complete", "synthetic tool request"))

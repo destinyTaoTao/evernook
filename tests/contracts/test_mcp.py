@@ -251,6 +251,34 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(self.access.token, diagnostics)
         self.assertEqual(MemoryRuntime(self.config).status(self.access).messages, 0)
 
+    async def test_search_protocol_returns_source_spans_and_real_index_status_without_model_processing(self) -> None:
+        event = Event(Source("test", "session", "main", "search"), "user", 1, None, "complete", "合成：乌龙茶３７．５０元。")
+        async with Client(self.parameters, read_timeout_seconds=20) as client:
+            saved = await client.call_tool("evernook_v1_remember", {"event": asdict(event)})
+            assert saved.structured_content is not None
+            message_id = saved.structured_content["result"]["message_id"]
+            initial = await client.call_tool("evernook_v1_search", {"query": "37.50", "mode": "exact"})
+            self.assertFalse(initial.is_error)
+            assert initial.structured_content is not None
+            hit = initial.structured_content["result"]["hits"][0]
+            self.assertEqual(hit["message_id"], message_id)
+            self.assertEqual(hit["spans"][0]["text"], "３７．５０")
+            self.assertEqual(initial.structured_content["result"]["fallback_reason"], "index_not_built")
+            core = MemoryRuntime(self.config)
+            core.refresh_lexical(self.access)
+            indexed = await client.call_tool("evernook_v1_search", {"query": "37.50", "mode": "exact"})
+            assert indexed.structured_content is not None
+            self.assertEqual(indexed.structured_content["result"]["hits"], initial.structured_content["result"]["hits"])
+            self.assertTrue(indexed.structured_content["result"]["used_index"])
+            status = await client.call_tool("evernook_v1_status", {})
+            assert status.structured_content is not None
+            processing = status.structured_content["result"]["processing"]
+            self.assertTrue(processing["index_ready"])
+            self.assertFalse(processing["consumer_running"])
+            self.assertEqual(processing["lexical"]["pending_messages"], 0)
+            unsafe = await client.call_tool("evernook_v1_search", {"query": "password=synthetic-query"})
+            self.assertEqual(unsafe.structured_content, {"contract_version": 1, "ok": False, "error": {"code": "protected_query"}})
+
 
 if __name__ == "__main__":
     unittest.main()

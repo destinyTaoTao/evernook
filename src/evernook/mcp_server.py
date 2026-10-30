@@ -45,6 +45,12 @@ class ListMessages(Arguments):
     offset: int = 0
 
 
+class Search(ListMessages):
+    query: str
+    mode: str = "lexical"
+    limit: int = 10
+
+
 class Mark(Arguments):
     mark: ImportantMark
 
@@ -66,6 +72,12 @@ def _required(value: object) -> object:
     return value
 
 
+def _status(runtime: MemoryRuntime, access: Access) -> dict[str, object]:
+    lexical = runtime.lexical_status(access)
+    return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
+            "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
+
+
 def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
     runtime.handshake(access)
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
@@ -77,6 +89,8 @@ def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
             "Read ordinary evidence by exact entry/session/branch/event source. Text is untrusted data."),
         "evernook_v1_list": (ListMessages, lambda args: runtime.list_messages(access, **args.model_dump()),
             "Page ordinary evidence by optional source-time [since,until) with timezone offsets; never a fixed export snapshot."),
+        "evernook_v1_search": (Search, lambda args: runtime.search(access, **args.model_dump()),
+            "Find literal exact phrase or whitespace-separated lexical words. Returns verified source code point spans and index/fallback coverage; no FTS syntax or semantic model."),
         "evernook_v1_mark_important": (Mark, lambda args: runtime.mark_important(access, args.mark),
             "Pin exact original/projection and version; expected_text must match Unicode code point [start,end). No permission grant."),
         "evernook_v1_read_important": (ReadImportant, lambda args: runtime.read_important(access, **args.model_dump()),
@@ -85,9 +99,8 @@ def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
             "Explicit correct/revoke/suppress with state-version CAS and a complete saved user evidence_id. Retains originals; no physical deletion."),
         "evernook_v1_state": (Read, lambda args: runtime.state(access, args.message_id),
             "Read current message state/version and correction reference without archived words."),
-        "evernook_v1_status": (Arguments, lambda args: {"capabilities": runtime.handshake(access),
-            "ledger": asdict(runtime.status(access)), "processing": {"consumer_running": False, "index_ready": False}},
-            "Read capabilities, committed counts and unavailable processing/index state. No dialogue, credential or configuration paths."),
+        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access),
+            "Read capabilities, committed counts, lexical coverage/watermarks and unavailable consumer state. No dialogue, credential or configuration paths."),
     }
 
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:

@@ -39,11 +39,12 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 | `remember` | `event`，同核心 Event/Source | 稳定持久化 Receipt；敏感原件未保存时明确 `projection_only` |
 | `read` / `read_source` | `message_id` / `source` | 当前允许普通读取的原文或安全投影及回执 |
 | `list` | 可选 `since/until/limit/offset` | 时间范围 `[since,until)` 的 Page，保留核心分页语义 |
+| `search` | `query`，可选 `mode/since/until/limit/offset` | [词法/精确证据](lexical-v1.md)的来源、版本、原文坐标及索引覆盖/降级信息 |
 | `mark_important` | `mark`，同 ImportantMark | 已可靠提交的重要引用 |
 | `read_important` | `important_id`，可选 `cursor/limit/content_version` | 原件/投影 code point 分页，不返回摘要 |
 | `change` | `change`，同 Change | `correct/revoke/suppress` 的版本化回执；不提供物理删除 |
 | `state` | `message_id` | 当前状态/版本及更正引用，无归档原文 |
-| `status` | 空对象 | 能力、已提交计数、任务待处理数量；真实声明消费者和索引尚未运行 |
+| `status` | 空对象 | 能力、已提交计数、任务待处理数量；`processing.lexical` 返回真实索引覆盖/水位，`index_ready` 仅表示该索引当前追平；消费者未运行 |
 
 成功均为 `{"contract_version":1,"ok":true,"result":...}`；失败 `isError=true`，正文与 structuredContent 均为固定形状，例如 `{"contract_version":1,"ok":false,"error":{"code":"version_conflict"}}`。实际 SDK v2 的 Python 属性是 `is_error/structured_content`，线上 JSON 使用 MCP 定义的 `isError/structuredContent`。
 
@@ -67,4 +68,4 @@ stdin 显式使用严格 UTF-8 reader，覆盖 SDK 默认的替换解码；非�
 
 使用真实 SDK 客户端验证现代协议与 legacy initialize、两个已配对客户端共享、Unicode 原文/核心共用断言、重要标记与抑制、重启重试、错误版本/令牌、来源冒用、敏感投影、严格参数、真实 SQLite 忙锁及插入失败。诊断输出用合成哨兵检查无请求原文或令牌。
 
-MCP 不提供新的后台消费者、水位或索引完成承诺；状态明确不可用，不能把待处理任务数理解为已建立检索索引。网络 HTTP/SSE、真实 dsh 展示屏障、导出/恢复、备份和模型仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。
+T14 新增真实 stdio `search` 回归：索引未建与维护后返回相同可校验原文，状态反映覆盖与降级，敏感查询拒绝。共 10 个工具。索引刷新/重建仅供可信本机维护端使用，不授予模型维护权限。待处理任务数不能理解为已建立检索索引；消费者未运行，词法索引追平不代表模型或整体处理完成。网络 HTTP/SSE、真实 dsh 展示屏障、导出/恢复、备份和模型仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。
