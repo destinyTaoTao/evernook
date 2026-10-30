@@ -59,6 +59,14 @@ def _parser() -> Parser:
     pair.add_argument("--client-id", required=True)
     pair.add_argument("--entry", required=True)
     pair.add_argument("--access", type=Path, required=True)
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile"):
+        vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
+        vault.add_argument("--config", type=Path, required=True)
+        vault.add_argument("--access", type=Path, required=True)
+        vault.add_argument("--inbox-dir", type=Path, required=True)
+        vault.add_argument("--key-dir", type=Path, required=True)
+        if name == "vault-reconcile":
+            vault.add_argument("--object-id", required=True)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
     backup_init.add_argument("--key-dir", type=Path, required=True)
     backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
@@ -98,6 +106,29 @@ def _parser() -> Parser:
 
 
 def _execute(args: argparse.Namespace) -> object:
+    if args.command.startswith("vault-"):
+        try:
+            from .protected import ProtectedInbox, initialize_protected_inbox
+        except ImportError:
+            raise MemoryFailure("vault_dependency_missing") from None
+        memory = MemoryRuntime(args.config)
+        access = memory.access_from_file(args.access)
+        if args.command == "vault-init":
+            if not sys.stdin.isatty():
+                raise MemoryFailure("interactive_vault_initialization_required")
+            password = getpass.getpass("Local vault password: ").encode("utf-8")
+            if password != getpass.getpass("Repeat vault password: ").encode("utf-8"):
+                raise MemoryFailure("vault_password_mismatch")
+            inbox = initialize_protected_inbox(memory, args.inbox_dir, args.key_dir, password)
+            return {"inbox_id": inbox.inbox_id, "key_id": inbox.public["key_id"], "plaintext_read_enabled": False}
+        inbox = ProtectedInbox(memory, args.inbox_dir, args.key_dir)
+        if args.command == "vault-pending":
+            return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}
+        if args.command == "vault-reconcile":
+            return inbox.reconcile(access, args.object_id)
+        value = _input()
+        source = Source(**value.pop("source"))
+        return inbox.submit(access, Event(source=source, **value))
     if args.command.startswith("backup-"):
         try:
             from .backup import create_backup, initialize_backup_keys, restore_backup, retain_backups
