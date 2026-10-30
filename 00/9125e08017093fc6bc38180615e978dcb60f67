@@ -1,0 +1,65 @@
+plugins/harnesses/src/client.ts
+  s_fbb7b85144f0e3::t_6ab0e9498c73db 33,75
+  s_fbb7b85144f0e3::t_cc1938efea7db3 1-26,32,34-70,74,76-77
+  s_fbb7b85144f0e3::t_79acffc643bd97 27-31,71-73
+docs/reports/r1-dsh-native-2026-10-30.md
+  s_fbb7b85144f0e3::t_d235c1bbba8857 17-23
+  s_fbb7b85144f0e3::t_b325cfd9425cfe 1-16
+docs/contracts/dsh-native-v1.md
+  s_fbb7b85144f0e3::t_b325cfd9425cfe 1-48
+docs/contracts/mcp-v1.md
+  s_fbb7b85144f0e3::t_b28ba093a3def9 37
+src/evernook/mcp_server.py
+  s_fbb7b85144f0e3::t_dbb842ff396daf 7,22,36-61,114-123,141-144
+plugins/harnesses/tsconfig.json
+  s_fbb7b85144f0e3::t_ef031549b6fb5c 1-12
+plugins/harnesses/README.md
+  s_fbb7b85144f0e3::t_b28ba093a3def9 1-14
+plugins/harnesses/test/dsh.test.ts
+  s_fbb7b85144f0e3::t_d9e38e27d3ed5e 126-127
+  s_fbb7b85144f0e3::t_4045f668ddf000 1-10,12-15,17-28,31-33,42-43,45-66,69-75,77-109,136-189,225-226
+  s_fbb7b85144f0e3::t_df163af695e371 190-193,199-221,224
+  s_fbb7b85144f0e3::t_3d1121bc784b2e 11,16,29,34-41,194-198
+  s_fbb7b85144f0e3::t_1d6a5ef8c4027c 30,44,67-68,76,110-125,128-135
+  s_fbb7b85144f0e3::t_085fb0a647a576 222-223
+plugins/harnesses/package.json
+  s_fbb7b85144f0e3::t_ef031549b6fb5c 1-43
+src/evernook/runtime.py
+  s_fbb7b85144f0e3::t_d9e38e27d3ed5e 392
+  s_fbb7b85144f0e3::t_dbb842ff396daf 354-367,369-370,372-377,379-380,391,393-395
+  s_fbb7b85144f0e3::t_1cb1668bdf38df 368,371,378,381-390
+plugins/harnesses/tsconfig.build.json
+  s_fbb7b85144f0e3::t_ef031549b6fb5c 1-11
+plugins/harnesses/src/dsh.ts
+  s_fbb7b85144f0e3::t_2cee8bfa54660c 1,87,96-97,104
+  s_fbb7b85144f0e3::t_b28ba093a3def9 80,219,227-232
+  s_fbb7b85144f0e3::t_ef8800b28ee7cd 2,4-7,9-46,48,84-86,88,90,92-95,98,100-103,105,107-112,123-145,147-150,167-170,172-218,220-226,233-241
+  s_fbb7b85144f0e3::t_300f0953e50295 55-56,73
+  s_fbb7b85144f0e3::t_79acffc643bd97 3,8,47,49-54,57-72,74-79,81-83,89,91,99,106,113-122,146,171
+  s_fbb7b85144f0e3::t_6ab0e9498c73db 151-166
+tests/contracts/test_stream.py
+  s_fbb7b85144f0e3::t_d9e38e27d3ed5e 72-80
+  s_fbb7b85144f0e3::t_2cee8bfa54660c 1-71,81-83
+tests/contracts/test_mcp.py
+  s_fbb7b85144f0e3::t_061848d8c91700 99
+  s_fbb7b85144f0e3::t_cd3068f693108d 8,96-98,100-116
+  s_fbb7b85144f0e3::t_2cee8bfa54660c 50,117
+plugins/harnesses/package-lock.json
+  s_fbb7b85144f0e3::t_b98806d60fdeee 1-1842
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "009125e08017093fc6bc38180615e978dcb60f67",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
