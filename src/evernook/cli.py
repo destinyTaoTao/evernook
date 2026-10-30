@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 from dataclasses import asdict, is_dataclass
 import json
 from pathlib import Path
@@ -52,11 +53,28 @@ def _parser() -> Parser:
     init.add_argument("--data-dir", type=Path, required=True)
     init.add_argument("--client-id", required=True)
     init.add_argument("--entry", required=True)
+    init.add_argument("--allow-archive-review", action="store_true", help="Explicitly grant this new local owner archive/backup access")
     pair = commands.add_parser("pair", help="Pair a client using trusted local access")
     pair.add_argument("--config", type=Path, required=True)
     pair.add_argument("--client-id", required=True)
     pair.add_argument("--entry", required=True)
     pair.add_argument("--access", type=Path, required=True)
+    backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
+    backup_init.add_argument("--key-dir", type=Path, required=True)
+    backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
+    backup_create.add_argument("--config", type=Path, required=True)
+    backup_create.add_argument("--access", type=Path, required=True)
+    backup_create.add_argument("--key-dir", type=Path, required=True)
+    backup_create.add_argument("--destination", type=Path, required=True)
+    backup_restore = commands.add_parser("backup-restore", help="Decrypt into a new review-only ordinary archive")
+    backup_restore.add_argument("--source", type=Path, required=True)
+    backup_restore.add_argument("--destination", type=Path, required=True)
+    backup_restore.add_argument("--recovery-file", type=Path, required=True)
+    backup_retain = commands.add_parser("backup-retain", help="Plan/apply retention while preserving a locally verified recovery anchor")
+    backup_retain.add_argument("--root", type=Path, required=True)
+    backup_retain.add_argument("--key-dir", type=Path, required=True)
+    backup_retain.add_argument("--recovery-verified-id", required=True)
+    backup_retain.add_argument("--apply", action="store_true")
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
@@ -80,8 +98,27 @@ def _parser() -> Parser:
 
 
 def _execute(args: argparse.Namespace) -> object:
+    if args.command.startswith("backup-"):
+        try:
+            from .backup import create_backup, initialize_backup_keys, restore_backup, retain_backups
+        except ImportError:
+            raise MemoryFailure("backup_dependency_missing") from None
+        if args.command == "backup-create":
+            memory = MemoryRuntime(args.config)
+            return create_backup(memory, memory.access_from_file(args.access), args.destination, args.key_dir)
+        if args.command == "backup-retain":
+            return retain_backups(args.root, args.key_dir, recovery_verified_id=args.recovery_verified_id, apply=args.apply)
+        if not sys.stdin.isatty():
+            raise MemoryFailure("interactive_recovery_required")
+        password = getpass.getpass("Local recovery password: ").encode("utf-8")
+        if args.command == "backup-init":
+            if password != getpass.getpass("Repeat recovery password: ").encode("utf-8"):
+                raise MemoryFailure("recovery_password_mismatch")
+            return initialize_backup_keys(args.key_dir, password)
+        return restore_backup(args.source, args.destination, args.recovery_file, password).status()
     if args.command == "init":
-        config, access = initialize(args.data_dir, client_id=args.client_id, entry=args.entry)
+        config, access = initialize(args.data_dir, client_id=args.client_id, entry=args.entry,
+                                    allow_archive_review=args.allow_archive_review)
         access_path = config.parent / "mcp-access-owner.json"
         pair_client(config, client_id=access.client_id, entry=args.entry, access_path=access_path)
         return {"config": str(config), "access_file": str(access_path)}

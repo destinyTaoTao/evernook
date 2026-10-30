@@ -28,6 +28,7 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
 | `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |
 | `refresh-semantic` / `semantic-status` | `--config --access`；可选 `--embedding-config` | 当前模型空间的一批最多 16 个片段维护或覆盖状态 |
+| `backup-init/create/restore/retain` | 本地路径及必要归档身份；口令仅真实 TTY 隐藏输入 | [认证加密备份、受控恢复与保留](encrypted-backup-v1.md)，不自动注册计划 |
 
 `rebuild-index` 先重置派生索引，再处理首批；`pending_messages > 0` 时继续运行 `refresh-index`，不要反复执行重建。维护成功返回不等于全库已经追平，必须读取 `state/pending_messages`。操作期间原文仍遵守既有提交与过滤语义。
 
