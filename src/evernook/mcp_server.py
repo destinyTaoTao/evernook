@@ -72,13 +72,16 @@ def _required(value: object) -> object:
     return value
 
 
-def _status(runtime: MemoryRuntime, access: Access) -> dict[str, object]:
+def _status(runtime: MemoryRuntime, access: Access, profile: str) -> dict[str, object]:
     lexical = runtime.lexical_status(access)
-    return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
+    return {"adapter": {"profile": profile, "writes_allowed": profile == "trusted-host"},
+            "capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
 
 
-def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
+def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall") -> Server[None]:
+    if profile not in ("recall", "trusted-host"):
+        raise MemoryFailure("invalid_profile")
     runtime.handshake(access)
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
         "evernook_v1_remember": (Remember, lambda args: runtime.submit(access, args.event),
@@ -99,9 +102,14 @@ def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
             "Explicit correct/revoke/suppress with state-version CAS and a complete saved user evidence_id. Retains originals; no physical deletion."),
         "evernook_v1_state": (Read, lambda args: runtime.state(access, args.message_id),
             "Read current message state/version and correction reference without archived words."),
-        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access),
+        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access, profile),
             "Read capabilities, committed counts, lexical coverage/watermarks and unavailable consumer state. No dialogue, credential or configuration paths."),
     }
+    recall_tools = {"evernook_v1_search", "evernook_v1_read", "evernook_v1_read_source",
+                    "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status"}
+    restricted = set(operations) - recall_tools
+    if profile == "recall":
+        operations = {name: operation for name, operation in operations.items() if name in recall_tools}
 
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         runtime.handshake(access)
@@ -113,6 +121,8 @@ def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
             runtime.handshake(access)
             operation = operations.get(params.name)
             if operation is None:
+                if params.name in restricted and profile == "recall":
+                    raise MemoryFailure("operation_not_allowed")
                 raise MemoryFailure("unknown_tool")
             model, invoke, _ = operation
             arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
@@ -138,10 +148,10 @@ def build_server(runtime: MemoryRuntime, access: Access) -> Server[None]:
     return server
 
 
-async def serve(config_path: Path, access_path: Path) -> None:
+async def serve(config_path: Path, access_path: Path, profile: str = "recall") -> None:
     runtime = MemoryRuntime(config_path)
     access = runtime.access_from_file(access_path)
-    server = build_server(runtime, access)
+    server = build_server(runtime, access, profile=profile)
     try:
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):
@@ -162,10 +172,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="EverNook authenticated stdio MCP v1")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--access", type=Path, required=True)
+    parser.add_argument("--profile", choices=("recall", "trusted-host"), default="recall",
+                        help="recall: query tools only (default); trusted-host: all ordinary tools")
     arguments = parser.parse_args()
     logging.disable(logging.CRITICAL)  # SDK validation/trace logs must not echo request payloads.
     try:
-        anyio.run(serve, arguments.config, arguments.access)
+        anyio.run(serve, arguments.config, arguments.access, arguments.profile)
     except MemoryFailure as error:
         sys.stderr.write(f"evernook:{error.code}\n")
         raise SystemExit(1) from None

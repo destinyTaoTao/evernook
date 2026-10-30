@@ -22,7 +22,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 身份登记文件升级为严格 v3 `clients` 清单；旧 v1/v2 自动按单身份读取，不自动增加权限。所有普通操作每次读取最新登记并校验调用端身份、token、契约版本；已连接进程不会无条件继续使用过期登记。SQLite 仍为同一个权威账本，没有另建 MCP 数据库。
 
-启动命令只包含路径：
+模型查询启动命令只包含路径及可选的本地模式：
 
 ```text
 <venv-python.exe> -m evernook.mcp_server --config E:\EverNookData\runtime.json --access E:\EverNookData\mcp-access-synthetic.json
@@ -30,9 +30,19 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 令牌只从受 ACL 保护的访问文件载入，不在参数、环境变量、工具参数或协议客户端名称中传递。该文件必须位于同一运行目录，启动前检查文件及目录 ACL、严格字段/类型、重复 JSON 键和实际核心认证。`clientInfo.name` 只是协议元数据，不授予身份。路径只是宿主的可信启动配置，模型工具不能修改路径或重新绑定身份。同一 Windows 账户内进程能够读取账户文件的边界同核心，不能把它称为同账户沙箱。
 
+## 默认查询模式与可信宿主迁移
+
+[Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/read/read_source/read_important/state/status` 六个工具。`remember/mark_important/change/list` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
+
+**兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表完整十个工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。
+
+认证只证明调用端持有访问文件，不能证明 `role=user` 来自真实用户，也不能证明 `evidence_id` 是用户授权。在完整模式下，核心能校验来源绑定、证据存在与版本，却不能识别模型自行编造的用户角色事件；原生宿主必须在模型之外生成来源，并把更正/抑制等用户管理意图接到可信交互。profile 是受信任启动配置的限制，不是持久化 token scope，也不防御已取得 shell/访问文件的同账户进程。
+
+`recall` 仍可按查询与指定 ID 读取共享普通记忆，不提供按项目/用途/客户端的细粒度内容隔离，也不保证通过多次查询无法遍历数据。它减少默认工具权限，没有改变已确认的共享语义。被取回的文本仍为不可信数据，不可提升成系统指令。原生自动采集/每轮注入仍待真实宿主验收，不能从 MCP 可连接推导为已经支持。
+
 ## 工具与结果
 
-所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。
+所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。下表为 `trusted-host` 完整工具集，默认 `recall` 仅有上述六项。
 
 | 工具后缀 | 输入 | 成功结果 |
 |---|---|---|
@@ -68,4 +78,4 @@ stdin 显式使用严格 UTF-8 reader，覆盖 SDK 默认的替换解码；非�
 
 使用真实 SDK 客户端验证现代协议与 legacy initialize、两个已配对客户端共享、Unicode 原文/核心共用断言、重要标记与抑制、重启重试、错误版本/令牌、来源冒用、敏感投影、严格参数、真实 SQLite 忙锁及插入失败。诊断输出用合成哨兵检查无请求原文或令牌。
 
-T14 新增真实 stdio `search` 回归：索引未建与维护后返回相同可校验原文，状态反映覆盖与降级，敏感查询拒绝。共 10 个工具。索引刷新/重建仅供可信本机维护端使用，不授予模型维护权限。待处理任务数不能理解为已建立检索索引；消费者未运行，词法索引追平不代表模型或整体处理完成。网络 HTTP/SSE、真实 dsh 展示屏障、导出/恢复、备份和模型仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。
+T14 新增真实 stdio `search` 回归：索引未建与维护后返回相同可校验原文，状态反映覆盖与降级，敏感查询拒绝。完整模式 10 个工具、默认查询模式 6 个。索引刷新/重建仅供可信本机维护端使用，不授予模型维护权限。待处理任务数不能理解为已建立检索索引；消费者未运行，词法索引追平不代表模型或整体处理完成。网络 HTTP/SSE、真实 dsh 展示屏障、MCP 导出/恢复、备份和模型仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。

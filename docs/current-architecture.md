@@ -1,10 +1,10 @@
 # 当前实现与架构图
 
-更新：2026-10-30，代码基线 `dffdaa6` 加本轮 T12 候选增量，位于 `codex/r2-fact-candidates`，尚未合并 main。本页依据源码与契约描述已有能力；[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
+更新：2026-10-30，代码基线 `117740e` 加本轮 [#30](https://github.com/destinyTaoTao/evernook/issues/30) CLI 与 MCP 权限收敛增量。本页依据源码与契约描述已有能力；[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
 
 ## 系统结构
 
-当前交付是 Python 本地库与可选 stdio MCP 适配器。不同实例可读取同一配置和 SQLite 账本，但尚无已部署的共享守护服务、HTTP 监听或日常宿主自动采集链路。核心无第三方运行依赖；MCP 为可选依赖。
+当前交付是 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)与可选 stdio MCP 适配器。不同实例可读取同一配置和 SQLite 账本，但尚无已部署的共享守护服务、HTTP 监听或日常宿主自动采集链路。核心/CLI 无第三方运行依赖；MCP 为可选依赖，默认只开放六个查询工具，可信启动端显式选择 `trusted-host` 才开放完整十项。
 
 ```mermaid
 flowchart TB
@@ -39,7 +39,8 @@ flowchart TB
 | [models.py](../src/evernook/models.py) | 版本化输入、来源、回执、状态、分页和检索结果 |
 | [safety.py](../src/evernook/safety.py)、[paths.py](../src/evernook/paths.py) | 有限凭证信号检测，以及受支持文件系统与运行目录权限检查 |
 | [lexical.py](../src/evernook/lexical.py) | Unicode 归一化、中文 1/2/3 字 gram、安全词项与原文坐标映射 |
-| [mcp_server.py](../src/evernook/mcp_server.py) | 10 个 stdio 工具与固定失败回执，复用核心检查 |
+| [cli.py](../src/evernook/cli.py) | 可信本地初始化/配对、stdin JSON 保存与检索、指定回取、状态及词法维护；无 MCP 依赖 |
+| [mcp_server.py](../src/evernook/mcp_server.py) | 默认六个查询工具，可信宿主模式十项；启动配置限制工具权限，固定失败回执，复用核心检查 |
 | [archive.py](../src/evernook/archive.py) | 一致性普通快照、清单/哈希校验、恢复发布与只读归档审查 |
 | [candidates.py](../src/evernook/candidates.py) | 显式任务租约/重试、来源绑定的候选批次提交与失效过滤；不运行模型或接纳事实 |
 | [tests/contracts](../tests/contracts) | 公开边界的合成回归，含真实 stdio、并发与进程退出场景 |
@@ -151,7 +152,7 @@ flowchart TD
 | R4 跨入口与长期运行 | 真实 stdio 协议和两个配对身份共用账本已有回归 | dsh 日常适配、pi、桌宠、安装升级与长期运行验收 |
 | 独立安全与质量 | 普通路径分流、ACL 和契约回归已有实现 | 凭证保险库/逐次明文授权、彻底删除、正式质量集与十万/百万规模性能验收 |
 
-MCP 的 10 个工具覆盖文本保存/读取、来源/时间列表、搜索、重要标记/回取、更正、状态与能力。候选工作流、采集附件、配对、词法维护、归档审查和导出目前均不作为 MCP 工具开放。协议回归通过不表示调用端已经配置、自动采集或注入记忆。
+MCP 的可信宿主模式有 10 个工具，覆盖文本保存/读取、来源/时间列表、搜索、重要标记/回取、更正、状态与能力；默认查询模式只开放六项，并在直接调用时拒绝其余操作。候选工作流、采集附件、配对、词法维护、归档审查和导出目前均不作为 MCP 工具开放。协议回归通过不表示调用端已经配置、自动采集或注入记忆。
 
 归档历史验证见[归档报告](reports/r1-export-2026-10-30.md)，本轮任务与候选验证见[候选报告](reports/r2-candidates-2026-10-30.md)。本页不将测试数量、R0 小样本耗时或约 1 秒目标解释为生产质量/性能验收。
 

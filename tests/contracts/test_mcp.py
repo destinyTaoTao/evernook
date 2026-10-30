@@ -28,8 +28,44 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.access_path = self.config.parent / "mcp-access.json"
         self.access_path.write_text(json.dumps(asdict(self.access)), encoding="utf-8")
         self.parameters = StdioServerParameters(command=sys.executable,
-            args=["-m", "evernook.mcp_server", "--config", str(self.config), "--access", str(self.access_path)],
+            args=["-m", "evernook.mcp_server", "--config", str(self.config), "--access", str(self.access_path),
+                  "--profile", "trusted-host"],
             cwd=str(Path(__file__).resolve().parents[2]))
+
+    async def test_default_recall_profile_denies_mutation_and_bulk_list_even_by_direct_call(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        event = Event(Source("test", "session", "main", "existing"), "user", 1, None,
+                      "complete", "合成：默认查询🙂")
+        receipt = runtime.submit(self.access, event)
+        recall = self.parameters.model_copy(update={"args": self.parameters.args[:-2]})
+        async with Client(recall, read_timeout_seconds=20) as client:
+            listed = await client.list_tools()
+            self.assertEqual({tool.name for tool in listed.tools}, {
+                "evernook_v1_search", "evernook_v1_read", "evernook_v1_read_source",
+                "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status"})
+            blocked: dict[str, dict[str, Any]] = {
+                "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
+                "change": {"change": {}}, "list": {},
+            }
+            for name, arguments in blocked.items():
+                result = await client.call_tool("evernook_v1_" + name, arguments)
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.structured_content, {"contract_version": 1, "ok": False,
+                    "error": {"code": "operation_not_allowed"}})
+            escalated = await client.call_tool("evernook_v1_status", {"profile": "trusted-host"})
+            self.assertEqual(escalated.structured_content, {"contract_version": 1, "ok": False,
+                "error": {"code": "invalid_arguments"}})
+            read = await client.call_tool("evernook_v1_read", {"message_id": receipt.message_id})
+            assert read.structured_content is not None
+            self.assertEqual(read.structured_content["result"]["event"]["text"], event.text)
+            searched = await client.call_tool("evernook_v1_search", {"query": "默认查询"})
+            assert searched.structured_content is not None
+            self.assertEqual(searched.structured_content["result"]["hits"][0]["message_id"], receipt.message_id)
+            status = await client.call_tool("evernook_v1_status", {})
+            assert status.structured_content is not None
+            self.assertEqual(status.structured_content["result"]["adapter"], {"profile": "recall", "writes_allowed": False})
+        self.assertEqual(runtime.status(self.access).messages, 1)
+        self.assertEqual(runtime.state(self.access, receipt.message_id).status, "active")
 
     async def test_real_stdio_protocol_saves_exact_original_and_reads_same_core_record(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",
@@ -96,7 +132,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         peer_path = self.config.parent / "mcp-access-peer.json"
         peer = pair_client(self.config, client_id="synthetic-peer", entry="peer-entry", access_path=peer_path)
         peer_parameters = self.parameters.model_copy(update={"args": ["-m", "evernook.mcp_server", "--config",
-            str(self.config), "--access", str(peer_path)]})
+            str(self.config), "--access", str(peer_path), "--profile", "trusted-host"]})
         async with Client(self.parameters, read_timeout_seconds=20) as first:
             async with Client(peer_parameters, read_timeout_seconds=20) as second:
                 event = Event(Source("test", "session", "main", "shared"), "user", 1, None, "complete", "synthetic shared original")
