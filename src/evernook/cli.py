@@ -104,6 +104,9 @@ def _parser() -> Parser:
         ("maintenance-tick", "Run bounded recoverable navigation work using JSON stdin"),
         ("maintenance-status", "Read navigation backlog and scan cursors"),
         ("navigation-read", "Read a current source-validated navigation bucket"),
+        ("experience-decide", "Trusted version-bound experience review; never a model tool"),
+        ("experience-read", "Read the current source-validated experience draft/state"),
+        ("experience-from-navigation", "Create an extractive experience candidate from existing navigation"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -173,6 +176,22 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command.startswith("experience-"):
+        from .candidates import EvidenceSpan
+        from .experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry
+        experiences = ExperienceRegistry(runtime)
+        value = _input()
+        if args.command == "experience-read":
+            return experiences.read(access, **value)
+        if args.command == "experience-from-navigation":
+            return experiences.propose_navigation(access, **value)
+        draft = value.get("draft")
+        if draft is not None:
+            if not isinstance(draft, dict) or not isinstance(draft.get("sources"), list):
+                raise MemoryFailure("invalid_arguments")
+            draft["sources"] = tuple(EvidenceSpan(**span) for span in draft["sources"])
+            value["draft"] = ExperienceDraft(**draft)
+        return experiences.decide(access, ExperienceDecision(**value))
     if args.command.startswith("maintenance-") or args.command == "navigation-read":
         from .maintenance import MaintenanceBudget, NavigationMaintenance, NavigationPolicy
         maintenance = NavigationMaintenance(runtime)

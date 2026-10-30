@@ -43,7 +43,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             listed = await client.list_tools()
             self.assertEqual({tool.name for tool in listed.tools}, {
                 "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source",
-                "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts"})
+                "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience"})
             blocked: dict[str, dict[str, Any]] = {
                 "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
                 "change": {"change": {}}, "list": {},
@@ -141,6 +141,28 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             attempted = await client.call_tool("evernook_v1_fact_decide", {"approved": True})
             assert attempted.structured_content is not None
             self.assertEqual(attempted.structured_content["error"]["code"], "unknown_tool")
+
+    async def test_real_stdio_experience_query_has_no_rule_review_or_enable_tool(self) -> None:
+        from evernook import EvidenceSpan
+        from evernook.experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry
+        runtime = MemoryRuntime(self.config)
+        text = "合成用户：失败后先检查版本。"
+        receipt = runtime.submit(self.access, Event(Source("test", "experience", "main", "1"), "user", 1, None, "complete", text))
+        registry = ExperienceRegistry(runtime)
+        registry.decide(self.access, ExperienceDecision("proposal", "synthetic-experience", 0, "propose",
+            ExperienceDraft("rule_draft", "合成教训", "合成条件", (EvidenceSpan(receipt.message_id, 1, "original", 1, 0, len(text), text),))))
+        recall = self.parameters.model_copy(update={"args": self.parameters.args[:-2]})
+        async with Client(recall, read_timeout_seconds=20) as client:
+            result = await client.call_tool("evernook_v1_experience", {"experience_id": "synthetic-experience"})
+            assert result.structured_content is not None
+            self.assertFalse(result.is_error)
+            self.assertEqual(result.structured_content["result"]["state"], "draft")
+            self.assertFalse(result.structured_content["result"]["execution_authority"])
+            for tool in ("experience_decide", "experience_enable", "maintenance_tick"):
+                refused = await client.call_tool("evernook_v1_" + tool, {"approved": True})
+                assert refused.structured_content is not None
+                self.assertEqual(refused.structured_content["error"]["code"], "unknown_tool")
+        self.assertEqual(registry.read(self.access, "synthetic-experience").state, "draft")
 
     async def test_protocol_important_change_time_and_status_reuse_core_semantics(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",
