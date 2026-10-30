@@ -1,0 +1,60 @@
+docs/reports/r1-export-2026-10-30.md
+  s_2c447ac9e7c24f::t_5f19b7bb8b3421 1-20,24-38
+  s_2c447ac9e7c24f::t_52f4e232c67950 21-23
+docs/contracts/archive-v1.md
+  s_2c447ac9e7c24f::t_fb57f90fc3adef 1-45,47-57
+  s_2c447ac9e7c24f::t_c2a2b7ed2df7bd 46
+docs/contracts/r1-memory-v1.md
+  s_2c447ac9e7c24f::t_fb57f90fc3adef 72-73
+src/evernook/__init__.py
+  s_2c447ac9e7c24f::t_bb3d752a4ebac4 9,17
+tests/contracts/test_archive.py
+  s_2c447ac9e7c24f::t_bd58acfa304f72 172-197
+  s_2c447ac9e7c24f::t_e92bef4cd240b3 106-112
+  s_2c447ac9e7c24f::t_76f0f6a823153c 31
+  s_2c447ac9e7c24f::t_a3a269d2f8ec01 99
+  s_2c447ac9e7c24f::t_bb3d752a4ebac4 36-37,60-63,128-130
+  s_2c447ac9e7c24f::t_8a4d12c52a40f1 5-7,12,46-59,64-98,100-105,113-127,131-136
+  s_2c447ac9e7c24f::t_a6492da4472f60 8-9,137-170
+  s_2c447ac9e7c24f::t_87df7b78137073 1-4,10-11,13-30,32-35,38-45,171
+  s_2c447ac9e7c24f::t_b90fd4861d3ab2 198-203
+src/evernook/runtime.py
+  s_2c447ac9e7c24f::t_9dbc84d9575b0b 16,28-30,278-281
+  s_403cbb1658cf25::t_601ab1dd8464d8 282
+tests/contracts/archive_worker.py
+  s_2c447ac9e7c24f::t_a6492da4472f60 1-29
+src/evernook/archive.py
+  s_2c447ac9e7c24f::t_19578ad1cc7d64 1-14,16,18,20,22-37,52-58,60-61,63-64,67-73,78-81,84-95,100-111,114-116,119,122-129,134-149,151-162,169-171,173-174,177-180,182-194,197-227,233-234,236-241,265,268-280
+  s_2c447ac9e7c24f::t_3bfc6fcfaa22c5 62,82-83,112-113,121
+  s_2c447ac9e7c24f::t_76f0f6a823153c 17,21,65-66,96-99,163,175-176,228-232,235,250,256-257,267
+  s_2c447ac9e7c24f::t_e92bef4cd240b3 117-118,120,130-133,150
+  s_2c447ac9e7c24f::t_bd58acfa304f72 76-77
+  s_2c447ac9e7c24f::t_4eb4899b126750 59,181
+  s_2c447ac9e7c24f::t_c2a2b7ed2df7bd 167
+  s_2c447ac9e7c24f::t_bb3d752a4ebac4 15,19,38-51,164-166,168,172,195-196,242-249,251-255,258-264,266,281-282
+  s_2c447ac9e7c24f::t_a3a269d2f8ec01 74-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64158d7364d9677847ea3533b743cce97ae035e2",
+  "prompts": {},
+  "sessions": {
+    "s_2c447ac9e7c24f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18acd-af64-7303-99ae-a17b0427b108",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    },
+    "s_403cbb1658cf25": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a187d6-5314-7f72-b2ed-e0ff36c9f00e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
