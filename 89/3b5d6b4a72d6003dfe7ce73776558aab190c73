@@ -1,0 +1,50 @@
+tests/contracts/test_experience.py
+  s_fbb7b85144f0e3::t_60f1f5b4f1ab7b 185-186
+  s_fbb7b85144f0e3::t_f6ec972ac374bd 1-184,187-202
+src/evernook/context.py
+  s_fbb7b85144f0e3::t_a2c5539d43b9ea 12,34,76-77,81-82,168-170,174-183,188,223-225
+  s_fbb7b85144f0e3::t_4edc2fd497884d 171-173
+  s_fbb7b85144f0e3::t_975e8c56da2f77 184-187
+src/evernook/experience.py
+  s_fbb7b85144f0e3::t_6ef4e2f9d2fb9d 13,70-72,188-194,210
+  s_fbb7b85144f0e3::t_09ba50fe6202a6 165-171,250
+  s_fbb7b85144f0e3::t_a2c5539d43b9ea 222-241
+  s_fbb7b85144f0e3::t_38b8f116bd1ac4 1-12,14-69,73-112,117-164,172-187,195-209,211-221,242-249,251-262
+  s_fbb7b85144f0e3::t_60f1f5b4f1ab7b 113-116
+src/evernook/cli.py
+  s_fbb7b85144f0e3::t_09ba50fe6202a6 182,185,187,194
+  s_fbb7b85144f0e3::t_38b8f116bd1ac4 107-109,179-181,183-184,186,188-193
+tests/contracts/test_context.py
+  s_fbb7b85144f0e3::t_4edc2fd497884d 17,104-134
+  s_fbb7b85144f0e3::t_1b2295d5af6638 135
+docs/contracts/context-v1.md
+  s_fbb7b85144f0e3::t_60b60c414e12ab 3,17
+docs/reports/r3-experience-2026-10-31.md
+  s_fbb7b85144f0e3::t_0d99d8ec154a6f 1-6,9-13
+  s_fbb7b85144f0e3::t_d52f5ed856b4f2 7-8
+docs/contracts/experience-v1.md
+  s_fbb7b85144f0e3::t_60b60c414e12ab 1-43
+docs/contracts/mcp-v1.md
+  s_fbb7b85144f0e3::t_60b60c414e12ab 35,55
+src/evernook/mcp_server.py
+  s_fbb7b85144f0e3::t_a2c5539d43b9ea 27,106-109,170-171,184
+tests/contracts/test_mcp.py
+  s_fbb7b85144f0e3::t_a2c5539d43b9ea 46
+  s_fbb7b85144f0e3::t_4edc2fd497884d 145-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "893b5d6b4a72d6003dfe7ce73776558aab190c73",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
