@@ -23,7 +23,7 @@ vault = ["PyNaCl==1.6.2"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-evernook = ["embedding_worker.mjs"]
+evernook = ["embedding_worker.mjs", "extraction_worker.mjs"]
 
 [tool.mypy]
 strict = true

@@ -209,15 +209,17 @@ class CandidateWorkflow:
             db.execute("COMMIT")
         return result
 
-    def fail(self, access: Access, run_id: str, token: str) -> CandidateRun:
+    def fail(self, access: Access, run_id: str, token: str, *, error_code: str = "extractor_failed") -> CandidateRun:
         identity = self.runtime._authorize(access)
+        if not isinstance(error_code, str) or error_code not in {"extractor_failed", "canceled", "timed_out", "invalid_output", "input_not_admitted", "dependency_unavailable"}:
+            raise MemoryFailure("invalid_candidate_failure")
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._row(db, run_id)
             self._lease(row, identity.client_id, token)
             if row["state"] == "succeeded":
                 raise MemoryFailure("candidate_result_conflict")
-            db.execute("UPDATE candidate_runs_v1 SET state='failed',error_code='extractor_failed',lease_until=NULL WHERE id=?", (run_id,))
+            db.execute("UPDATE candidate_runs_v1 SET state='failed',error_code=?,lease_until=NULL WHERE id=?", (error_code, run_id))
             result = self._status(db, self._row(db, run_id))
             db.execute("COMMIT")
         return result
