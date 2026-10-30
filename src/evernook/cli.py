@@ -98,12 +98,15 @@ def _parser() -> Parser:
         ("semantic-status", "Report semantic coverage for the configured model space"),
         ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
         ("fact-query", "Read current/historical/planned facts using JSON stdin"),
+        ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
         if name in ("recall", "refresh-semantic", "semantic-status"):
             command.add_argument("--embedding-config", type=Path)
+        if name == "extract":
+            command.add_argument("--extraction-config", type=Path, required=True)
         if name in ("read", "state"):
             command.add_argument("--message-id", required=True)
     return parser
@@ -165,6 +168,13 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command == "extract":
+        from .extraction import ExtractionProcessor, LocalQwen
+        value = _input()
+        if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
+            raise MemoryFailure("invalid_arguments")
+        value["source_ids"] = tuple(value["source_ids"])
+        return ExtractionProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
     if args.command in ("fact-decide", "fact-query"):
         from .facts import FactDecision, FactRegistry
         registry = FactRegistry(runtime)
