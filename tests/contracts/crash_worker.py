@@ -9,7 +9,7 @@ import sys
 from typing import Any
 from unittest.mock import patch
 
-from evernook import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryRuntime, Source
+from evernook import Access, AttachmentInput, Capture, Change, EmbeddingSpace, Event, ImportantMark, MemoryRuntime, SemanticRecall, Source
 
 
 def main() -> None:
@@ -25,6 +25,39 @@ def main() -> None:
         print(json.dumps({"gaps": captured.gaps, "original_saved": captured.message.original_saved}), flush=True)
         return
     real_connect = sqlite3.connect
+
+    if sys.argv[2].startswith("semantic_"):
+        receipt = runtime.submit(access, event)
+
+        class SyntheticBackend:
+            space = EmbeddingSpace("synthetic-only", "v1", 3, "synthetic-digest", 64, 16)
+
+            def embed(self, texts: tuple[str, ...], *, timeout: float) -> tuple[tuple[float, ...], ...]:
+                return tuple((0.0, 0.0, 1.0) for _ in texts)
+
+        workflow = SemanticRecall(runtime, SyntheticBackend())
+        commits = 0
+
+        def semantic_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            connection: sqlite3.Connection = real_connect(*args, **kwargs)
+
+            def checkpoint(statement: str) -> None:
+                nonlocal commits
+                if statement.strip().upper() == "COMMIT":
+                    commits += 1
+                    if commits == 2:
+                        os._exit(86)
+
+            connection.set_trace_callback(checkpoint)
+            return connection
+
+        if sys.argv[2] == "semantic_before_commit":
+            with patch("sqlite3.connect", semantic_connect):
+                workflow.refresh(access)
+            raise AssertionError("semantic kill point not reached")
+        semantic_status = workflow.refresh(access)
+        print(json.dumps({"message_id": receipt.message_id, "state": semantic_status.state}), flush=True)
+        os._exit(87)
 
     def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
         connection: sqlite3.Connection = real_connect(*args, **kwargs)

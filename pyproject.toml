@@ -20,6 +20,9 @@ mcp = ["mcp==2.3.0"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+evernook = ["embedding_worker.mjs"]
+
 [tool.mypy]
 strict = true
 files = ["src", "tests"]

@@ -9,4 +9,4 @@ EverNook 已有初始普通文本底座，其他能力仍按阶段实现。请�
 - 提交只使用合成对话。不要上传私人聊天、人设、数据库、向量、备份、密钥或可识别个人的截图。
 - 后续引入第三方代码、模型、素材时保留必要归属和许可证信息。
 
-本地库安装与测试见 [Python 文本契约](docs/contracts/python-text-v1.md)，本地命令行初始化、配对与使用见 [CLI 契约](docs/contracts/cli-v1.md)，可选 stdio 启动见 [MCP 契约](docs/contracts/mcp-v1.md)。MCP 默认仅查询，可信宿主使用完整工具需显式配置 `--profile trusted-host`。当前没有网络记忆服务；请勿将文档中的拟议组件当作已经可用。
+本地库安装与测试见 [Python 文本契约](docs/contracts/python-text-v1.md)，本地命令行初始化、配对与使用见 [CLI 契约](docs/contracts/cli-v1.md)，可选 stdio 启动见 [MCP 契约](docs/contracts/mcp-v1.md)，显式本地模型候选与自适应近期范围见 [语义召回契约](docs/contracts/semantic-v1.md)。MCP 默认仅查询，可信宿主使用完整工具需显式配置 `--profile trusted-host`。当前没有网络记忆服务；请勿将文档中的拟议组件当作已经可用。
