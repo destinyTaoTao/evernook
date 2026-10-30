@@ -1,0 +1,61 @@
+docs/contracts/mcp-v1.md
+  s_ad9a013bbcc220::t_287901f4196fce 42,47,71
+src/evernook/__init__.py
+  s_ad9a013bbcc220::t_bba3f2f7c7f4fc 6,15
+tests/contracts/test_search.py
+  s_ad9a013bbcc220::t_02eccc914babe6 8-9,169-205
+  s_ad9a013bbcc220::t_c310dc0bb52cf4 118-125,129-130
+  s_ad9a013bbcc220::t_5568284e7a3b2d 1-3,11-13,15-40,270-272
+  s_ad9a013bbcc220::t_c78f40e8852972 4-5,10,14,82-117,126-128,131-168
+  s_ad9a013bbcc220::t_22a94c3cc9f988 6-7,228-268
+  s_ad9a013bbcc220::t_b4276749037de1 207-227,269
+  s_ad9a013bbcc220::t_dc0d49e2872c62 41-58
+  s_ad9a013bbcc220::t_ff0f2372ca7f68 59-81,206
+src/evernook/models.py
+  s_ad9a013bbcc220::t_bba3f2f7c7f4fc 200-241
+src/evernook/runtime.py
+  s_ad9a013bbcc220::t_29ac3b22dc6ecf 32
+  s_ad9a013bbcc220::t_e59a69909fdcfc 747-748,750-756
+  s_ad9a013bbcc220::t_4cb66a33c48c79 26,30-31,33-34,764-765,767-852,854-875
+  s_ad9a013bbcc220::t_bba3f2f7c7f4fc 743-746,749,757-763,766,853
+  s_ad9a013bbcc220::t_f6b617280ff974 22,271
+tests/contracts/crash_worker.py
+  s_ad9a013bbcc220::t_22a94c3cc9f988 39-63
+src/evernook/mcp_server.py
+  s_ad9a013bbcc220::t_f6b617280ff974 48-53,75-80,92-93,102-103
+src/evernook/lexical.py
+  s_ad9a013bbcc220::t_e59a69909fdcfc 1-46
+  s_ad9a013bbcc220::t_4cb66a33c48c79 47-65
+tests/contracts/test_mcp.py
+  s_ad9a013bbcc220::t_b4276749037de1 254-281
+tests/contracts/test_recovery.py
+  s_ad9a013bbcc220::t_22a94c3cc9f988 154-178
+tests/contracts/test_boundary.py
+  s_ad9a013bbcc220::t_b4276749037de1 41-44
+docs/contracts/lexical-v1.md
+  s_ad9a013bbcc220::t_287901f4196fce 1-52
+docs/contracts/python-text-v1.md
+  s_ad9a013bbcc220::t_287901f4196fce 29-30
+docs/reports/r1-lexical-2026-10-30.md
+  s_ad9a013bbcc220::t_e6a07db342dc5f 27,29-30,32-33,35
+  s_ad9a013bbcc220::t_658aa29f0abdea 1-20,22-26,28,31,34
+  s_ad9a013bbcc220::t_fc2a603531f680 21
+README.md
+  s_ad9a013bbcc220::t_978f7d99077db2 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc74a0ec6b12a67115e9d2d92851b2db759b9434",
+  "prompts": {},
+  "sessions": {
+    "s_ad9a013bbcc220": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18712-c5b3-7e92-9b6e-71d61a95763e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
