@@ -7,6 +7,7 @@ from .models import (
 )
 from .runtime import MemoryRuntime, initialize, pair_client
 from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantReview, restore_archive, verify_archive
+from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 
 __all__ = [
     "Access", "ArchiveView", "Change", "ChangeRecord", "ContextReceipt", "DerivedContext",
@@ -15,4 +16,5 @@ __all__ = [
     "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize", "pair_client",
     "SearchSpan", "SearchHit", "SearchPage", "LexicalStatus",
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",
+    "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",
 ]

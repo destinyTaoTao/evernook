@@ -6,7 +6,7 @@ Local-first, evidence-backed long-term memory for AI companions.
 
 EverNook 面向个人桌宠与 AI 陪伴场景：保存多年对话，逐字回取重要交代，在多轮交流中保持上下文，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 
-> **当前状态：本地底座已支持原文、重要交代、更正/抑制、工具/文本附件、中文词法/精确检索、普通导出与受审查限制的恢复及可选 stdio MCP，尚无生产记忆服务。** [核心契约](docs/contracts/python-text-v1.md)、[附件边界](docs/contracts/capture-v1.md)、[词法检索](docs/contracts/lexical-v1.md)与 [MCP 配置](docs/contracts/mcp-v1.md)给出真实支持范围；R0 [采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
+> **当前状态：本地底座已支持原文、重要交代、更正/抑制、工具/文本附件、中文词法/精确检索、普通导出与受审查限制的恢复、显式候选任务及可选 stdio MCP，尚无生产记忆服务。** [核心契约](docs/contracts/python-text-v1.md)、[附件边界](docs/contracts/capture-v1.md)、[词法检索](docs/contracts/lexical-v1.md)与 [MCP 配置](docs/contracts/mcp-v1.md)给出真实支持范围；R0 [采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
 
 ## 我们希望做到什么
 
@@ -39,7 +39,9 @@ flowchart LR
     Export --> Review[只读审查恢复：review_required]
 ```
 
-图中为已有本地库与可选 stdio 适配能力，尚无日常 dsh/pi/桌宠自动采集链路、后台沉淀或已部署的共享记忆服务。普通归档未加密，审查恢复不开放普通召回。[当前实现与四张流程图](docs/current-architecture.md)列出源码职责、阶段进度和缺口；[目标架构](docs/architecture.md)保留后续设计。
+图中为已有本地库与可选 stdio 适配能力，尚无日常 dsh/pi/桌宠自动采集链路、后台沉淀或已部署的共享记忆服务。普通归档未加密，审查恢复不开放普通召回。[当前实现与流程图](docs/current-architecture.md)列出源码职责、阶段进度和缺口；[目标架构](docs/architecture.md)保留后续设计。
+
+显式任务与候选底座已支持来源版本/片段校验、租约重试和失效过滤，见[候选契约](docs/contracts/candidates-v1.md)；真实抽取模型、自动事实接纳和调度仍未启用。
 
 ## 文档导航
 
