@@ -1,0 +1,50 @@
+tests/contracts/test_candidates.py
+  s_2c447ac9e7c24f::t_1ab84e14afb237 4,82-101,103-132
+  s_2c447ac9e7c24f::t_d5f74b4ef674c3 1-3,13-14,17,19-35,37-44,46-55
+  s_2c447ac9e7c24f::t_e9305415f3762f 10-11,179,194-219
+  s_2c447ac9e7c24f::t_a38da4b8afaa9d 18,288-296,301-302,304-311
+  s_2c447ac9e7c24f::t_3b0dcfdc24f29f 12,56-81
+  s_2c447ac9e7c24f::t_3dbd468590b850 15-16,220-287,312
+  s_2c447ac9e7c24f::t_fd049f86662993 5,7-9,36,45,102,133-178
+  s_2c447ac9e7c24f::t_d3ed176f3f345c 180-193
+  s_2c447ac9e7c24f::t_f1279b03c072fa 297-300
+  s_2c447ac9e7c24f::t_58c7790cf9fe5e 6,303
+docs/current-architecture.md
+  s_2c447ac9e7c24f::t_a0a47813450123 3,12-13,23-24,44,72,103-124,149,154,156
+README.md
+  s_2c447ac9e7c24f::t_65bc724ce75659 42
+  s_2c447ac9e7c24f::t_3d9c7b0b082150 9,43-44
+docs/contracts/candidates-v1.md
+  s_2c447ac9e7c24f::t_f4d91cc0d449d1 49-52,55-56,59
+  s_2c447ac9e7c24f::t_d2ac9e13a4863a 53-54
+  s_2c447ac9e7c24f::t_ce922268f88442 1-48,57-58,60-80
+tests/contracts/candidate_worker.py
+  s_2c447ac9e7c24f::t_e9305415f3762f 1-50
+src/evernook/candidates.py
+  s_2c447ac9e7c24f::t_4d76ca8fb720bd 1-61,63-113,115-116,130-131,135,143-160,167,176-186,189-205,207,221-228,230-266,268-275
+  s_2c447ac9e7c24f::t_12cc740a24d662 114,127,136-142,161-166,168-175,187-188,208-220
+  s_2c447ac9e7c24f::t_bc101d10580d65 117-119,121-126,128-129,132,229,267
+  s_2c447ac9e7c24f::t_66269e5def45f4 62,120,133-134
+  s_2c447ac9e7c24f::t_b57718ab54d6a2 206
+src/evernook/__init__.py
+  s_2c447ac9e7c24f::t_4d76ca8fb720bd 10,19
+docs/reports/r2-candidates-2026-10-30.md
+  s_2c447ac9e7c24f::t_372988e5edee36 23-25
+  s_2c447ac9e7c24f::t_7b94362a58efe6 1-22,26-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "740629a10c49f6005513d674cc9be77bf8d52227",
+  "prompts": {},
+  "sessions": {
+    "s_2c447ac9e7c24f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18acd-af64-7303-99ae-a17b0427b108",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
