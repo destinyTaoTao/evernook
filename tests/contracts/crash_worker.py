@@ -32,7 +32,7 @@ def main() -> None:
         class SyntheticBackend:
             space = EmbeddingSpace("synthetic-only", "v1", 3, "synthetic-digest", 64, 16)
 
-            def embed(self, texts: tuple[str, ...], *, timeout: float) -> tuple[tuple[float, ...], ...]:
+            def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: object = None) -> tuple[tuple[float, ...], ...]:
                 return tuple((0.0, 0.0, 1.0) for _ in texts)
 
         workflow = SemanticRecall(runtime, SyntheticBackend())
