@@ -1,0 +1,29 @@
+docs/roadmap.md
+  s_2c447ac9e7c24f::t_ed4e590dc914dc 3
+README.md
+  s_2c447ac9e7c24f::t_ed4e590dc914dc 22,24,30-37
+  s_2c447ac9e7c24f::t_d654d5dc9c0d8e 9,38-39,42,50-51
+docs/architecture.md
+  s_2c447ac9e7c24f::t_ed4e590dc914dc 3-5
+  s_2c447ac9e7c24f::t_83a1dcb42f5b89 47,101
+docs/current-architecture.md
+  s_2c447ac9e7c24f::t_2e9bfaca08b5e1 90,102
+  s_2c447ac9e7c24f::t_fe21adc48f7e1e 112,115
+  s_2c447ac9e7c24f::t_339b8a0248270f 1-89,91-101,103-111,113-114,116-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dffdaa6dccd233d5c9e078d21aa256de9bcac719",
+  "prompts": {},
+  "sessions": {
+    "s_2c447ac9e7c24f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18acd-af64-7303-99ae-a17b0427b108",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
