@@ -1,0 +1,51 @@
+src/evernook/extraction.py
+  s_fbb7b85144f0e3::t_1c2b97b40b19cd 68,74-79,109-110
+  s_fbb7b85144f0e3::t_eba6f177b1f33a 1-56,66-67,69-73,80-91,95-108,111-119,121-122,126-127,129-135,152-197,199-208,214,216-218
+  s_fbb7b85144f0e3::t_9211112c3434b4 57-65,92-94,198
+  s_fbb7b85144f0e3::t_12d9fc84687b6f 120,123-125,128,136-151
+  s_fbb7b85144f0e3::t_4e82c708176efe 209-213,215
+src/evernook/extraction_worker.mjs
+  s_fbb7b85144f0e3::t_12d9fc84687b6f 38-40,47
+  s_fbb7b85144f0e3::t_eba6f177b1f33a 1-37,41-46,48-49
+pyproject.toml
+  s_fbb7b85144f0e3::t_eba6f177b1f33a 26
+src/evernook/cli.py
+  s_fbb7b85144f0e3::t_eba6f177b1f33a 101,108-109,171-177
+docs/contracts/extraction-v1.md
+  s_fbb7b85144f0e3::t_4b7f9127503af5 1-4,6-29,31-36
+  s_fbb7b85144f0e3::t_1c2b97b40b19cd 5
+  s_fbb7b85144f0e3::t_51ff9e413dc3b3 30
+tests/contracts/extraction_process_worker.py
+  s_fbb7b85144f0e3::t_ca8dbad8122195 1-7
+tests/contracts/test_extraction.py
+  s_fbb7b85144f0e3::t_4e82c708176efe 121
+  s_fbb7b85144f0e3::t_ca8dbad8122195 1-62,69-120,122-156
+  s_fbb7b85144f0e3::t_12d9fc84687b6f 63-68
+probes/extraction/README.md
+  s_fbb7b85144f0e3::t_4b7f9127503af5 1-9
+src/evernook/candidates.py
+  s_fbb7b85144f0e3::t_9211112c3434b4 214
+  s_fbb7b85144f0e3::t_4e82c708176efe 212,215,222
+probes/extraction/verify.py
+  s_fbb7b85144f0e3::t_4e82c708176efe 39-40,43
+  s_fbb7b85144f0e3::t_0c24377f8b5f8d 1-38,41-42,44-51
+docs/reports/r2-extraction-2026-10-30.md
+  s_fbb7b85144f0e3::t_baa79a3a603840 9-11
+  s_fbb7b85144f0e3::t_4b7f9127503af5 1-8,12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45a8503f0e7a59ce8becfe79e39bffc9b6a2eefb",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
