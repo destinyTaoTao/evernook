@@ -2,6 +2,8 @@
 
 The dsh adapter targets `0.2.1-rc.3` with Cordis `4.0.5`, Node `24.11.x` and the same authenticated Python ledger. It does not activate or modify a desktop profile. See the [contract](../../docs/contracts/dsh-native-v1.md) for configuration, source identity, bounded attachments, buffered publication and remaining acceptance work.
 
+The opt-in pi SDK adapter targets `@earendil-works/pi-coding-agent` / `pi-ai` `1.4.0`. Its dedicated provider and explicitly wrapped tools save before publication; see the [pi contract](../../docs/contracts/pi-native-v1.md) for model selection, the required built-in tool mask, text-only support and acceptance limits. Both entries share the same authoritative ledger.
+
 ```powershell
 npm ci --ignore-scripts
 npm run typecheck
