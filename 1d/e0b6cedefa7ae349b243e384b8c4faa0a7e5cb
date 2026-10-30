@@ -1,0 +1,43 @@
+src/evernook/facts.py
+  s_fbb7b85144f0e3::t_02c03983b058fd 69,254-259,282-283
+  s_fbb7b85144f0e3::t_b369b9fe51432d 41-42,100,115,172,207
+  s_fbb7b85144f0e3::t_8ec1c4facdbec3 1-40,43-68,70-99,101-114,116-135,138-140,144-171,173-174,178-197,199-206,208-233,235-253,260-281
+  s_fbb7b85144f0e3::t_0779032a5c5e03 141-143,175-177,198,234
+  s_fbb7b85144f0e3::t_3929c15e375ece 136-137
+docs/contracts/facts-v1.md
+  s_fbb7b85144f0e3::t_7839f7a57649d4 1-39
+src/evernook/cli.py
+  s_fbb7b85144f0e3::t_02c03983b058fd 99-100,168-178
+docs/contracts/cli-v1.md
+  s_fbb7b85144f0e3::t_7839f7a57649d4 63-64
+src/evernook/mcp_server.py
+  s_fbb7b85144f0e3::t_02c03983b058fd 26,98-104,163-164,177
+tests/contracts/test_facts.py
+  s_fbb7b85144f0e3::t_3929c15e375ece 1-7,11-13,15-66,68-75,85-171,191-194
+  s_fbb7b85144f0e3::t_02c03983b058fd 8-10,14,67,172-190
+  s_fbb7b85144f0e3::t_b369b9fe51432d 76-84
+tests/contracts/test_mcp.py
+  s_fbb7b85144f0e3::t_02c03983b058fd 46
+  s_fbb7b85144f0e3::t_0acc420a0faa99 118-144
+docs/contracts/mcp-v1.md
+  s_fbb7b85144f0e3::t_7839f7a57649d4 35,45,54
+docs/reports/r2-temporal-facts-2026-10-30.md
+  s_fbb7b85144f0e3::t_7839f7a57649d4 1-8,10-11
+  s_fbb7b85144f0e3::t_33b18f173d77f0 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1de0b6cedefa7ae349b243e384b8c4faa0a7e5cb",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
