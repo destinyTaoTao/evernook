@@ -8,6 +8,7 @@ import sys
 import sqlite3
 from contextlib import closing
 import tempfile
+import threading
 import unittest
 
 from evernook import Access, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
@@ -22,7 +23,7 @@ class SyntheticEmbedding:
         self.hook: Callable[[], object] | None = None
         self.invalid: tuple[float, ...] | None = None
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float) -> tuple[tuple[float, ...], ...]:
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]:
         self.calls.append(texts)
         if self.hook:
             self.hook()

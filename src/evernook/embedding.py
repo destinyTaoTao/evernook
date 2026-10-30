@@ -7,6 +7,8 @@ import json
 import math
 from pathlib import Path
 import subprocess
+import threading
+import time
 from typing import Protocol
 
 from .models import MemoryFailure
@@ -34,7 +36,7 @@ class EmbeddingBackend(Protocol):
     @property
     def space(self) -> EmbeddingSpace: ...
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float) -> tuple[tuple[float, ...], ...]: ...
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]: ...
 
 
 def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
@@ -80,35 +82,56 @@ class LocalMiniLM:
             raise MemoryFailure("invalid_embedding_config")
         return cls(node=Path(config["node"]), transformers_dir=Path(config["transformers_dir"]), model_dir=Path(config["model_dir"]))
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float) -> tuple[tuple[float, ...], ...]:
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]:
         if (type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120
                 or not isinstance(texts, tuple) or not 1 <= len(texts) <= 16):
             raise MemoryFailure("invalid_embedding_request")
         for text in texts:
             if not isinstance(text, str) or not text or len(text) > 256 or credential_signal(text):
                 raise MemoryFailure("protected_embedding_input")
+        deadline = time.monotonic() + timeout
+        process: subprocess.Popen[bytes] | None = None
+        def remaining() -> float:
+            if cancel is not None and cancel.is_set():
+                raise MemoryFailure("embedding_canceled")
+            value = deadline - time.monotonic()
+            if value <= 0:
+                raise MemoryFailure("embedding_timeout")
+            return value
         try:
             # Check every invocation: modified model files cannot silently share a vector space.
             for name, expected in _FILES.items():
+                remaining()
                 path = (self.model_dir / name).resolve()
                 if not path.is_relative_to(self.model_dir):
                     raise MemoryFailure("embedding_unavailable")
                 with path.open("rb") as source:
                     if hashlib.file_digest(source, "sha256").hexdigest() != expected:
                         raise MemoryFailure("embedding_integrity_mismatch")
-            result = subprocess.run([str(self.node), str(Path(__file__).with_name("embedding_worker.mjs"))],
-                input=_json({"model_dir": str(self.model_dir), "transformers_dir": str(self.transformers_dir), "texts": texts}).encode(),
-                capture_output=True, timeout=timeout)
-            if result.returncode or len(result.stdout) > 1024 * 1024:
+            payload = _json({"model_dir": str(self.model_dir), "transformers_dir": str(self.transformers_dir), "texts": texts}).encode()
+            remaining()
+            process = subprocess.Popen([str(self.node), str(Path(__file__).with_name("embedding_worker.mjs"))],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+            pending_input: bytes | None = payload
+            while True:
+                try:
+                    output, _ = process.communicate(input=pending_input, timeout=min(0.1, remaining()))
+                    break
+                except subprocess.TimeoutExpired:
+                    pending_input = None
+            if process.returncode or len(output) > 1024 * 1024:
                 raise MemoryFailure("embedding_unavailable")
-            value = json.loads(result.stdout.decode("utf-8", errors="strict"))
+            value = json.loads(output.decode("utf-8", errors="strict"))
             if not isinstance(value, dict) or set(value) != {"vectors", "network_attempts"} or value["network_attempts"] != 0:
                 raise MemoryFailure("embedding_unavailable")
             vectors = value["vectors"]
             if not isinstance(vectors, list) or len(vectors) != len(texts):
                 raise MemoryFailure("invalid_embedding")
             return tuple(unit_vector(vector, self.space.dimensions) for vector in vectors)
-        except subprocess.TimeoutExpired:
-            raise MemoryFailure("embedding_timeout") from None
         except (OSError, ValueError, TypeError):
             raise MemoryFailure("embedding_unavailable") from None
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
