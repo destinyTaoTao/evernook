@@ -1,0 +1,66 @@
+src/evernook/embedding_worker.mjs
+  s_fbb7b85144f0e3::t_76a114b994d594 5,27-28
+  s_fbb7b85144f0e3::t_d78d5a89cb9b06 1-4,6-26,29-52
+tests/contracts/test_semantic.py
+  s_fbb7b85144f0e3::t_9a2bfe6e2f55b3 158-160
+  s_fbb7b85144f0e3::t_11eee4d3f0f976 8-9,182-191
+  s_fbb7b85144f0e3::t_6f5aba16e06722 1-5,10-157,161-167,192-195
+  s_fbb7b85144f0e3::t_76a114b994d594 6-7,168-181
+docs/contracts/cli-v1.md
+  s_fbb7b85144f0e3::t_8dae8cad794398 29-30
+docs/contracts/mcp-v1.md
+  s_fbb7b85144f0e3::t_4903aeb1e7628e 35,37,45,53,82-84
+docs/current-architecture.md
+  s_fbb7b85144f0e3::t_4903aeb1e7628e 3,7,43-44,103,152,156,162
+src/evernook/embedding.py
+  s_fbb7b85144f0e3::t_d78d5a89cb9b06 1-83,86-114
+  s_fbb7b85144f0e3::t_76a114b994d594 84-85
+tests/contracts/crash_worker.py
+  s_fbb7b85144f0e3::t_b77eb55d051401 58-59
+  s_fbb7b85144f0e3::t_76a114b994d594 12,29-57,60
+  s_fbb7b85144f0e3::t_5ff97c69d17ecc 61
+src/evernook/__init__.py
+  s_fbb7b85144f0e3::t_9cc80c02615478 11-12,22
+src/evernook/semantic.py
+  s_fbb7b85144f0e3::t_abccaefaf4611d 23-25,27,108-116
+  s_fbb7b85144f0e3::t_76a114b994d594 13,66-67,181,184,246,253-254,261
+  s_fbb7b85144f0e3::t_6f5aba16e06722 83,323-324
+  s_fbb7b85144f0e3::t_32719c1c244682 1-12,14-22,26,28-65,68-82,84-107,117-180,182-183,185-245,247-252,255-260,262-322,325
+docs/reports/r3-semantic-2026-10-30.md
+  s_fbb7b85144f0e3::t_1f409d47c1c64a 28
+  s_fbb7b85144f0e3::t_c5140210d1fdc9 1-27,29-39
+pyproject.toml
+  s_fbb7b85144f0e3::t_d78d5a89cb9b06 23-25
+probes/semantic/README.md
+  s_fbb7b85144f0e3::t_8dae8cad794398 1-13
+CONTRIBUTING.md
+  s_fbb7b85144f0e3::t_8dae8cad794398 12
+src/evernook/cli.py
+  s_fbb7b85144f0e3::t_9cc80c02615478 13-14,68-70,75-76,93-100
+src/evernook/mcp_server.py
+  s_fbb7b85144f0e3::t_9cc80c02615478 23-24,60-63,65-69,87,91,95-96,100,112-113,122,125,168,171-172,193,199
+  s_fbb7b85144f0e3::t_76a114b994d594 64
+tests/contracts/test_mcp.py
+  s_fbb7b85144f0e3::t_9cc80c02615478 44,64-67
+probes/semantic/verify.py
+  s_fbb7b85144f0e3::t_16535e688612c1 1-90
+docs/contracts/semantic-v1.md
+  s_fbb7b85144f0e3::t_9a2bfe6e2f55b3 29
+  s_fbb7b85144f0e3::t_4903aeb1e7628e 1-28,30-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60f7d83bd7af399ff0421fd2b969cca08ac569c6",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
