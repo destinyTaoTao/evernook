@@ -59,14 +59,16 @@ def _parser() -> Parser:
     pair.add_argument("--client-id", required=True)
     pair.add_argument("--entry", required=True)
     pair.add_argument("--access", type=Path, required=True)
-    for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile"):
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile", "vault-show"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
         vault.add_argument("--access", type=Path, required=True)
         vault.add_argument("--inbox-dir", type=Path, required=True)
         vault.add_argument("--key-dir", type=Path, required=True)
-        if name == "vault-reconcile":
+        if name in ("vault-reconcile", "vault-show"):
             vault.add_argument("--object-id", required=True)
+        if name == "vault-show":
+            vault.add_argument("--purpose", required=True)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
     backup_init.add_argument("--key-dir", type=Path, required=True)
     backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
@@ -122,6 +124,9 @@ def _execute(args: argparse.Namespace) -> object:
             inbox = initialize_protected_inbox(memory, args.inbox_dir, args.key_dir, password)
             return {"inbox_id": inbox.inbox_id, "key_id": inbox.public["key_id"], "plaintext_read_enabled": False}
         inbox = ProtectedInbox(memory, args.inbox_dir, args.key_dir)
+        if args.command == "vault-show":
+            from .vault_local import show_local
+            return show_local(inbox, access, args.object_id, args.purpose)
         if args.command == "vault-pending":
             return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}
         if args.command == "vault-reconcile":
