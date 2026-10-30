@@ -96,6 +96,8 @@ def _parser() -> Parser:
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
+        ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
+        ("fact-query", "Read current/historical/planned facts using JSON stdin"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -163,6 +165,17 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command in ("fact-decide", "fact-query"):
+        from .facts import FactDecision, FactRegistry
+        registry = FactRegistry(runtime)
+        value = _input()
+        if args.command == "fact-query":
+            return registry.query(access, **value)
+        if "resolves" in value:
+            if not isinstance(value["resolves"], list):
+                raise MemoryFailure("invalid_arguments")
+            value["resolves"] = tuple(value["resolves"])
+        return registry.decide(access, FactDecision(**value))
     if args.command in ("recall", "refresh-semantic", "semantic-status"):
         backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
         workflow = SemanticRecall(runtime, backend)

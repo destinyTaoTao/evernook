@@ -43,7 +43,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             listed = await client.list_tools()
             self.assertEqual({tool.name for tool in listed.tools}, {
                 "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source",
-                "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status"})
+                "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts"})
             blocked: dict[str, dict[str, Any]] = {
                 "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
                 "change": {"change": {}}, "list": {},
@@ -114,6 +114,33 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             assert rejected.structured_content is not None
             self.assertEqual(rejected.structured_content["error"]["code"], "invalid_arguments")
             self.assertEqual(runtime.status(self.access).messages, 1)
+
+    async def test_default_profile_reads_temporal_facts_but_cannot_accept_a_model_decision(self) -> None:
+        from evernook import CandidateDraft, CandidateWorkflow, EvidenceSpan
+        from evernook.facts import FactDecision, FactRegistry
+        runtime = MemoryRuntime(self.config)
+        text = "合成：明确确认的事实"
+        source = runtime.submit(self.access, Event(Source("test", "facts", "main", "1"), "user", 1, None, "complete", text))
+        workflow = CandidateWorkflow(runtime)
+        lease = workflow.begin(self.access, (source.message_id,), processor_version="synthetic-facts-v1")
+        assert lease.token is not None
+        workflow.complete(self.access, lease.status.run_id, lease.token, (CandidateDraft(text, "user_statement", (
+            EvidenceSpan(source.message_id, 1, "original", 1, 0, len(text), text),)),))
+        candidate = workflow.candidates(self.access, lease.status.run_id)[0]
+        fact = FactRegistry(runtime).decide(self.access, FactDecision("synthetic-mcp-fact", "synthetic-person-a", "preference",
+            candidate.candidate_id, source.message_id, 0, "assert"))
+        recall = self.parameters.model_copy(update={"args": self.parameters.args[:-2]})
+        async with Client(recall, read_timeout_seconds=20) as client:
+            result = await client.call_tool("evernook_v1_facts", {"subject_id": fact.subject_id, "predicate": fact.predicate})
+            assert result.structured_content is not None
+            self.assertFalse(result.is_error)
+            view = result.structured_content["result"]
+            self.assertEqual(view["state"], "unknown_time")
+            self.assertEqual(view["fact"]["text"], text)
+            self.assertEqual(view["fact"]["sources"][0]["message_id"], source.message_id)
+            attempted = await client.call_tool("evernook_v1_fact_decide", {"approved": True})
+            assert attempted.structured_content is not None
+            self.assertEqual(attempted.structured_content["error"]["code"], "unknown_tool")
 
     async def test_protocol_important_change_time_and_status_reuse_core_semantics(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",

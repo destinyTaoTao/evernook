@@ -32,7 +32,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 ## 默认查询模式与可信宿主迁移
 
-[Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/recall/read/read_source/read_important/state/status` 七个查询工具（含 T15 新增查询）。`remember/mark_important/change/list` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
+[Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/recall/read/read_source/read_important/state/status/facts` 八个查询工具（含T15召回与T13事实查询）。`remember/mark_important/change/list/capture/capture_stream` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
 
 **兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。T10 另加可信 `capture/capture_stream` 两项入口，见 [dsh 契约](dsh-native-v1.md)：附件通过严格 base64 编码传输，流在检查后复用 capture 原子事务；默认查询模式继续拒绝这两项操作。
 
@@ -42,7 +42,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 ## 工具与结果
 
-所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。下表为 `trusted-host` 完整工具集，默认 `recall` 仅有上述七项。
+所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。下表及T10采集工具用于 `trusted-host`，默认 `recall` 仅有上述八项。
 
 | 工具后缀 | 输入 | 成功结果 |
 |---|---|---|
@@ -51,6 +51,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 | `list` | 可选 `since/until/limit/offset` | 时间范围 `[since,until)` 的 Page，保留核心分页语义 |
 | `search` | `query`，可选 `mode/since/until/limit/offset` | [词法/精确证据](lexical-v1.md)的来源、版本、原文坐标及索引覆盖/降级信息 |
 | `recall` | `query`；可选 `limit/as_of/recent_days/recent_target_chars/min_similarity/timeout` | [语义融合与自适应近期证据](semantic-v1.md)、实际覆盖范围及降级原因；不返回已接纳事实 |
+| `facts` | `subject_id/predicate`，可选 `valid_at/known_at` | [显式时态事实](facts-v1.md)、计划/争议、来源版本及不可用状态；不提供事实接纳 |
 | `mark_important` | `mark`，同 ImportantMark | 已可靠提交的重要引用 |
 | `read_important` | `important_id`，可选 `cursor/limit/content_version` | 原件/投影 code point 分页，不返回摘要 |
 | `change` | `change`，同 Change | `correct/revoke/suppress` 的版本化回执；不提供物理删除 |
