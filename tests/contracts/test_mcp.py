@@ -5,6 +5,7 @@ from dataclasses import replace
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 import json
+import base64
 import os
 from pathlib import Path
 import sys
@@ -46,6 +47,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             blocked: dict[str, dict[str, Any]] = {
                 "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
                 "change": {"change": {}}, "list": {},
+                "capture": {}, "capture_stream": {},
             }
             for name, arguments in blocked.items():
                 result = await client.call_tool("evernook_v1_" + name, arguments)
@@ -90,6 +92,28 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         stored = MemoryRuntime(self.config).read(self.access, message_id)
         assert stored is not None
         self.assertEqual(stored.event, event)
+
+    async def test_trusted_capture_decodes_text_attachment_and_rejects_malformed_wire_without_writes(self) -> None:
+        event = Event(Source("test", "session", "main", "capture"), "user", 1, None, "complete", "合成附件采集")
+        data = "合成🙂\r\n37.50元".encode()
+        arguments: dict[str, Any] = {"event": asdict(event), "kind": "message", "attachments": [{
+            "attachment_id": "a1", "label": "synthetic.txt", "media_type": "text/plain",
+            "chunks_base64": [base64.b64encode(data).decode()], "expected_size": len(data)}]}
+        runtime = MemoryRuntime(self.config)
+        async with Client(self.parameters, read_timeout_seconds=20) as client:
+            first = await client.call_tool("evernook_v1_capture", arguments)
+            assert first.structured_content is not None
+            self.assertFalse(first.is_error)
+            receipt = first.structured_content["result"]
+            self.assertTrue(receipt["complete"])
+            self.assertEqual(runtime.read_attachment(self.access, receipt["message"]["message_id"], "a1"), data)
+            again = await client.call_tool("evernook_v1_capture", arguments)
+            self.assertEqual(again.structured_content, first.structured_content)
+            arguments["attachments"][0]["chunks_base64"] = ["invalid*"]
+            rejected = await client.call_tool("evernook_v1_capture", arguments)
+            assert rejected.structured_content is not None
+            self.assertEqual(rejected.structured_content["error"]["code"], "invalid_arguments")
+            self.assertEqual(runtime.status(self.access).messages, 1)
 
     async def test_protocol_important_change_time_and_status_reuse_core_semantics(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",

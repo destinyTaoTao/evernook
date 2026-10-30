@@ -34,7 +34,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 [Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/recall/read/read_source/read_important/state/status` 七个查询工具（含 T15 新增查询）。`remember/mark_important/change/list` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
 
-**兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表完整十一项工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。
+**兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。T10 另加可信 `capture/capture_stream` 两项入口，见 [dsh 契约](dsh-native-v1.md)：附件通过严格 base64 编码传输，流在检查后复用 capture 原子事务；默认查询模式继续拒绝这两项操作。
 
 认证只证明调用端持有访问文件，不能证明 `role=user` 来自真实用户，也不能证明 `evidence_id` 是用户授权。在完整模式下，核心能校验来源绑定、证据存在与版本，却不能识别模型自行编造的用户角色事件；原生宿主必须在模型之外生成来源，并把更正/抑制等用户管理意图接到可信交互。profile 是受信任启动配置的限制，不是持久化 token scope，也不防御已取得 shell/访问文件的同账户进程。
 

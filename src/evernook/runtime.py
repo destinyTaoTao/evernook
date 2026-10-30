@@ -351,6 +351,48 @@ class MemoryRuntime:
         if len(encoded) > 1048576:
             raise MemoryFailure("message_too_large")
 
+    def submit_stream(self, access: Access, event: Event, frames: tuple[dict[str, Any], ...]) -> CaptureReceipt:
+        """Commit one buffered assistant stream before a trusted host publishes its frames."""
+        self._authorize(access)
+        self._validate_event(event)
+        if event.role != "assistant" or not isinstance(frames, tuple) or not 1 <= len(frames) <= 65536:
+            raise MemoryFailure("invalid_stream")
+        if any(not isinstance(frame, dict) or not isinstance(frame.get("type"), str) for frame in frames):
+            raise MemoryFailure("invalid_stream")
+        try:
+            raw = _json(frames).encode("utf-8", errors="strict")
+        except (TypeError, ValueError, UnicodeError):
+            raise MemoryFailure("invalid_stream") from None
+        if len(raw) > 1048576:
+            raise MemoryFailure("stream_too_large")
+        if event.completion == "complete" and frames[-1]["type"] != "finish":
+            raise MemoryFailure("incomplete_stream")
+        fragments: dict[str, list[str]] = {}
+        visible: dict[int, str] = {}
+        for frame in frames:
+            # Group deltas by logical block so interleaving cannot hide a split credential.
+            index = frame.get("index", 0)
+            if type(index) is not int or not 0 <= index <= 65536:
+                raise MemoryFailure("invalid_stream")
+            pieces = fragments.setdefault(str(index), [])
+            for name in ("text", "delta", "arguments", "argumentsDelta", "partialJson"):
+                if isinstance(frame.get(name), str):
+                    pieces.append(frame[name])
+            if frame["type"] == "text-delta":
+                if not isinstance(frame.get("text"), str):
+                    raise MemoryFailure("invalid_stream")
+                visible[index] = visible.get(index, "") + frame["text"]
+            if frame["type"] == "block-end" and isinstance(frame.get("block"), dict) and frame["block"].get("type") == "text":
+                if not isinstance(frame["block"].get("text"), str):
+                    raise MemoryFailure("invalid_stream")
+                visible[index] = frame["block"]["text"]
+        if event.text != "".join(visible.values()):
+            raise MemoryFailure("stream_text_mismatch")
+        protected = credential_signal(raw.decode("utf-8")) or any(credential_signal("".join(values)) for values in fragments.values())
+        retained = replace(event, protected_source=event.protected_source or protected or event.completion != "complete")
+        return self.submit_capture(access, Capture(retained, "message", attachments=(AttachmentInput(
+            "raw-stream-v1", "raw-stream.json", "application/json", (raw,), expected_size=len(raw)),)))
+
     @staticmethod
     def _stored(row: sqlite3.Row) -> StoredMessage:
         value = json.loads(row["event"])
