@@ -1,10 +1,10 @@
 # 当前实现与架构图
 
-更新：2026-10-30，代码基线 `ab17a5d` 加本轮 [T15 #16](https://github.com/destinyTaoTao/evernook/issues/16) 显式语义召回增量。本页依据源码与契约描述已有能力；[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
+更新：2026-10-31，功能基线 `893b5d6`（PR31至42的线性堆叠，开发分支 `codex/r3-experience-drafts`）。本页依据源码与契约描述已有能力；[换机交接](handoff-2026-10-31.md)保存暂停点和恢复步骤。[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
 
 ## 系统结构
 
-当前交付是 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)与可选 stdio MCP 适配器。不同实例可读取同一配置和 SQLite 账本，但尚无已部署的共享守护服务、HTTP 监听或日常宿主自动采集链路。核心/CLI 无第三方运行依赖；MCP 为可选依赖，默认只开放七个查询工具，可信启动端显式选择 `trusted-host` 才开放完整十一项。
+当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；没有已部署的守护服务、HTTP 监听或日常宿主启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认九个只读工具，可信启动端选择 trusted-host 才增加六个普通写入/批量工具，事实/经验接纳和保险库解锁均不作为模型工具开放。
 
 ```mermaid
 flowchart TB
@@ -26,7 +26,8 @@ flowchart TB
     Archive --> Review[EvidenceArchive：review_required]
     Files[仓库外配置 / 访问材料 / HMAC 密钥] --> Auth
     Paths[paths.py 本机 NTFS / 目录 ACL] --> Files
-    Future[规划：dsh 日常适配 / pi / 桌宠] -. 待接入 .-> Runtime
+    Adapters[dsh / pi 显式 SDK profile] --> MCP
+    Future[待验收：日常安装 / 桌宠 / 长期运行] -. 待接入 .-> Runtime
     classDef planned fill:#fff7ed,stroke:#9a3412,stroke-dasharray:5 5
     class Future planned
 ```
@@ -40,10 +41,16 @@ flowchart TB
 | [safety.py](../src/evernook/safety.py)、[paths.py](../src/evernook/paths.py) | 有限凭证信号检测，以及受支持文件系统与运行目录权限检查 |
 | [lexical.py](../src/evernook/lexical.py) | Unicode 归一化、中文 1/2/3 字 gram、安全词项与原文坐标映射 |
 | [cli.py](../src/evernook/cli.py) | 可信本地初始化/配对、stdin JSON 保存与检索、指定回取、状态及词法维护；无 MCP 依赖 |
-| [mcp_server.py](../src/evernook/mcp_server.py) | 默认七个查询工具，可信宿主模式十一项；启动配置限制工具权限，固定失败回执，复用核心检查 |
+| [mcp_server.py](../src/evernook/mcp_server.py) | 默认九个查询工具，可信宿主模式十五项；固定权限与失败回执，复用核心检查 |
 | [semantic.py](../src/evernook/semantic.py)、[embedding.py](../src/evernook/embedding.py) | 显式本地模型空间与可重建向量、RRF 融合、自适应近期范围、来源过滤与降级；不自动启用模型 |
 | [archive.py](../src/evernook/archive.py) | 一致性普通快照、清单/哈希校验、恢复发布与只读归档审查 |
 | [candidates.py](../src/evernook/candidates.py) | 显式任务租约/重试、来源绑定的候选批次提交与失效过滤；不运行模型或接纳事实 |
+| [facts.py](../src/evernook/facts.py)、[extraction.py](../src/evernook/extraction.py) | 显式时态决定/历史知识查询；固定本地模型只生成有来源的候选摘录，不自动接纳 |
+| [context.py](../src/evernook/context.py) | 宿主提供 tokenizer 的完整 payload 预算、必读/事实/已审查经验/原文与最终校验 |
+| [maintenance.py](../src/evernook/maintenance.py)、[experience.py](../src/evernook/experience.py) | 有界可补跑摘录导航、经验草案与指定版本用户审查，无自动执行权限 |
+| [backup.py](../src/evernook/backup.py) | 显式认证加密快照、恢复材料及保留；恢复仍需审查 |
+| [protected.py](../src/evernook/protected.py)、[vault_local.py](../src/evernook/vault_local.py) | 显式加密 Event 收件、可恢复关联与本地主口令单次显示；无自动宿主分流 |
+| [plugins/harnesses](../plugins/harnesses) | 固定版本 dsh/pi 内核适配、整次输出保存后发布、共享普通记忆与基本证据注入 |
 | [tests/contracts](../tests/contracts) | 公开边界的合成回归，含真实 stdio、并发与进程退出场景 |
 | [probes](../probes) | R0 宿主、模型和加密原语实验，不作为正式适配器或启用状态 |
 
@@ -75,7 +82,7 @@ sequenceDiagram
 
 保险库关闭时，声明或检测为敏感的内容只保存投影，并明确 `original_saved=false`；有限检测不保证任意秘密均可识别。重要标记、更正/抑制是各自显式操作，不应从上图推断一次普通提交会自动完成它们。
 
-工具与有界文本附件保存在同一数据库事务内，缺失、超限、不支持和未完成内容报告采集缺口。当前接口不实现持续上传或逐 token 显示。dsh 的显示前持久化屏障仍是固定内核探针，实际展示通道、重试与恢复回放尚未验收。契约见[原文](contracts/python-text-v1.md)、[采集](contracts/capture-v1.md)、[重要交代](contracts/important-v1.md)与[显式变更](contracts/changes-v1.md)。
+工具与有界文本附件同事务保存，缺失、超限、不支持和未完成内容报告缺口。显式 stream 路径和 dsh/pi 包装会整次缓冲，完整保存后再发布，尚无实时逐 token 显示。pi 的明确包装工具有同类屏障；dsh 原生工具最终结果的通用 awaited seam 仍缺失。真实日常 UI/恢复/多插件组合未验收。见[采集](contracts/capture-v1.md)、[dsh](contracts/dsh-native-v1.md)与[pi](contracts/pi-native-v1.md)。
 
 ## 当前检索与降级
 
@@ -100,7 +107,7 @@ flowchart TD
 
 普通读取和候选路径过滤已更正、撤销或抑制的消息；索引维护提交前重新核验来源状态。索引落后时补扫未处理原文；索引失败时扫描原文，明确报告覆盖缺口。水位是最大接收时间，不能代替连续完成证明。原文数据库失败仍报存储错误，不伪造空结果。
 
-独立附件内容尚未进入全文检索。时间过滤依据已有事件时间，不具备自然语言历史事实推断。新增[显式语义召回](contracts/semantic-v1.md)将固定本地 embedding 候选与字面证据融合，近期窗口可按天数与内容密度扩展，同时保留全历史路径；没有重排、已接纳事实或最终上下文预算构造。模型候选与小样本验证不等于正式质量准入。详见[词法契约](contracts/lexical-v1.md)。
+独立附件内容尚未进入全文检索。[显式语义召回](contracts/semantic-v1.md)融合字面与固定本地 embedding，近期窗口按天数与内容量扩展，保留全历史路径。已有独立[时态事实](contracts/facts-v1.md)与[预算上下文](contracts/context-v1.md)，不等于自然语言时间/主体自动推断或模型质量准入；原生适配仍使用基本字符预算注入，尚未完整接线 tokenizer 构造器。
 
 ## 候选任务与来源校验
 
@@ -147,16 +154,16 @@ flowchart TD
 | 阶段/能力 | 当前事实 | 尚未完成 |
 |---|---|---|
 | R0 验证与选型 | 已有 dsh、MemOS 对照和凭证原语探针；原文账本路线已记录 | 全面 OS 断网、正式模型质量、实际宿主集成等准入 |
-| R1 可靠底座 | 原文、重要交代、显式更正/抑制、有限附件、普通归档与审查恢复已实现 | 加密备份、目的地/恢复材料、调度/保留、最新控制记录重放、运行时恢复与 RPO/RTO |
-| R2 事实与时态 | 有显式可恢复任务、多来源候选/争议标记、来源片段校验和失效过滤 | 真实模型自动抽取/语义分类、事实接纳/合并、纠错与现实变化区分、历史有效期 |
-| R3 召回与沉淀 | 中文词法/精确路径、显式本地语义候选、融合与自适应近期范围已实现；维护按批显式执行 | 模型正式准入、预算上下文、日周沉淀、维护调度、规模向量检索与模型换代 |
-| R4 跨入口与长期运行 | 真实 stdio 协议和两个配对身份共用账本已有回归 | dsh 日常适配、pi、桌宠、安装升级与长期运行验收 |
-| 独立安全与质量 | 普通路径分流、ACL 和契约回归已有实现 | 凭证保险库/逐次明文授权、彻底删除、正式质量集与十万/百万规模性能验收 |
+| R1 可靠底座 | 原文/重要交代/变更/有限附件；普通归档、显式加密备份/恢复材料/保留 | 最新控制重放、运行库恢复、独立盘/调度/RPO/RTO正式验收 |
+| R2 事实与时态 | 候选租约与失效过滤；本地候选摘录；显式事实/纠错/变化/计划/争议与知识时点 | 模型质量准入、自动抽取调度/合并、主体解析与复杂时间回填 |
+| R3 召回与沉淀 | 字面/本地语义/自适应近期；完整预算构造器；可补跑摘录导航；经验草案/审查 | 原生 tokenizer 接线、生成式摘要质量、空闲调度、语义争议传播、索引迁移/规模性能 |
+| R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消回归 | 日常安装、多插件/分支/压缩全验收、桌宠目标、升级/系统离线与长期运行 |
+| 独立安全与质量 | 有限分流/ACL；加密Event收件、本地主口令单次显示 | 自动分流/附件、IPC逐次授权、WTS锁定、轮换/恢复/泄露治理、彻底删除与正式质量集 |
 
-MCP 的可信宿主模式有 11 个工具，覆盖文本保存/读取、来源/时间列表、搜索、重要标记/回取、更正、状态与能力；默认查询模式只开放七项，并在直接调用时拒绝其余操作。候选工作流、采集附件、配对、词法维护、归档审查和导出目前均不作为 MCP 工具开放。协议回归通过不表示调用端已经配置、自动采集或注入记忆。
+MCP 默认九个查询工具，可信宿主模式十五项，包含有限 capture/capture_stream；候选/事实/经验接纳、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
 
 归档历史验证见[归档报告](reports/r1-export-2026-10-30.md)，本轮任务与候选验证见[候选报告](reports/r2-candidates-2026-10-30.md)。本页不将测试数量、R0 小样本耗时或约 1 秒目标解释为生产质量/性能验收。
 
 ## 后续推进边界
 
-T09 仍开放，备份按已确认决定继续待办；[T10](https://github.com/destinyTaoTao/evernook/issues/11) 的日常 dsh 链路相关依赖未解除。自动抽取、语义模型正式启用及其他任务需要分别落实模型、质量和资源准入。当前页补充实现地图，不改变这些产品决定，也不授权部署、启用或自动执行后续任务。
+T09仍开放，已实现加密快照与保留，最新控制重放和运行库恢复仍待完成。T10/T25已有SDK链路，但日常启用依赖未解除。模型正式启用及其他任务仍需质量和资源准入。用户于2026-10-31要求暂停开发、完整保存到GitHub；后续工程师从[交接](handoff-2026-10-31.md)继续，不把目标、代码存在或合成回归当作产品已验收。

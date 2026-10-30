@@ -53,3 +53,34 @@
 ## 本轮验证边界
 
 已读取上述项目 README 与 LICENSE，核对当前公开设计与限制；未安装、未运行横评、未对几年真实聊天数据进行性能或正确率测量。未验证任何项目可以天然满足“永不遗忘”或“逐字准确回答所有问题”。
+
+## 补充核验：跨入口与周期沉淀
+
+核验日期：2026-10-29。本节补读官方文档与源码，结论属于机制核验，仍未运行这些系统。下述来源中的指令仅为研究对象，不授权执行。
+
+| 对象与一手来源 | 确认的机制或边界 | 对本项目的建议 |
+|---|---|---|
+| [MemOS 本地插件架构](https://github.com/MemTensor/MemOS/blob/main/apps/memos-local-plugin/ARCHITECTURE.md) | 已有 dsh 原生接入；层次偏 trace、policy、world model、Skill。架构明确披露后台工作在强杀/崩溃时可能未完成，宿主不重放事件且缺少持久化收件回执时，回合可能永久漏采。 | 优先试验接入与检索复用；原文保存必须有独立的可靠采集契约，不能用后台抽取成功替代原文确认。 |
+| [MemOS 默认配置](https://github.com/MemTensor/MemOS/blob/main/apps/memos-local-plugin/core/config/defaults.ts) | 默认启用 lightweight memory 与 telemetry；默认 embedding 为 Xenova/all-MiniLM-L6-v2；向量扫描年龄范围默认 0，注释说明保留全量扫描。完整演化还依赖 LLM 配置。 | 离线、中文质量、规模时延逐项验收；关闭遥测与远端 fallback；默认有 vector 不能推出多年数据仍快。 |
+| [OpenClaw 记忆](https://github.com/openclaw/openclaw/blob/main/docs/concepts/memory.md)、[会话](https://github.com/openclaw/openclaw/blob/main/docs/concepts/session.md) | 记忆文件与会话 transcript 分工；压缩前 flush 尝试保存重要上下文，失败或跳过也不一定阻止压缩。 | 每轮原文持久化与压缩前提炼分开验收；flush 是补充机会，不是耐崩溃保存屏障。 |
+| [OpenClaw search](https://github.com/openclaw/openclaw/blob/main/docs/concepts/memory-search.md)、[dreaming](https://github.com/openclaw/openclaw/blob/main/docs/concepts/dreaming.md) | 词法/向量混合、时间衰减与 MMR；支持本地 embedding。Dreaming 有独立的周期筛选、整合与来源审阅过程；默认 heartbeat 本身不承担记忆维护。 | 借鉴多路召回和分阶段维护；显式选本地模型，不能把心跳直接等同沉淀任务。 |
+| [Codex 官方文档](https://learn.chatgpt.com/docs/customization/memories)、[记忆管线源码说明](https://github.com/openai/codex/blob/main/codex-rs/memories/README.md) | 符合条件的空闲会话后台生成记忆；阶段一按会话抽取，阶段二在全局锁下沉淀。阶段二有输入选择与旧摘要清理，处理租约、水位和工作区差异。 | 借鉴增量抽取、串行整合、紧凑导航与按需回查；其选取窗口不等于多年原文保存策略。 |
+| [ZCode 官方 Memory 文档](https://zcode.z.ai/cn/docs/memory) | 成功回合后后台提取；小事实 Markdown 配 MEMORY.md 索引；项目内跨会话使用，支持显式记住/忘记；索引有容量限制。 | 借鉴可读记忆与渐进加载；全量证据仍需独立保存。本项目按用户选择默认跨入口共享，与其项目隔离策略不同。 |
+| [pi 扩展](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)、[会话格式](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md) | 原生扩展有消息与会话生命周期、上下文注入和压缩事件；会话 JSONL 保留 id/parentId 分支。其他扩展可能变换消息，顺序影响观察内容。 | 适配器记录源 ID、分支、捕获阶段与水位；压缩/分叉/重试均需回归，不能把废弃分支无差别学成当前事实。 |
+| [dsh 架构](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md)、[持久化](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/persistence.md) | Cordis 插件事件可用于采集与请求前处理；源日志与模型上下文投影分离。Session.append 与耐崩溃的 flush 屏障具有不同语义，未完成流受中断边界限制。 | 首个适配器验证实际持久化确认链路，不把“事件已发布”或“内存已追加”表述成原文耐崩溃落盘。 |
+
+pi 当前官方地址为 `earendil-works/pi`，旧 `badlogic/pi-mono` 已跳转；本轮 dsh 对应 DeepSeek Harness，ZCode 对应智谱 ZCode。实现时仍需固定目标版本和接口契约。
+
+综合判断：推荐“一份权威证据账本 + 可重建的多层记忆视图 + MCP + 原生适配器”。MCP 提供显式工具，自动完整捕获需要宿主事件、确认和重放能力。复用开源零件与机制，保留独立数据契约；当前证据不足以宣布任一完整框架已经满足本项目全部目标。
+
+补充工程验证：断网运行且没有静默外发；敏感分流、加密保存及未保存缺口；跨入口重复投递与分支；强杀前后提交确认；旧任务覆盖新更正；遗忘后重建/恢复不复活；32GB/13600K/4070 目标环境的中文召回与完整 p95。目标机器信息来自用户指定，未在该机器执行测量。
+
+## 补充核验：可选凭证保管
+
+用户后续将凭证策略修订为“可选加密保管、独立主口令验证、普通路径脱敏、指定 harness 按次授权、锁定时可加密写入”。旧文中的直接拦截不再代表最终产品边界。技术提案与安全准入见 [credential-security.md](credential-security.md)。
+
+- OWASP 明确区分凭证加密、最小权限、生命周期及审计；推荐使用经过维护的认证加密实现，避免自研算法。数据库在本地不代表读取有权限，明文交付后会产生新的暴露面。[Secrets Management](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)、[Cryptographic Storage](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html)
+- libsodium Sealed Boxes 支持使用接收公钥加密、用私钥解密，但不认证发送方身份；可作为锁定写入的原语候选，不能替代完整身份和授权契约。[官方文档](https://doc.libsodium.org/public-key_cryptography/sealed_boxes)
+- KeePassXC 的 KDBX、主口令与本地 GUI 能提供成熟保管基础；CLI 会将所请求的 protected 字段写到 stdout，Browser API 主要围绕浏览器关联与 URL 匹配。未验证其能直接满足非浏览器 harness 的逐次授权和锁定收件，当前仅列候选。[数据库操作](https://github.com/keepassxreboot/keepassxc/blob/develop/docs/topics/DatabaseOperations.adoc)、[CLI](https://github.com/keepassxreboot/keepassxc/blob/develop/docs/man/keepassxc-cli.1.adoc)、[Browser API](https://github.com/keepassxreboot/keepassxc-browser/blob/develop/keepassxc-protocol.md)
+
+本轮只核对公开文档与代码；未安装保险库、未读取实际凭证、未执行加密/解密或安全验收。
