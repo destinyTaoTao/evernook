@@ -10,6 +10,8 @@ from typing import Any, NoReturn
 
 from .models import Event, MemoryFailure, Source
 from .runtime import MemoryRuntime, initialize, pair_client
+from .embedding import LocalMiniLM
+from .semantic import SemanticRecall
 
 
 class Parser(argparse.ArgumentParser):
@@ -63,10 +65,15 @@ def _parser() -> Parser:
         ("status", "Report core and lexical processing status"),
         ("refresh-index", "Refresh the rebuildable lexical index"),
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
+        ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
+        ("refresh-semantic", "Index at most 16 missing semantic chunks"),
+        ("semantic-status", "Report semantic coverage for the configured model space"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
+        if name in ("recall", "refresh-semantic", "semantic-status"):
+            command.add_argument("--embedding-config", type=Path)
         if name in ("read", "state"):
             command.add_argument("--message-id", required=True)
     return parser
@@ -83,6 +90,14 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command in ("recall", "refresh-semantic", "semantic-status"):
+        backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
+        workflow = SemanticRecall(runtime, backend)
+        if args.command == "recall":
+            return workflow.recall(access, **_input())
+        if args.command == "refresh-semantic":
+            return workflow.refresh(access)
+        return workflow.status(access)
     if args.command == "remember":
         event = _input()
         source = Source(**event.pop("source"))

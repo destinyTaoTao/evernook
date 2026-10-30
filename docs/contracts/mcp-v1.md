@@ -32,9 +32,9 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 ## 默认查询模式与可信宿主迁移
 
-[Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/read/read_source/read_important/state/status` 六个工具。`remember/mark_important/change/list` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
+[Issue #30](https://github.com/destinyTaoTao/evernook/issues/30) 将默认启动行为收敛为 `--profile recall`：仅开放 `search/recall/read/read_source/read_important/state/status` 七个查询工具（含 T15 新增查询）。`remember/mark_important/change/list` 不出现在工具列表中，直接点名调用也返回 `operation_not_allowed`，不会执行核心操作。工具参数不能修改 profile。状态的 `adapter.profile/writes_allowed` 描述适配器权限；`capabilities` 仍描述核心已实现的能力，不表示当前模型拥有全部能力。
 
-**兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表完整十个工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。
+**兼容性变更：已有写入/列表调用端必须由可信本地维护者在启动参数中显式加 `--profile trusted-host`**，才继续开放下表完整十一项工具。Python 核心契约与数据格式不变。该模式只供已核实角色、源事件及用户管理意图的可信宿主使用；不得仅为消除模型工具报错而给普通模型启用。初始化和配对也可以使用[本地 CLI](cli-v1.md)。
 
 认证只证明调用端持有访问文件，不能证明 `role=user` 来自真实用户，也不能证明 `evidence_id` 是用户授权。在完整模式下，核心能校验来源绑定、证据存在与版本，却不能识别模型自行编造的用户角色事件；原生宿主必须在模型之外生成来源，并把更正/抑制等用户管理意图接到可信交互。profile 是受信任启动配置的限制，不是持久化 token scope，也不防御已取得 shell/访问文件的同账户进程。
 
@@ -42,7 +42,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 ## 工具与结果
 
-所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。下表为 `trusted-host` 完整工具集，默认 `recall` 仅有上述六项。
+所有工具使用前缀 `evernook_v1_`，输入 JSON Schema 由严格类型生成，包括嵌套对象的 `additionalProperties=false`，不自动转换 bool 为整数等错误类型。下表为 `trusted-host` 完整工具集，默认 `recall` 仅有上述七项。
 
 | 工具后缀 | 输入 | 成功结果 |
 |---|---|---|
@@ -50,6 +50,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 | `read` / `read_source` | `message_id` / `source` | 当前允许普通读取的原文或安全投影及回执 |
 | `list` | 可选 `since/until/limit/offset` | 时间范围 `[since,until)` 的 Page，保留核心分页语义 |
 | `search` | `query`，可选 `mode/since/until/limit/offset` | [词法/精确证据](lexical-v1.md)的来源、版本、原文坐标及索引覆盖/降级信息 |
+| `recall` | `query`；可选 `limit/as_of/recent_days/recent_target_chars/min_similarity/timeout` | [语义融合与自适应近期证据](semantic-v1.md)、实际覆盖范围及降级原因；不返回已接纳事实 |
 | `mark_important` | `mark`，同 ImportantMark | 已可靠提交的重要引用 |
 | `read_important` | `important_id`，可选 `cursor/limit/content_version` | 原件/投影 code point 分页，不返回摘要 |
 | `change` | `change`，同 Change | `correct/revoke/suppress` 的版本化回执；不提供物理删除 |
@@ -78,4 +79,6 @@ stdin 显式使用严格 UTF-8 reader，覆盖 SDK 默认的替换解码；非�
 
 使用真实 SDK 客户端验证现代协议与 legacy initialize、两个已配对客户端共享、Unicode 原文/核心共用断言、重要标记与抑制、重启重试、错误版本/令牌、来源冒用、敏感投影、严格参数、真实 SQLite 忙锁及插入失败。诊断输出用合成哨兵检查无请求原文或令牌。
 
-T14 新增真实 stdio `search` 回归：索引未建与维护后返回相同可校验原文，状态反映覆盖与降级，敏感查询拒绝。完整模式 10 个工具、默认查询模式 6 个。索引刷新/重建仅供可信本机维护端使用，不授予模型维护权限。待处理任务数不能理解为已建立检索索引；消费者未运行，词法索引追平不代表模型或整体处理完成。网络 HTTP/SSE、真实 dsh 展示屏障、MCP 导出/恢复、备份和模型仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。
+T14 新增真实 stdio `search` 回归：索引未建与维护后返回相同可校验原文，状态反映覆盖与降级，敏感查询拒绝。T15 后完整模式 11 个工具、默认查询模式 7 个。索引刷新/重建仅供可信本机维护端使用，不授予模型维护权限。待处理任务数不能理解为已建立检索索引；消费者未运行，词法索引追平不代表模型或整体处理完成。网络 HTTP/SSE、真实 dsh 展示屏障、MCP 导出/恢复、备份及正式模型质量仍未启用或验收；保险库保持关闭。备份目的地、启用和恢复验收按用户决定待办。
+
+T15 可在可信启动配置中加 `--embedding-config <absolute-path>` 显式接入固定本地 MiniLM 候选；未配置时新 `recall` 工具仍返回词法证据和 `semantic_disabled`。配置不能从工具参数修改，向量维护仍只供可信本地端使用。`status.semantic` 报告配置空间覆盖；详情与实际边界见[语义契约](semantic-v1.md)。

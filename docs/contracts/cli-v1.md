@@ -26,6 +26,8 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `read` / `state` | `--config --access --message-id` | 当前允许的原文/投影或状态版本 |
 | `status` | `--config --access` | 核心能力、账本数量、词法水位、消费者未运行状态 |
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
+| `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |
+| `refresh-semantic` / `semantic-status` | `--config --access`；可选 `--embedding-config` | 当前模型空间的一批最多 16 个片段维护或覆盖状态 |
 
 `rebuild-index` 先重置派生索引，再处理首批；`pending_messages > 0` 时继续运行 `refresh-index`，不要反复执行重建。维护成功返回不等于全库已经追平，必须读取 `state/pending_messages`。操作期间原文仍遵守既有提交与过滤语义。
 

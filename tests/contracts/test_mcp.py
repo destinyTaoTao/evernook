@@ -41,7 +41,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         async with Client(recall, read_timeout_seconds=20) as client:
             listed = await client.list_tools()
             self.assertEqual({tool.name for tool in listed.tools}, {
-                "evernook_v1_search", "evernook_v1_read", "evernook_v1_read_source",
+                "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source",
                 "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status"})
             blocked: dict[str, dict[str, Any]] = {
                 "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
@@ -61,6 +61,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             searched = await client.call_tool("evernook_v1_search", {"query": "默认查询"})
             assert searched.structured_content is not None
             self.assertEqual(searched.structured_content["result"]["hits"][0]["message_id"], receipt.message_id)
+            recalled = await client.call_tool("evernook_v1_recall", {"query": "默认查询"})
+            assert recalled.structured_content is not None
+            self.assertEqual(recalled.structured_content["result"]["hits"][0]["evidence"]["message_id"], receipt.message_id)
+            self.assertIn("semantic_disabled", recalled.structured_content["result"]["degraded"])
             status = await client.call_tool("evernook_v1_status", {})
             assert status.structured_content is not None
             self.assertEqual(status.structured_content["result"]["adapter"], {"profile": "recall", "writes_allowed": False})
