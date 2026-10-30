@@ -99,6 +99,11 @@ def _parser() -> Parser:
         ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
         ("fact-query", "Read current/historical/planned facts using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
+        ("maintenance-configure", "Configure explicit fixed-offset extractive navigation; no OS scheduler"),
+        ("maintenance-pause", "Pause/resume navigation without pausing raw collection"),
+        ("maintenance-tick", "Run bounded recoverable navigation work using JSON stdin"),
+        ("maintenance-status", "Read navigation backlog and scan cursors"),
+        ("navigation-read", "Read a current source-validated navigation bucket"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -168,6 +173,24 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command.startswith("maintenance-") or args.command == "navigation-read":
+        from .maintenance import MaintenanceBudget, NavigationMaintenance, NavigationPolicy
+        maintenance = NavigationMaintenance(runtime)
+        value = _input()
+        if args.command == "maintenance-configure":
+            if "topics" in value:
+                if not isinstance(value["topics"], list):
+                    raise MemoryFailure("invalid_arguments")
+                value["topics"] = tuple(value["topics"])
+            return maintenance.configure(access, NavigationPolicy(**value))
+        if args.command == "maintenance-pause":
+            return maintenance.pause(access, **value)
+        if args.command == "maintenance-status":
+            return maintenance.status(access, **value)
+        if args.command == "navigation-read":
+            return maintenance.read(access, **value)
+        value["budget"] = MaintenanceBudget(**value["budget"])
+        return maintenance.tick(access, **value)
     if args.command == "extract":
         from .extraction import ExtractionProcessor, LocalQwen
         value = _input()
