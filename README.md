@@ -6,7 +6,7 @@ Local-first, evidence-backed long-term memory for AI companions.
 
 EverNook 面向个人桌宠与 AI 陪伴场景：保存多年对话，逐字回取重要交代，在多轮交流中保持上下文，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 
-> **当前状态：本地底座已支持原文、重要交代、更正/抑制、工具/文本附件、中文词法/精确检索及可选 stdio MCP，尚无生产记忆服务。** [核心契约](docs/contracts/python-text-v1.md)、[附件边界](docs/contracts/capture-v1.md)、[词法检索](docs/contracts/lexical-v1.md)与 [MCP 配置](docs/contracts/mcp-v1.md)给出真实支持范围；R0 [采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
+> **当前状态：本地底座已支持原文、重要交代、更正/抑制、工具/文本附件、中文词法/精确检索、普通导出与受审查限制的恢复、显式候选任务及可选 stdio MCP，尚无生产记忆服务。** [核心契约](docs/contracts/python-text-v1.md)、[附件边界](docs/contracts/capture-v1.md)、[词法检索](docs/contracts/lexical-v1.md)与 [MCP 配置](docs/contracts/mcp-v1.md)给出真实支持范围；R0 [采集探针](docs/reports/r0-dsh-2026-10-29.md)与[复用对照](docs/reports/r0-core-2026-10-29.md)仍为合成实验。备份、保险库、模型及实际桌面接入尚未启用或验收。
 
 ## 我们希望做到什么
 
@@ -19,27 +19,29 @@ EverNook 面向个人桌宠与 AI 陪伴场景：保存多年对话，逐字回�
 
 “保存完整原文”“检索到正确证据”“生成忠实回答”是三个独立目标。第一项用完整性与恢复测试验收；后两项用中文跨年测试集验收，不能以模型宣称记住了作为成功证据。
 
-## 推荐起点
+## 当前实现
 
-独立本地记忆服务，Python + SQLite，先实现可靠原文账本、明确的重要记忆与最小时间版本，再验证中文全文检索和语义召回。FTS5 与 sqlite-vec 是候选组件，具体分词、embedding 与 LLM 提供方待基准验证后确定。
+当前采用 Python 3.14 + SQLite 原文账本，中文词法/精确路径使用可重建的 FTS5 派生索引；可选 stdio MCP 复用同一核心。普通导出与审查恢复见[归档契约](docs/contracts/archive-v1.md)。语义组件、embedding 与抽取模型仍待准入；首验范围为 Windows 本机固定 NTFS。
 
 不默认按月分表，不先引入图数据库或分布式组件。先评估复用 MemOS 本地插件的成本，再决定哪些编排需要自己维护；“完全自建一定最优”不是当前结论。
 
 ```mermaid
 flowchart LR
-    Pet[桌宠 / 聊天入口] --> Write[原文提交与幂等确认]
-    Write --> Log[(原文账本)]
-    Log --> Jobs[可重试沉淀任务]
-    Jobs --> Facts[(事实版本 / 摘要)]
-    Pet --> Recall[精确 / 中文词法 / 语义 / 近七天召回]
-    Log --> Recall
-    Facts --> Recall
-    Recall --> Evidence[有来源的记忆上下文]
-    Persona[版本化人设] --> Evidence
-    Evidence --> LLM[对话模型]
+    Python[本机 Python 调用端] --> Core[身份与状态检查 / MemoryRuntime]
+    Client[已配对 MCP 调用端] -->|stdio| MCP[MCP 适配器]
+    MCP --> Core
+    Core --> DB[(SQLite 原文 / 投影 / 来源 / 变更)]
+    Core --> Search[中文词法 / 精确检索与降级]
+    Search --> DB
+    Core --> Important[重要交代逐字回取]
+    Important --> DB
+    Core --> Export[普通导出与完整性校验]
+    Export --> Review[只读审查恢复：review_required]
 ```
 
-图中仅原文提交、账本和待处理任务记录已有初始实现，其余仍为**拟议设计**。自我沉淀指记忆维护，不代表自动训练模型权重、改写核心人格或执行外部动作。
+图中为已有本地库与可选 stdio 适配能力，尚无日常 dsh/pi/桌宠自动采集链路、后台沉淀或已部署的共享记忆服务。普通归档未加密，审查恢复不开放普通召回。[当前实现与流程图](docs/current-architecture.md)列出源码职责、阶段进度和缺口；[目标架构](docs/architecture.md)保留后续设计。
+
+显式任务与候选底座已支持来源版本/片段校验、租约重试和失效过滤，见[候选契约](docs/contracts/candidates-v1.md)；真实抽取模型、自动事实接纳和调度仍未启用。
 
 ## 文档导航
 
@@ -47,7 +49,8 @@ flowchart LR
 |---|---|
 | [需求与边界](docs/requirements.md) | 目标、非目标、业务不变量与待决问题 |
 | [同类项目与可行性](docs/research.md) | Mem0、Letta、Graphiti、MemOS、Memobase、Open-LLM-VTuber 的一手资料对照 |
-| [架构草案](docs/architecture.md) | 写入时序、原文证据、事实版本、七天热记忆与恢复 |
+| [当前实现与架构图](docs/current-architecture.md) | 实现结构、写入/检索/恢复流程、源码职责与真实进度 |
+| [目标架构](docs/architecture.md) | 后续事实版本、七天热记忆与完整恢复设计 |
 | [路线与验收](docs/roadmap.md) | 复用验证、分阶段实现、正确率与时延测量方法 |
 | [贡献指南](CONTRIBUTING.md) | 范围、测试与公开数据要求 |
 

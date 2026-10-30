@@ -13,7 +13,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 import tempfile
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from .models import (
@@ -24,6 +24,9 @@ from .models import (
 from .paths import external, provision_private_directory, verify_private_directory
 from .safety import credential_signal
 from .lexical import NORMALIZATION_VERSION, index_terms, matching_spans, normalize, query_expression
+
+if TYPE_CHECKING:
+    from .archive import ArchiveStatus
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
@@ -271,6 +274,11 @@ class MemoryRuntime:
                 "lexical": True, "lexical_normalization_version": NORMALIZATION_VERSION,
                 "archive_review": identity.archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
+
+    def export_archive(self, access: Access, destination: Path) -> ArchiveStatus:
+        from .archive import export_archive
+
+        return export_archive(self, access, destination)
 
     def access_from_file(self, access_path: Path) -> Access:
         """Trusted local launcher bootstrap; never register this method as a model-facing tool."""
