@@ -1,0 +1,33 @@
+src/evernook/maintenance.py
+  s_fbb7b85144f0e3::t_a21a89d98e6ee7 76-77,260,279-285,312,395
+  s_fbb7b85144f0e3::t_f7a1a5304ea25a 1-4,6-75,78-117,127-198,200-208,212,217-224,226-231,233,235,237-252,262-278,286-301,303,305-311,313,318,320-340,342-351,362-394,396-401
+  s_fbb7b85144f0e3::t_55075e2d4c444e 5,199,209-211,213-216,225,232,234,341
+  s_fbb7b85144f0e3::t_8384a9baaef72b 118-126,236,253-259,261,302,304,352-361
+  s_fbb7b85144f0e3::t_b7517e25f63c63 314-317,319
+src/evernook/cli.py
+  s_fbb7b85144f0e3::t_55075e2d4c444e 102-106,176-193
+docs/reports/r3-navigation-2026-10-31.md
+  s_fbb7b85144f0e3::t_af8ec46f5b1eb8 1-6,9-13
+  s_fbb7b85144f0e3::t_fea2931117fd66 7-8
+docs/contracts/navigation-v1.md
+  s_fbb7b85144f0e3::t_932ffb0d34ea15 1-37
+tests/contracts/test_maintenance.py
+  s_fbb7b85144f0e3::t_da0083b70c9228 1-218,268-270
+  s_fbb7b85144f0e3::t_6c98992b4a2bcf 219-267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bde5bd786e58a577b1b7eca245a7ee7b7f84ed9",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
