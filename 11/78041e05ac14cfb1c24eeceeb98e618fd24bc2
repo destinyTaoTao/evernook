@@ -1,0 +1,40 @@
+tests/contracts/test_semantic.py
+  s_fbb7b85144f0e3::t_a19bde6ff042cd 11,26
+src/evernook/semantic.py
+  s_fbb7b85144f0e3::t_ea2ff7bb924ea1 5,11-12,184,193-194,205,228-229,253-254,257-265,276,279,294,298-299,328-332
+docs/reports/r3-context-2026-10-30.md
+  s_fbb7b85144f0e3::t_99124132abebf6 5
+  s_fbb7b85144f0e3::t_d68ca5efa2f8a8 1-4,6-9
+tests/contracts/test_context.py
+  s_fbb7b85144f0e3::t_88c3505aadd855 1-67,73-130,135-171
+  s_fbb7b85144f0e3::t_d68ca5efa2f8a8 68-72
+  s_fbb7b85144f0e3::t_99124132abebf6 131-134
+docs/contracts/context-v1.md
+  s_fbb7b85144f0e3::t_d68ca5efa2f8a8 1-31
+src/evernook/embedding.py
+  s_fbb7b85144f0e3::t_a19bde6ff042cd 10-11,39,85,92-100,104,111-122,124,133-137
+src/evernook/context.py
+  s_fbb7b85144f0e3::t_866934deba1651 1-5,7-11,13-87,89-97,99-102,107-152,154-197,205,207-230
+  s_fbb7b85144f0e3::t_99124132abebf6 88
+  s_fbb7b85144f0e3::t_88c3505aadd855 153
+  s_fbb7b85144f0e3::t_7c63af25be0e1e 6,12,98,206
+  s_fbb7b85144f0e3::t_e89ee21172e88c 103-106,198-204
+tests/contracts/crash_worker.py
+  s_fbb7b85144f0e3::t_a19bde6ff042cd 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1178041e05ac14cfb1c24eeceeb98e618fd24bc2",
+  "prompts": {},
+  "sessions": {
+    "s_fbb7b85144f0e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18b9c-3577-7fb0-987e-72c91cda18fd",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "destinyTaoTao <16175127+destinyTaoTao@users.noreply.github.com>"
+    }
+  }
+}
