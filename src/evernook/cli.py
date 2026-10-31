@@ -127,6 +127,11 @@ def _parser() -> Parser:
         ("profile-summary", "Aggregate current confirmed profile tags by category"),
         ("profile-history", "Read one profile tag's revision history"),
         ("audit-query", "Query the append-only caller audit log using JSON stdin"),
+        ("consolidation-begin", "Claim a raw source range for explicit consolidation"),
+        ("consolidation-complete", "Submit consolidation drafts into the review queue; profile tags propose only"),
+        ("consolidation-queue", "Read the consolidation review queue"),
+        ("consolidation-status", "Read one consolidation run status"),
+        ("consolidation-fail", "Mark a consolidation run failed with an error code"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -318,6 +323,32 @@ def _execute(args: argparse.Namespace) -> object:
         return runtime.search(access, **_input())
     if args.command == "audit-query":
         return runtime.audit_query(access, **_input())
+    if args.command.startswith("consolidation-"):
+        from .candidates import EvidenceSpan
+        from .consolidation import ConsolidationDraft, ConsolidationWorkflow
+        consolidation = ConsolidationWorkflow(runtime)
+        value = _input()
+        if args.command == "consolidation-begin":
+            if not isinstance(value.get("source_ids"), list):
+                raise MemoryFailure("invalid_arguments")
+            value["source_ids"] = tuple(value["source_ids"])
+            return consolidation.begin(access, **value)
+        if args.command == "consolidation-complete":
+            if not isinstance(value.get("drafts"), list):
+                raise MemoryFailure("invalid_arguments")
+            drafts: list[ConsolidationDraft] = []
+            for item in value["drafts"]:
+                if not isinstance(item, dict) or not isinstance(item.get("sources"), list):
+                    raise MemoryFailure("invalid_arguments")
+                item["sources"] = tuple(EvidenceSpan(**span) for span in item["sources"])
+                drafts.append(ConsolidationDraft(**item))
+            value["drafts"] = tuple(drafts)
+            return consolidation.complete(access, **value)
+        if args.command == "consolidation-queue":
+            return consolidation.queue(access, **value)
+        if args.command == "consolidation-status":
+            return consolidation.status(access, **value)
+        return consolidation.fail(access, **value)
     if args.command == "read":
         message = runtime.read(access, args.message_id)
         if message is None:
