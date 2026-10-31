@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -13,11 +13,12 @@ from pathlib import Path
 import secrets
 import sqlite3
 import tempfile
+import time
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from .models import (
-    Access, ArchiveView, AttachmentInfo, AttachmentInput, Capture, CaptureReceipt, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
+    Access, ArchiveView, AttachmentInfo, AttachmentInput, AuditPage, AuditRecord, Capture, CaptureReceipt, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
     Receipt, RuntimeStatus, Source, StoredMessage, SearchHit, SearchPage, LexicalStatus,
 )
@@ -70,6 +71,37 @@ def _time(value: str) -> float:
         raise MemoryFailure("invalid_time") from None
 
 
+def _iso(value: float) -> str:
+    return datetime.fromtimestamp(value, timezone.utc).isoformat()
+
+
+def _audit_schema(db: sqlite3.Connection) -> None:
+    db.execute("""CREATE TABLE IF NOT EXISTS audit_events_v1 (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, client_id TEXT NOT NULL,
+        entry TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, outcome TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS audit_at ON audit_events_v1(at)")
+    db.execute("CREATE TABLE IF NOT EXISTS audit_settings_v1 (id INTEGER PRIMARY KEY CHECK(id=1), retention_days INTEGER NOT NULL)")
+
+
+def _prune_audit(db: sqlite3.Connection) -> None:
+    row = db.execute("SELECT retention_days FROM audit_settings_v1 WHERE id=1").fetchone()
+    retention = int(row["retention_days"]) if row is not None else AUDIT_RETENTION_DAYS
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).isoformat()
+    db.execute("DELETE FROM audit_events_v1 WHERE at<?", (cutoff,))
+
+
+def _pairing_schema(db: sqlite3.Connection) -> None:
+    db.execute("""CREATE TABLE IF NOT EXISTS pairing_lockout_v1 (
+        id INTEGER PRIMARY KEY CHECK(id=1), failures INTEGER NOT NULL, locked_until TEXT,
+        failure_limit INTEGER NOT NULL)""")
+
+
+def _audit_row(db: sqlite3.Connection, at: str, client_id: str, entry: str, action: str, target: str, outcome: str) -> None:
+    _audit_schema(db)
+    db.execute("INSERT INTO audit_events_v1 (at,client_id,entry,action,target,outcome) VALUES (?,?,?,?,?,?)",
+               (at, client_id, entry, action, target, outcome))
+
+
 def _identifier(value: str) -> None:
     if not isinstance(value, str) or not 0 < len(value) <= 256 or any(ord(char) < 32 for char in value):
         raise MemoryFailure("invalid_source")
@@ -86,6 +118,9 @@ def _identifier(value: str) -> None:
 SCOPES = ("recall", "capture", "maintain", "accept", "admin")
 FULL_SCOPES = SCOPES
 HARNESS_DEFAULT_SCOPES = ("recall", "capture")
+PAIRING_FAILURE_LIMIT = 5
+PAIRING_LOCK_MINUTES = 15
+AUDIT_RETENTION_DAYS = 365
 
 
 def _scope_set(value: object) -> frozenset[str]:
@@ -177,11 +212,28 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
     verify_private_directory(runtime.root, extra_files=(access_path,))
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
+        _pairing_schema(db)
+        _audit_schema(db)
+        now = datetime.now(timezone.utc).isoformat()
+        lock = db.execute("SELECT failures,locked_until,failure_limit FROM pairing_lockout_v1 WHERE id=1").fetchone()
+        failures = int(lock["failures"]) if lock is not None else 0
+        failure_limit = int(lock["failure_limit"]) if lock is not None else PAIRING_FAILURE_LIMIT
+        locked_until = lock["locked_until"] if lock is not None else None
+        if locked_until is not None and _time(locked_until) > time.time():
+            _audit_row(db, now, client_id, entry, "pair", "client:" + client_id, "locked")
+            db.execute("COMMIT")
+            raise MemoryFailure("pairing_locked")
         identities = _identities(_load(runtime.root / "client.json"))
         identity = identities.get(client_id)
-        if identity is not None and identity.entry != entry:
-            raise MemoryFailure("client_conflict")
-        if any(other.entry == entry and other.client_id != client_id for other in identities.values()):
+        if ((identity is not None and identity.entry != entry)
+                or any(other.entry == entry and other.client_id != client_id for other in identities.values())):
+            failures += 1
+            locked = datetime.now(timezone.utc) + timedelta(minutes=PAIRING_LOCK_MINUTES) if failures >= failure_limit else None
+            db.execute("""INSERT INTO pairing_lockout_v1 VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                failures=excluded.failures, locked_until=excluded.locked_until, failure_limit=excluded.failure_limit""",
+                (failures, locked.isoformat() if locked is not None else None, failure_limit))
+            _audit_row(db, now, client_id, entry, "pair", "client:" + client_id, "denied")
+            db.execute("COMMIT")
             raise MemoryFailure("client_conflict")
         if identity is None:
             identity = _Identity(client_id, entry, secrets.token_urlsafe(32),
@@ -202,8 +254,53 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
              "archive_review": row.archive_review, "scopes": sorted(row.scopes)} for row in identities.values()]})
         if not access_path.exists():
             _atomic_json(access_path, asdict(access))
+        db.execute("""INSERT INTO pairing_lockout_v1 VALUES (1,0,NULL,?) ON CONFLICT(id) DO UPDATE SET
+            failures=0, failure_limit=excluded.failure_limit""", (failure_limit,))
+        _audit_row(db, now, client_id, entry, "pair", "client:" + client_id, "ok")
         db.execute("COMMIT")
     return access
+
+
+def unlock_pairing(config_path: Path) -> dict[str, object]:
+    """Trusted local reset of the pairing lockout; recorded in the audit log."""
+    runtime = MemoryRuntime(config_path)
+    with runtime._connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _pairing_schema(db)
+        db.execute("UPDATE pairing_lockout_v1 SET failures=0, locked_until=NULL WHERE id=1")
+        _audit_row(db, datetime.now(timezone.utc).isoformat(), "local-operator", "", "pair_unlock", "lockout", "ok")
+        db.execute("COMMIT")
+    return {"unlocked": True}
+
+
+def configure_lockout(config_path: Path, *, failure_limit: int) -> dict[str, object]:
+    if type(failure_limit) is not int or not 1 <= failure_limit <= 100:
+        raise MemoryFailure("invalid_lockout_config")
+    runtime = MemoryRuntime(config_path)
+    with runtime._connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _pairing_schema(db)
+        db.execute("""INSERT INTO pairing_lockout_v1 VALUES (1,0,NULL,?) ON CONFLICT(id) DO UPDATE SET
+            failure_limit=excluded.failure_limit""", (failure_limit,))
+        _audit_row(db, datetime.now(timezone.utc).isoformat(), "local-operator", "", "lockout_configure",
+                   "lockout", "ok")
+        db.execute("COMMIT")
+    return {"failure_limit": failure_limit}
+
+
+def configure_audit(config_path: Path, *, retention_days: int) -> dict[str, object]:
+    if type(retention_days) is not int or not 1 <= retention_days <= 36500:
+        raise MemoryFailure("invalid_audit_config")
+    runtime = MemoryRuntime(config_path)
+    with runtime._connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _audit_schema(db)
+        db.execute("""INSERT INTO audit_settings_v1 VALUES (1,?) ON CONFLICT(id) DO UPDATE SET
+            retention_days=excluded.retention_days""", (retention_days,))
+        _audit_row(db, datetime.now(timezone.utc).isoformat(), "local-operator", "", "audit_configure",
+                   "audit_settings", "ok")
+        db.execute("COMMIT")
+    return {"retention_days": retention_days}
 
 
 def _atomic_bytes(path: Path, data: bytes) -> None:
@@ -313,11 +410,50 @@ class MemoryRuntime:
             raise MemoryFailure("unauthorized")
         return identity
 
-    def _require_scope(self, access: Access, scope: str) -> _Identity:
+    def _require_scope(self, access: Access, scope: str, action: str, target: str = "") -> _Identity:
         identity = self._authorize(access)
         if scope not in identity.scopes:
+            self._audit(identity, action, target, "denied")
             raise MemoryFailure("permission_denied")
+        self._audit(identity, action, target, "ok")
         return identity
+
+    def _audit(self, identity: _Identity, action: str, target: str, outcome: str) -> None:
+        # Best-effort observability: audit writes must never block or fail the caller operation,
+        # including fault-injection scenarios. Rows that are written remain append-only.
+        try:
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                _audit_schema(db)
+                _prune_audit(db)
+                db.execute("INSERT INTO audit_events_v1 (at,client_id,entry,action,target,outcome) VALUES (?,?,?,?,?,?)",
+                    (datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry, action, target, outcome))
+                db.execute("COMMIT")
+        except MemoryFailure:
+            return
+
+    def audit_query(self, access: Access, *, client_id: str | None = None, since: str | None = None,
+                    until: str | None = None, limit: int = 100, offset: int = 0) -> AuditPage:
+        self._require_scope(access, "maintain", "audit_query")
+        if client_id is not None:
+            _identifier(client_id)
+        if type(limit) is not int or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
+            raise MemoryFailure("invalid_page")
+        start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
+        if start is not None and end is not None and start >= end:
+            raise MemoryFailure("invalid_time_range")
+        with self._connection() as db:
+            db.execute("BEGIN")
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='audit_events_v1'").fetchone():
+                return AuditPage((), None)
+            rows = db.execute("""SELECT seq,at,client_id,entry,action,target,outcome FROM audit_events_v1
+                WHERE (? IS NULL OR client_id=?) AND (? IS NULL OR at>=?) AND (? IS NULL OR at<?)
+                ORDER BY seq LIMIT ? OFFSET ?""",
+                (client_id, client_id, start, _iso(start) if start is not None else None,
+                 end, _iso(end) if end is not None else None, limit + 1, offset)).fetchall()
+            records = tuple(AuditRecord(int(row["seq"]), row["at"], row["client_id"], row["entry"],
+                row["action"], row["target"], row["outcome"]) for row in rows[:limit])
+            return AuditPage(records, offset + limit if len(rows) > limit else None)
 
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
@@ -358,8 +494,8 @@ class MemoryRuntime:
                 connection.close()
 
     def submit(self, access: Access, event: Event) -> Receipt:
-        identity = self._require_scope(access, "capture")
         self._validate_event(event)
+        identity = self._require_scope(access, "capture", "submit", _json(asdict(event.source)))
         if event.source.entry != identity.entry:
             raise MemoryFailure("unauthorized_source")
         fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
@@ -408,8 +544,8 @@ class MemoryRuntime:
 
     def submit_stream(self, access: Access, event: Event, frames: tuple[dict[str, Any], ...]) -> CaptureReceipt:
         """Commit one buffered assistant stream before a trusted host publishes its frames."""
-        self._require_scope(access, "capture")
         self._validate_event(event)
+        self._require_scope(access, "capture", "submit_stream", _json(asdict(event.source)))
         if event.role != "assistant" or not isinstance(frames, tuple) or not 1 <= len(frames) <= 65536:
             raise MemoryFailure("invalid_stream")
         if any(not isinstance(frame, dict) or not isinstance(frame.get("type"), str) for frame in frames):
@@ -455,14 +591,14 @@ class MemoryRuntime:
         return StoredMessage(Event(**value), Receipt(**json.loads(row["receipt"])))
 
     def read(self, access: Access, message_id: str) -> StoredMessage | None:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "read")
         _identifier(message_id)
         with self._connection() as db:
             row = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message_id,)).fetchone()
             return self._stored(row) if row is not None else None
 
     def read_source(self, access: Access, source: Source) -> StoredMessage | None:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "read_source")
         if not isinstance(source, Source):
             raise MemoryFailure("invalid_source")
         for value in asdict(source).values():
@@ -472,7 +608,7 @@ class MemoryRuntime:
             return self._stored(row) if row is not None else None
 
     def list_messages(self, access: Access, *, since: str | None = None, until: str | None = None, limit: int = 100, offset: int = 0) -> Page:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "list_messages")
         if type(limit) is not int or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
             raise MemoryFailure("invalid_page")
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
@@ -493,7 +629,7 @@ class MemoryRuntime:
             return RuntimeStatus(int(counts[0]), int(counts[1]), important_items=int(counts[2]))
 
     def mark_important(self, access: Access, mark: ImportantMark) -> ImportantItem:
-        self._require_scope(access, "maintain")
+        self._require_scope(access, "maintain", "mark_important")
         if not isinstance(mark, ImportantMark):
             raise MemoryFailure("invalid_mark")
         _identifier(mark.message_id)
@@ -530,7 +666,7 @@ class MemoryRuntime:
 
     def read_important(self, access: Access, important_id: str, *, cursor: int | None = None,
                        limit: int = 2048, content_version: int = 1) -> ImportantPage:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "read_important")
         _identifier(important_id)
         if type(limit) is not int or not 1 <= limit <= 4096 or (cursor is not None and type(cursor) is not int):
             raise MemoryFailure("invalid_page")
@@ -562,13 +698,13 @@ class MemoryRuntime:
         return MessageState(str(row["id"]), int(row["version"]), str(row["status"]), row["replacement_id"], row["change_id"])
 
     def state(self, access: Access, message_id: str) -> MessageState:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "state")
         _identifier(message_id)
         with self._connection() as db:
             return self._state(db, message_id)
 
     def change(self, access: Access, request: Change) -> MessageState:
-        self._require_scope(access, "maintain")
+        self._require_scope(access, "maintain", "change")
         if not isinstance(request, Change) or type(request.expected_version) is not int or request.expected_version < 1:
             raise MemoryFailure("invalid_change")
         for value in [request.request_id, request.target_id, request.evidence_id, request.reason]:
@@ -622,7 +758,7 @@ class MemoryRuntime:
 
     def publish_context(self, access: Access, context: DerivedContext) -> ContextReceipt:
         """Commit a caller-produced result only while its evidence version is still recallable."""
-        self._require_scope(access, "capture")
+        self._require_scope(access, "capture", "publish_context")
         if (not isinstance(context, DerivedContext) or type(context.source_version) is not int
                 or context.source_version < 1 or not isinstance(context.text, str) or type(context.protected) is not bool):
             raise MemoryFailure("invalid_context")
@@ -673,7 +809,8 @@ class MemoryRuntime:
         return CaptureReceipt(**value)
 
     def submit_capture(self, access: Access, capture: Capture) -> CaptureReceipt:
-        identity = self._require_scope(access, "capture")
+        identity = self._require_scope(access, "capture", "submit_capture",
+            _json(asdict(capture.event.source)) if isinstance(capture, Capture) and isinstance(capture.event, Event) else "")
         if not isinstance(capture, Capture):
             raise MemoryFailure("invalid_capture")
         event = capture.event
@@ -805,7 +942,7 @@ class MemoryRuntime:
         return result
 
     def read_capture(self, access: Access, message_id: str) -> CaptureReceipt | None:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "read_capture")
         _identifier(message_id)
         with self._connection() as db:
             db.execute("BEGIN")
@@ -840,7 +977,7 @@ class MemoryRuntime:
         return data
 
     def read_attachment(self, access: Access, message_id: str, attachment_id: str) -> bytes | None:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "read_attachment")
         _identifier(message_id)
         _identifier(attachment_id)
         with self._connection() as db:
@@ -855,7 +992,7 @@ class MemoryRuntime:
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
                until: str | None = None, limit: int = 10, offset: int = 0) -> SearchPage:
-        self._require_scope(access, "recall")
+        self._require_scope(access, "recall", "search")
         if (not isinstance(query, str) or not query.strip() or len(query) > 256
                 or not isinstance(mode, str) or mode not in {"exact", "lexical"}):
             raise MemoryFailure("invalid_query")
@@ -941,7 +1078,7 @@ class MemoryRuntime:
             normalization_version INTEGER NOT NULL)""")
 
     def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
-        self._require_scope(access, "maintain")
+        self._require_scope(access, "maintain", "refresh_lexical")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         try:
@@ -970,7 +1107,7 @@ class MemoryRuntime:
         return self.lexical_status(access)
 
     def rebuild_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
-        self._require_scope(access, "maintain")
+        self._require_scope(access, "maintain", "rebuild_lexical")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         try:

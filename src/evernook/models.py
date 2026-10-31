@@ -207,6 +207,23 @@ class SearchSpan:
 
 
 @dataclass(frozen=True)
+class AuditRecord:
+    seq: int
+    at: str
+    client_id: str
+    entry: str
+    action: str
+    target: str
+    outcome: str
+
+
+@dataclass(frozen=True)
+class AuditPage:
+    records: tuple[AuditRecord, ...]
+    next_offset: int | None
+
+
+@dataclass(frozen=True)
 class SearchHit:
     message_id: str
     source: Source

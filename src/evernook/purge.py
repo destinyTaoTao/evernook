@@ -82,7 +82,7 @@ class PurgeWorkflow:
             raise MemoryFailure("protected_purge_unsupported")
 
     def preview(self, access: Access, request_id: str, source_ids: tuple[str, ...]) -> PurgePreview:
-        self.runtime._require_scope(access, "admin")
+        self.runtime._require_scope(access, "admin", "purge_preview")
         _identifier(request_id)
         if (not isinstance(source_ids, tuple) or not 1 <= len(source_ids) <= 16
                 or any(not isinstance(item, str) for item in source_ids)):
@@ -176,7 +176,7 @@ class PurgeWorkflow:
             db.execute(f"DELETE FROM navigation_sources_v1 WHERE message_id IN ({placeholders})", ids)
 
     def purge(self, access: Access, decision: PurgeDecision) -> PurgeResult:
-        self.runtime._require_scope(access, "admin")
+        self.runtime._require_scope(access, "admin", "purge")
         if not isinstance(decision, PurgeDecision):
             raise MemoryFailure("invalid_purge_decision")
         _identifier(decision.request_id)

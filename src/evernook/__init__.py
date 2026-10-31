@@ -1,11 +1,11 @@
 """Authenticated local ordinary-text API; no network listener or model inference."""
 from .models import (
-    Access, ArchiveView, AttachmentInfo, AttachmentInput, Capture, CaptureReceipt,
+    Access, ArchiveView, AttachmentInfo, AttachmentInput, AuditPage, AuditRecord, Capture, CaptureReceipt,
     Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
     Receipt, RuntimeStatus, Source, StoredMessage, SearchSpan, SearchHit, SearchPage, LexicalStatus,
 )
-from .runtime import HARNESS_DEFAULT_SCOPES, SCOPES, MemoryRuntime, initialize, pair_client
+from .runtime import HARNESS_DEFAULT_SCOPES, SCOPES, MemoryRuntime, configure_audit, configure_lockout, initialize, pair_client, unlock_pairing
 from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantReview, restore_archive, verify_archive
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 from .embedding import EmbeddingSpace, LocalMiniLM
@@ -19,7 +19,7 @@ __all__ = [
     "AttachmentInfo", "AttachmentInput", "Capture", "CaptureReceipt",
     "Event", "ImportantItem", "ImportantMark", "ImportantPage", "MemoryFailure", "MemoryRuntime",
     "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize", "pair_client",
-    "HARNESS_DEFAULT_SCOPES", "SCOPES",
+    "HARNESS_DEFAULT_SCOPES", "SCOPES", "AuditPage", "AuditRecord", "configure_audit", "configure_lockout", "unlock_pairing",
     "SearchSpan", "SearchHit", "SearchPage", "LexicalStatus",
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",
     "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",

@@ -165,7 +165,7 @@ class NavigationMaintenance:
         return policy
 
     def configure(self, access: Access, policy: NavigationPolicy) -> MaintenanceStatus:
-        self.runtime._require_scope(access, "maintain")
+        self.runtime._require_scope(access, "maintain", "maintenance_configure")
         if not isinstance(policy, NavigationPolicy):
             raise MemoryFailure("invalid_navigation_policy")
         policy_id = policy.policy_id
@@ -177,7 +177,7 @@ class NavigationMaintenance:
         return self.status(access, policy_id)
 
     def pause(self, access: Access, policy_id: str, *, paused: bool) -> MaintenanceStatus:
-        self.runtime._require_scope(access, "maintain")
+        self.runtime._require_scope(access, "maintain", "maintenance_pause")
         if type(paused) is not bool:
             raise MemoryFailure("invalid_maintenance_pause")
         with self.runtime._connection() as db:
@@ -325,7 +325,7 @@ class NavigationMaintenance:
 
     def tick(self, access: Access, policy_id: str, *, budget: MaintenanceBudget,
              cancel: Signal | None = None, foreground: Signal | None = None) -> MaintenanceTick:
-        self.runtime._require_scope(access, "maintain")
+        self.runtime._require_scope(access, "maintain", "maintenance_tick")
         if not isinstance(budget, MaintenanceBudget):
             raise MemoryFailure("invalid_maintenance_budget")
         budget.validate()
@@ -368,7 +368,7 @@ class NavigationMaintenance:
         return MaintenanceTick(discovered, changed, completed, reason or "job_budget", self.status(access, policy_id))
 
     def status(self, access: Access, policy_id: str, *, after_bucket: str = "") -> MaintenanceStatus:
-        self.runtime._require_scope(access, "recall")
+        self.runtime._require_scope(access, "recall", "maintenance_status")
         if not isinstance(after_bucket, str) or len(after_bucket) > 256:
             raise MemoryFailure("invalid_navigation_cursor")
         with self.runtime._connection() as db:
@@ -381,7 +381,7 @@ class NavigationMaintenance:
                 counts.get("queued", 0), counts.get("running", 0), counts.get("succeeded", 0), counts.get("failed", 0), buckets[:64], len(buckets) > 64)
 
     def read(self, access: Access, policy_id: str, bucket: str) -> NavigationView:
-        self.runtime._require_scope(access, "recall")
+        self.runtime._require_scope(access, "recall", "navigation_read")
         _identifier(bucket)
         with self.runtime._connection() as db:
             db.execute("BEGIN")

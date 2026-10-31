@@ -60,6 +60,14 @@ def _parser() -> Parser:
     pair.add_argument("--entry", required=True)
     pair.add_argument("--access", type=Path, required=True)
     pair.add_argument("--scopes", help="Comma-separated scope pack (e.g. recall,capture); omit for full trusted-local scopes")
+    unlock = commands.add_parser("pair-unlock", help="Trusted local reset of the pairing lockout; audited")
+    unlock.add_argument("--config", type=Path, required=True)
+    lockout = commands.add_parser("lockout-configure", help="Configure the pairing failure threshold")
+    lockout.add_argument("--config", type=Path, required=True)
+    lockout.add_argument("--failure-limit", type=int, required=True)
+    audit_config = commands.add_parser("audit-configure", help="Configure audit log retention in days")
+    audit_config.add_argument("--config", type=Path, required=True)
+    audit_config.add_argument("--retention-days", type=int, required=True)
     for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile", "vault-show"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
@@ -118,6 +126,7 @@ def _parser() -> Parser:
         ("profile-read", "Read one profile tag's current versioned state"),
         ("profile-summary", "Aggregate current confirmed profile tags by category"),
         ("profile-history", "Read one profile tag's revision history"),
+        ("audit-query", "Query the append-only caller audit log using JSON stdin"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -191,6 +200,13 @@ def _execute(args: argparse.Namespace) -> object:
         scopes = tuple(item.strip() for item in args.scopes.split(",")) if args.scopes else None
         pair_client(args.config, client_id=args.client_id, entry=args.entry, access_path=args.access, scopes=scopes)
         return {"access_file": str(args.access)}
+    if args.command in ("pair-unlock", "lockout-configure", "audit-configure"):
+        from .runtime import configure_audit, configure_lockout, unlock_pairing
+        if args.command == "pair-unlock":
+            return unlock_pairing(args.config)
+        if args.command == "lockout-configure":
+            return configure_lockout(args.config, failure_limit=args.failure_limit)
+        return configure_audit(args.config, retention_days=args.retention_days)
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
     if args.command in ("purge-preview", "purge"):
@@ -300,6 +316,8 @@ def _execute(args: argparse.Namespace) -> object:
         return runtime.submit(access, Event(source=source, **event))
     if args.command == "search":
         return runtime.search(access, **_input())
+    if args.command == "audit-query":
+        return runtime.audit_query(access, **_input())
     if args.command == "read":
         message = runtime.read(access, args.message_id)
         if message is None:

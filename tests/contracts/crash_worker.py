@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -72,13 +73,20 @@ def main() -> None:
     if sys.argv[2].startswith("lexical_"):
         receipt = runtime.submit(access, event)
         commits = 0
+        lexical_seen = False
 
         def lexical_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
             connection: sqlite3.Connection = real_connect(*args, **kwargs)
 
             def before_index_commit(statement: str) -> None:
-                nonlocal commits
-                if statement.strip().upper() == "COMMIT":
+                # Count commits only on connections that touch the lexical index tables, so unrelated
+                # bookkeeping connections (e.g. the audit log, whose rows may mention action names
+                # containing "lexical") cannot shift the kill point.
+                nonlocal commits, lexical_seen
+                upper = statement.strip().upper()
+                if re.search(r"\b(FROM|INTO|EXISTS|UPDATE|JOIN)\s+LEXICAL", upper):
+                    lexical_seen = True
+                if lexical_seen and upper == "COMMIT":
                     commits += 1
                     if commits == 2:
                         os._exit(86)

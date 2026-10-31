@@ -142,7 +142,7 @@ class CandidateWorkflow:
 
     def begin(self, access: Access, source_ids: tuple[str, ...], *, processor_version: str,
               lease_seconds: int = 300) -> CandidateLease:
-        identity = self.runtime._require_scope(access, "maintain")
+        identity = self.runtime._require_scope(access, "maintain", "candidate_begin")
         _identifier(processor_version)
         if (not isinstance(source_ids, tuple) or not 1 <= len(source_ids) <= 16
                 or type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600):
@@ -178,7 +178,7 @@ class CandidateWorkflow:
         return CandidateLease(status, token, sources)
 
     def complete(self, access: Access, run_id: str, token: str, drafts: tuple[CandidateDraft, ...]) -> CandidateRun:
-        identity = self.runtime._require_scope(access, "maintain")
+        identity = self.runtime._require_scope(access, "maintain", "candidate_complete")
         if not isinstance(token, str) or not isinstance(drafts, tuple) or len(drafts) > 32:
             raise MemoryFailure("invalid_candidate_batch")
         with self.runtime._connection() as db:
@@ -210,7 +210,7 @@ class CandidateWorkflow:
         return result
 
     def fail(self, access: Access, run_id: str, token: str, *, error_code: str = "extractor_failed") -> CandidateRun:
-        identity = self.runtime._require_scope(access, "maintain")
+        identity = self.runtime._require_scope(access, "maintain", "candidate_fail")
         if not isinstance(error_code, str) or error_code not in {"extractor_failed", "canceled", "timed_out", "invalid_output", "input_not_admitted", "dependency_unavailable"}:
             raise MemoryFailure("invalid_candidate_failure")
         with self.runtime._connection() as db:
@@ -256,13 +256,13 @@ class CandidateWorkflow:
                 raise MemoryFailure("candidate_provenance_mismatch")
 
     def status(self, access: Access, run_id: str) -> CandidateRun:
-        self.runtime._require_scope(access, "maintain")
+        self.runtime._require_scope(access, "maintain", "candidate_status")
         with self.runtime._connection() as db:
             db.execute("BEGIN")
             return self._status(db, self._row(db, run_id))
 
     def candidates(self, access: Access, run_id: str) -> tuple[FactCandidate, ...]:
-        self.runtime._require_scope(access, "maintain")
+        self.runtime._require_scope(access, "maintain", "candidate_list")
         with self.runtime._connection() as db:
             db.execute("BEGIN")
             row = self._row(db, run_id)
