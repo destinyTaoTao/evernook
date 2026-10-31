@@ -133,6 +133,11 @@ def _parser() -> Parser:
         ("consolidation-status", "Read one consolidation run status"),
         ("consolidation-fail", "Mark a consolidation run failed with an error code"),
         ("consolidation-configure", "Set consolidation tier and the low-risk merge whitelist"),
+        ("scheduler-configure", "Configure the in-process consolidation scheduler"),
+        ("scheduler-pause", "Pause or resume the consolidation scheduler"),
+        ("scheduler-status", "Read scheduler settings and progress"),
+        ("scheduler-session-end", "Capture-scope hook marking a session boundary"),
+        ("scheduler-trigger", "Run one bounded consolidation pass (extractive builtin provider)"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -353,6 +358,19 @@ def _execute(args: argparse.Namespace) -> object:
             if isinstance(value.get("profile_categories"), list):
                 value["profile_categories"] = tuple(value["profile_categories"])
             return consolidation.configure(access, **value)
+    if args.command.startswith("scheduler-"):
+        from .scheduler import ConsolidationScheduler
+        scheduler = ConsolidationScheduler(runtime)
+        value = _input()
+        if args.command == "scheduler-configure":
+            return scheduler.configure(access, **value)
+        if args.command == "scheduler-pause":
+            return scheduler.pause(access, **value)
+        if args.command == "scheduler-status":
+            return scheduler.status(access)
+        if args.command == "scheduler-session-end":
+            return scheduler.session_end(access, **value)
+        return scheduler.trigger(access, **value)
         if args.command == "consolidation-status":
             return consolidation.status(access, **value)
         return consolidation.fail(access, **value)
