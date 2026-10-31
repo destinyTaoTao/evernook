@@ -1,6 +1,6 @@
 # 当前实现与架构图
 
-更新：2026-10-31，功能基线 `893b5d6` 加本轮 T19 普通来源删除增量（PR31至42的线性堆叠，开发分支 `codex/r3-experience-drafts`）。本页依据源码与契约描述已有能力；[换机交接](handoff-2026-10-31.md)保存此前暂停点和恢复步骤。[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
+更新：2026-10-31，功能基线 `d730715`（`main`）：T19 普通来源删除增量（PR31至42）之上，同日已并入 T30–T40 伴侣记忆增量——核心人设、用户画像、逐调用端权限范围与追加式审计、人设/画像独立预算上下文、原始任务到审查队列的沉淀草案与档位白名单、进程内会话/空闲沉淀调度、伴侣事实类别、伴侣预设与适配器符合性套件。本页依据源码与契约描述已有能力；[换机交接](handoff-2026-10-31.md)保存此前暂停点和恢复步骤。[目标架构](architecture.md)和[验收路线](roadmap.md)中的后续设计不代表已经实现。
 
 ## 系统结构
 
@@ -36,18 +36,22 @@ flowchart TB
 
 | 源码 | 当前职责 |
 |---|---|
-| [runtime.py](../src/evernook/runtime.py) | 配置/配对、鉴权、SQLite 事务、幂等、原文/附件、重要交代、更正/抑制与词法维护入口 |
-| [models.py](../src/evernook/models.py) | 版本化输入、来源、回执、状态、分页和检索结果 |
+| [runtime.py](../src/evernook/runtime.py) | 配置/配对、鉴权、逐调用端权限范围、追加式审计与配对锁定、SQLite 事务、幂等、原文/附件、重要交代、更正/抑制与词法维护入口 |
+| [models.py](../src/evernook/models.py) | 版本化输入、来源、回执、状态、分页、审计记录和检索结果 |
 | [safety.py](../src/evernook/safety.py)、[paths.py](../src/evernook/paths.py) | 有限凭证信号检测，以及受支持文件系统与运行目录权限检查 |
 | [lexical.py](../src/evernook/lexical.py) | Unicode 归一化、中文 1/2/3 字 gram、安全词项与原文坐标映射 |
-| [cli.py](../src/evernook/cli.py) | 可信本地初始化/配对、stdin JSON 保存与检索、指定回取、状态及词法维护；无 MCP 依赖 |
+| [cli.py](../src/evernook/cli.py) | 可信本地初始化/配对、stdin JSON 保存与检索、指定回取、状态及词法维护，以及人设/画像/沉淀/调度/预设/事实/审计/删除/备份/保险库等维护子命令；无 MCP 依赖 |
 | [mcp_server.py](../src/evernook/mcp_server.py) | 默认九个查询工具，可信宿主模式十五项；固定权限与失败回执，复用核心检查 |
 | [semantic.py](../src/evernook/semantic.py)、[embedding.py](../src/evernook/embedding.py) | 显式本地模型空间与可重建向量、RRF 融合、自适应近期范围、来源过滤与降级；不自动启用模型 |
 | [archive.py](../src/evernook/archive.py) | 一致性普通快照、清单/哈希校验、恢复发布与只读归档审查 |
 | [candidates.py](../src/evernook/candidates.py) | 显式任务租约/重试、来源绑定的候选批次提交与失效过滤；不运行模型或接纳事实 |
 | [facts.py](../src/evernook/facts.py)、[extraction.py](../src/evernook/extraction.py) | 显式时态决定/历史知识查询；固定本地模型只生成有来源的候选摘录，不自动接纳 |
-| [context.py](../src/evernook/context.py) | 宿主提供 tokenizer 的完整 payload 预算、必读/事实/已审查经验/原文与最终校验 |
+| [context.py](../src/evernook/context.py) | 宿主提供 tokenizer 的完整 payload 预算、必读（含人设块与画像摘要独立预算）/事实/已审查经验/原文与最终校验 |
 | [maintenance.py](../src/evernook/maintenance.py)、[experience.py](../src/evernook/experience.py) | 有界可补跑摘录导航、经验草案与指定版本用户审查，无自动执行权限 |
+| [persona.py](../src/evernook/persona.py)、[profile.py](../src/evernook/profile.py) | 版本化核心人设块与可追溯回滚；用户画像标签草案-确认生命周期、抑制与聚合摘要 |
+| [consolidation.py](../src/evernook/consolidation.py)、[scheduler.py](../src/evernook/scheduler.py) | 原始任务到审查队列草案的显式合并、档位与收窄白名单；进程内会话/空闲触发调度与补跑，无 OS 计划任务 |
+| [preset.py](../src/evernook/preset.py) | 伴侣推荐默认值一键应用、全部可覆盖；推荐值不是验收过的性能承诺 |
+| [adapters/](../src/evernook/adapters) | [外壳适配器符合性契约](contracts/adapter-conformance-v1.md)套件与 OLV 参考适配器（文本回合、缺口披露） |
 | [purge.py](../src/evernook/purge.py) | 精确范围预览/用户确认、两阶段普通来源删除、派生传播与来源墓碑；不处理受保护资产或外部副本 |
 | [backup.py](../src/evernook/backup.py) | 显式认证加密快照、恢复材料及保留；恢复仍需审查 |
 | [protected.py](../src/evernook/protected.py)、[vault_local.py](../src/evernook/vault_local.py) | 显式加密 Event 收件、可恢复关联与本地主口令单次显示；无自动宿主分流 |
@@ -162,8 +166,8 @@ flowchart TD
 |---|---|---|
 | R0 验证与选型 | 已有 dsh、MemOS 对照和凭证原语探针；原文账本路线已记录 | 全面 OS 断网、正式模型质量、实际宿主集成等准入 |
 | R1 可靠底座 | 原文/重要交代/变更/有限附件；普通归档、显式加密备份/恢复材料/保留 | 最新控制重放、运行库恢复、独立盘/调度/RPO/RTO正式验收 |
-| R2 事实与时态 | 候选租约与失效过滤；本地候选摘录；显式事实/纠错/变化/计划/争议与知识时点 | 模型质量准入、自动抽取调度/合并、主体解析与复杂时间回填 |
-| R3 召回与沉淀 | 字面/本地语义/自适应近期；完整预算构造器；可补跑摘录导航；经验草案/审查 | 原生 tokenizer 接线、生成式摘要质量、空闲调度、语义争议传播、索引迁移/规模性能 |
+| R2 事实与时态 | 候选租约与失效过滤；本地候选摘录；显式事实/纠错/变化/计划/争议与知识时点；伴侣事实类别（重要日子/里程碑/心情） | 模型质量准入、自动抽取调度/合并、主体解析与复杂时间回填 |
+| R3 召回与沉淀 | 字面/本地语义/自适应近期；完整预算构造器（含人设/画像独立预算）；可补跑摘录导航；经验草案/审查；沉淀草案档位与收窄白名单；进程内会话/空闲触发调度（宿主显式调用） | 原生 tokenizer 接线、宿主空闲探测接线、生成式摘要质量、语义争议传播、索引迁移/规模性能 |
 | R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消回归 | 日常安装、多插件/分支/压缩全验收、桌宠目标、升级/系统离线与长期运行 |
 | 独立安全与质量 | 有限分流/ACL；加密Event收件、本地主口令单次显示；普通来源确认删除与派生清理 | 自动分流/附件、IPC逐次授权、WTS锁定、轮换/恢复/泄露治理、受保护/备份删除与正式质量集 |
 
