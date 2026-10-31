@@ -137,6 +137,18 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(len(profile_rows), 1)
         self.assertIsNotNone(profile_rows[0]["proposal_id"])
 
+    def test_cli_status_and_fail_report_run_state(self) -> None:
+        span = self.source("合成：CLI 状态与失败路径来源")
+        begin = self.invoke("consolidation-begin", {"source_ids": [span.message_id]})
+        run_id = begin["result"]["status"]["run_id"]
+        token = begin["result"]["token"]
+        status = self.invoke("consolidation-status", {"run_id": run_id})
+        self.assertEqual((status["result"]["run_id"], status["result"]["state"]), (run_id, "running"))
+        failed = self.invoke("consolidation-fail", {"run_id": run_id, "token": token, "error_code": "extractor_failed"})
+        self.assertEqual((failed["result"]["state"], failed["result"]["error_code"]), ("failed", "extractor_failed"))
+        after = self.invoke("consolidation-status", {"run_id": run_id})
+        self.assertEqual(after["result"]["state"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()

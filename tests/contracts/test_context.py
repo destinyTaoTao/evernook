@@ -72,6 +72,18 @@ class ContextTests(unittest.TestCase):
         self.assertGreater(deep.evidence_count, result.evidence_count)
         self.assertEqual(deep.used_tokens, self.counter.count(deep.payload))
 
+    def test_recalled_raw_evidence_is_labeled_evidence_not_experience(self) -> None:
+        self.save("合成：召回证据类别回归来源。")
+        result = self.build("召回证据类别")
+        items = json.loads(result.payload)["items"]
+        self.assertTrue(items)
+        # Ordinary recalled sources are evidence, not 经验记忆: only user-reviewed experience
+        # drafts may claim the experience kind in an untrusted payload.
+        self.assertTrue(all(item["kind"] != "experience" for item in items))
+        recalled = [item for item in items if item["kind"] == "evidence"]
+        self.assertTrue(recalled)
+        self.assertIn("excerpt", recalled[0]["data"])
+
     def test_overlong_important_item_is_explicitly_omitted_and_original_remains_pageable(self) -> None:
         pin, _ = self.pin("合" * 5000)
         result = self.build("", replace(self.policy, pinned_ids=(pin,)))

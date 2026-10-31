@@ -99,6 +99,38 @@ class PurgeTests(unittest.TestCase):
         self.assertEqual(self.runtime.search(self.access, "杭州", mode="exact").hits, ())
         self.assertEqual(self.runtime.read(self.access, keeper), stored_keeper)
 
+    def test_purge_removes_profile_tags_and_consolidation_drafts_without_foreign_key_failure(self) -> None:
+        from evernook import ConsolidationDraft, ConsolidationWorkflow, EvidenceSpan
+        from evernook.profile import ProfileDecision, ProfileRegistry
+
+        target = self.save("合成：用户喜欢手冲咖啡。")
+        stored = self.runtime.read(self.access, target)
+        assert stored is not None
+        span = EvidenceSpan(target, 1, "original", 1, 0, len(stored.event.text), stored.event.text)
+        consolidation = ConsolidationWorkflow(self.runtime)
+        lease = consolidation.begin(self.access, (target,), processor_version="synthetic-purge-profile-v1")
+        assert lease.token is not None
+        completed = consolidation.complete(self.access, lease.status.run_id, lease.token, (
+            ConsolidationDraft("profile_tag", "喜欢手冲咖啡", (span,), category="preference", confidence=0.8),))
+        proposal_id = completed.drafts[0].proposal_id
+        assert proposal_id is not None
+        confirmation = self.save("合成用户确认这条画像标签。")
+        registry = ProfileRegistry(self.runtime)
+        confirmed = registry.decide(self.access, ProfileDecision("profile-confirm-before-purge", proposal_id, 1,
+                                                                 "confirm", confirmation_id=confirmation))
+        self.assertEqual(confirmed.state, "confirmed")
+
+        preview = self.workflow.preview(self.access, "purge-profile", (target, confirmation))
+        approval = self.save("合成用户明确确认彻底删除画像测试的目标与确认消息。")
+        result = self.workflow.purge(self.access, PurgeDecision(preview.request_id, approval))
+
+        self.assertEqual(result.state, "completed")
+        with self.assertRaisesRegex(MemoryFailure, "profile_not_found"):
+            registry.read(self.access, proposal_id)
+        self.assertEqual(consolidation.queue(self.access).rows, ())
+        self.assertIsNone(self.runtime.read(self.access, target))
+        self.assertIsNone(self.runtime.read(self.access, confirmation))
+
     def test_preview_is_not_deletion_and_requires_later_user_confirmation_with_unchanged_scope(self) -> None:
         from evernook import Change
 

@@ -360,6 +360,9 @@ def _execute(args: argparse.Namespace) -> object:
             if isinstance(value.get("profile_categories"), list):
                 value["profile_categories"] = tuple(value["profile_categories"])
             return consolidation.configure(access, **value)
+        if args.command == "consolidation-status":
+            return consolidation.status(access, **value)
+        return consolidation.fail(access, **value)
     if args.command.startswith("scheduler-"):
         from .scheduler import ConsolidationScheduler
         scheduler = ConsolidationScheduler(runtime)
@@ -379,9 +382,6 @@ def _execute(args: argparse.Namespace) -> object:
         if args.command == "preset-apply":
             return apply_preset(access, runtime, **value)
         return show_preset(access, runtime, **value)
-        if args.command == "consolidation-status":
-            return consolidation.status(access, **value)
-        return consolidation.fail(access, **value)
     if args.command == "read":
         message = runtime.read(access, args.message_id)
         if message is None:

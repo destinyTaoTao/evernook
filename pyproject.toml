@@ -15,7 +15,7 @@ evernook = "evernook.cli:main"
 
 [project.optional-dependencies]
 dev = ["mypy==1.18.2", "mcp==2.3.0", "PyNaCl==1.6.2"]
-mcp = ["mcp==2.3.0"]
+mcp = ["mcp==2.3.0", "anyio==4.15.1", "pydantic==2.14.2"]
 backup = ["PyNaCl==1.6.2"]
 vault = ["PyNaCl==1.6.2"]
 

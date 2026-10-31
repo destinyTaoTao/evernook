@@ -161,7 +161,9 @@ class ConsolidationScheduler:
                     if draft.kind not in CONSOLIDATION_KINDS:
                         raise MemoryFailure("invalid_consolidation_draft")
                 self.workflow.complete(access, run_id, lease.token, drafts)
-            except MemoryFailure:
+            except Exception:
+                # Provider bugs raise non-domain exceptions too; an unfailed lease would stay
+                # dangling until expiry, so every in-process failure terminates the run.
                 self.workflow.fail(access, run_id, lease.token, error_code="extractor_failed")
                 raise
             run_ids.append(run_id)

@@ -168,6 +168,28 @@ class PurgeWorkflow:
                 db.execute("DELETE FROM experience_approvals_v1 WHERE experience_id=?", (experience_id,))
                 db.execute("DELETE FROM experience_events_v1 WHERE experience_id=?", (experience_id,))
             db.execute(f"DELETE FROM experience_approvals_v1 WHERE message_id IN ({placeholders})", ids)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_drafts_v1'").fetchone():
+            affected_drafts = [str(row["candidate_id"]) for row in db.execute("SELECT candidate_id,sources FROM consolidation_drafts_v1").fetchall()
+                               if targets.intersection(item["message_id"] for item in json.loads(row["sources"]))]
+            for candidate_id in affected_drafts:
+                db.execute("DELETE FROM consolidation_drafts_v1 WHERE candidate_id=?", (candidate_id,))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
+            affected_tags: set[str] = set()
+            for row in db.execute("SELECT tag_id,record FROM profile_events_v1").fetchall():
+                record = json.loads(row["record"])
+                references = {span["message_id"] for span in record["draft"]["sources"]}
+                if record["confirmation_id"] is not None:
+                    references.add(record["confirmation_id"])
+                if targets.intersection(references):
+                    affected_tags.add(str(row["tag_id"]))
+            for tag_id in affected_tags:
+                # Profile tags are derived evidence-backed understanding: like facts and experiences,
+                # a tag whose evidence or confirmation is purged is removed instead of left dangling.
+                db.execute("DELETE FROM profile_events_v1 WHERE tag_id=?", (tag_id,))
+                db.execute("DELETE FROM profile_approvals_v1 WHERE tag_id=?", (tag_id,))
+            # Approval bindings are message-backed rows with a real foreign key; leaving them behind
+            # would make the messages delete fail with a foreign-key violation.
+            db.execute(f"DELETE FROM profile_approvals_v1 WHERE message_id IN ({placeholders})", ids)
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='navigation_sources_v1'").fetchone():
             jobs = db.execute(f"SELECT DISTINCT policy,bucket FROM navigation_sources_v1 WHERE message_id IN ({placeholders})", ids).fetchall()
             for job in jobs:

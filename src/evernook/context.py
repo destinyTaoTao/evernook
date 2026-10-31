@@ -245,7 +245,7 @@ class ContextBuilder:
                     end = min(len(text), start + 2048)
                     data = {"evidence": asdict(hit), "excerpt": {"start": start, "end": end, "text": text[start:end],
                         "total": len(text), "bounded_excerpt": start != 0 or end != len(text)}}
-                    items.append(_Item("experience", evidence.message_id, data,
+                    items.append(_Item("evidence", evidence.message_id, data,
                         ((evidence.message_id, evidence.state_version, evidence.content_version),)))
         except MemoryFailure as error:
             degrade(error)

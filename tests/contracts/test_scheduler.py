@@ -127,6 +127,18 @@ class SchedulerTests(unittest.TestCase):
         replay = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({}))
         self.assertEqual((replay.processed, len(self.workflow.queue(self.access).rows)), (0, 1))
 
+    def test_provider_generic_exception_fails_lease_and_propagates(self) -> None:
+        source = self.submit("合成：通用异常来源")
+        captured: dict[str, str] = {}
+        def broken(lease: Any) -> tuple[ConsolidationDraft, ...]:
+            captured["run_id"] = lease.status.run_id
+            raise ValueError("synthetic provider bug")
+        with self.assertRaises(ValueError):
+            self.scheduler.trigger(self.access, reason="manual", provider=broken)
+        run = self.workflow.status(self.access, captured["run_id"])
+        self.assertEqual((run.state, run.error_code), ("failed", "extractor_failed"))
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
+
     def test_cli_end_to_end_configure_trigger_status(self) -> None:
         self.submit("合成：CLI 调度来源")
         for command, payload in (("scheduler-configure", {"max_sources_per_run": 4}),
