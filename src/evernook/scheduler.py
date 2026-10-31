@@ -114,9 +114,12 @@ class ConsolidationScheduler:
 
     def session_end(self, access: Access, *, entry: str, session: str) -> dict[str, object]:
         """Capture-scope hook: hosts mark a session boundary; nothing is consolidated here."""
-        self.runtime._require_scope(access, "capture", "scheduler_session_end")
+        identity = self.runtime._require_scope(access, "capture", "scheduler_session_end")
         _identifier(entry)
         _identifier(session)
+        if entry != identity.entry:
+            # Same boundary as submit: a caller marks only its own entry's sessions.
+            raise MemoryFailure("unauthorized_source")
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             self._schema(db)
@@ -127,7 +130,13 @@ class ConsolidationScheduler:
 
     def trigger(self, access: Access, *, reason: str,
                 provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]] | None = None) -> SchedulerTick:
-        """Bounded consolidation pass over unprocessed pending raw jobs; idempotent and crash-resumable."""
+        """Bounded consolidation pass over unprocessed pending raw jobs; idempotent and crash-resumable.
+
+        Trigger reasons are labels: the host owns trigger timing and session marks are observability
+        bookkeeping, not a queue this method drains. Undraftable batches (system/developer or partial
+        sources, or a provider with nothing to draft) are recorded as skipped so one head batch cannot
+        wedge every younger pending message behind a repeated crash.
+        """
         self.runtime._require_scope(access, "maintain", "scheduler_trigger")
         if not isinstance(reason, str) or reason not in SCHEDULER_REASONS:
             raise MemoryFailure("invalid_scheduler_reason")
@@ -152,31 +161,56 @@ class ConsolidationScheduler:
             if len(run_ids) >= runs_limit:
                 break
             batch = tuple(source_ids[index:index + sources_limit])
-            lease = self.workflow.begin(access, batch, processor_version="consolidation-scheduler-v1")
-            assert lease.token is not None
+            try:
+                lease = self.workflow.begin(access, batch, processor_version="consolidation-scheduler-v1")
+            except MemoryFailure as error:
+                if error.code != "unsupported_extraction_source":
+                    raise
+                self._record_progress(batch, None, "skipped")
+                processed += len(batch)
+                continue
             run_id = lease.status.run_id
+            if lease.token is None:
+                # The run already succeeded (a crash can land between completion and progress
+                # bookkeeping): record progress and continue instead of dying on a missing lease.
+                self._record_progress(batch, run_id, "consolidated")
+                run_ids.append(run_id)
+                processed += len(batch)
+                continue
             try:
                 drafts = provider(lease) if provider is not None else extractive_provider(lease)
                 for draft in drafts:
                     if draft.kind not in CONSOLIDATION_KINDS:
                         raise MemoryFailure("invalid_consolidation_draft")
-                self.workflow.complete(access, run_id, lease.token, drafts)
+                if drafts:
+                    self.workflow.complete(access, run_id, lease.token, drafts)
+                    self._record_progress(batch, run_id, "consolidated")
+                else:
+                    # An empty draft set is a legitimate outcome: end the run with no candidates
+                    # so an all-filtered chunk cannot crash-loop on invalid_consolidation_batch.
+                    self.workflow.candidates.complete(access, run_id, lease.token, ())
+                    self._record_progress(batch, run_id, "skipped")
+                run_ids.append(run_id)
+                processed += len(batch)
             except Exception:
-                # Provider bugs raise non-domain exceptions too; an unfailed lease would stay
-                # dangling until expiry, so every in-process failure terminates the run.
-                self.workflow.fail(access, run_id, lease.token, error_code="extractor_failed")
+                try:
+                    # Provider bugs raise non-domain exceptions too; an unfailed lease would stay
+                    # dangling until expiry, so every in-process failure terminates the run.
+                    self.workflow.fail(access, run_id, lease.token, error_code="extractor_failed")
+                except MemoryFailure:
+                    pass  # An already-succeeded run cannot fail; replay records progress instead.
                 raise
-            run_ids.append(run_id)
-            processed += len(batch)
-            with self.runtime._connection() as db:
-                db.execute("BEGIN IMMEDIATE")
-                for message_id in batch:
-                    db.execute("""INSERT INTO scheduler_progress_v1 VALUES (?,?,?,?)
-                        ON CONFLICT(message_id) DO UPDATE SET run_id=excluded.run_id,
-                        state=excluded.state, processed_at=excluded.processed_at""",
-                        (message_id, run_id, "consolidated", datetime.now(timezone.utc).isoformat()))
-                db.execute("COMMIT")
         return SchedulerTick(reason, None, tuple(run_ids), processed, self._remaining_count(source_ids[processed:]))
+
+    def _record_progress(self, batch: tuple[str, ...], run_id: str | None, state: str) -> None:
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for message_id in batch:
+                db.execute("""INSERT INTO scheduler_progress_v1 VALUES (?,?,?,?)
+                    ON CONFLICT(message_id) DO UPDATE SET run_id=excluded.run_id,
+                    state=excluded.state, processed_at=excluded.processed_at""",
+                    (message_id, run_id or "", state, datetime.now(timezone.utc).isoformat()))
+            db.execute("COMMIT")
 
     def _remaining_count(self, leftover: list[str]) -> int:
         with self.runtime._connection() as db:

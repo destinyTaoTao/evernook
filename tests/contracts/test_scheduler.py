@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 from evernook import (ConsolidationDraft, ConsolidationWorkflow, Event, EvidenceSpan, HARNESS_DEFAULT_SCOPES,
                       MemoryFailure, MemoryRuntime, Source, initialize, pair_client)
@@ -108,6 +109,8 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(self.scheduler.status(self.access).session_marks, 2)
         self.assertTrue(self.scheduler.session_end(self.harness, entry="harness", session="s2")["marked"])
         self.assertEqual(self.scheduler.status(self.access).session_marks, 3)
+        with self.assertRaisesRegex(MemoryFailure, "unauthorized_source"):
+            self.scheduler.session_end(self.harness, entry="worker", session="s3")
         with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
             self.scheduler.trigger(self.harness, reason="idle", provider=self.topic_provider({}))
         with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
@@ -138,6 +141,57 @@ class SchedulerTests(unittest.TestCase):
         run = self.workflow.status(self.access, captured["run_id"])
         self.assertEqual((run.state, run.error_code), ("failed", "extractor_failed"))
         self.assertEqual(self.workflow.queue(self.access).rows, ())
+
+    def test_undraftable_head_is_skipped_and_younger_sources_still_consolidate(self) -> None:
+        self.runtime.submit(self.worker, Event(Source("worker", "s1", "main", "sys-1"), "system", 1,
+                                               "2026-10-30T10:00:00+08:00", "complete", "合成：系统消息"))
+        user = self.submit("合成：系统头之后可沉淀来源")
+        self.scheduler.configure(self.access, max_sources_per_run=1)
+        first = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({}))
+        self.assertEqual((first.processed, first.remaining), (1, 1))
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
+        second = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({user: "系统后话题"}))
+        self.assertEqual((second.processed, second.remaining), (1, 0))
+        self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["系统后话题"])
+
+    def test_provider_returning_no_drafts_completes_run_and_skips_batch(self) -> None:
+        self.submit("合成：空批次来源")
+        tick = self.scheduler.trigger(self.access, reason="manual", provider=lambda lease: ())
+        self.assertEqual((tick.processed, tick.remaining), (1, 0))
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
+        self.assertEqual(self.workflow.status(self.access, tick.run_ids[0]).state, "succeeded")
+        replay = self.scheduler.trigger(self.access, reason="manual", provider=lambda lease: ())
+        self.assertEqual((replay.processed, replay.run_ids), (0, ()))
+
+    def test_crash_between_completion_and_progress_resumes_without_assertion(self) -> None:
+        text = "合成：崩溃补跑来源"
+        source = self.submit(text)
+        lease = self.workflow.begin(self.access, (source,), processor_version="consolidation-scheduler-v1")
+        assert lease.token is not None
+        span = EvidenceSpan(source, 1, "original", 1, 0, len(text), text)
+        self.workflow.complete(self.access, lease.status.run_id, lease.token,
+                               (ConsolidationDraft("topic", "崩溃补跑话题", (span,), confidence=0.5),))
+        tick = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({}))
+        self.assertEqual(tick.processed, 1)
+        self.assertEqual(self.scheduler.status(self.access).processed, 1)
+        self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["崩溃补跑话题"])
+
+    def test_failure_after_successful_completion_reports_original_error_and_recovers(self) -> None:
+        text = "合成：成功后失败来源"
+        source = self.submit(text)
+        def provider(lease: Any) -> tuple[ConsolidationDraft, ...]:
+            item = lease.sources[0]
+            span = EvidenceSpan(item.message.receipt.message_id, item.state_version, "original",
+                                item.message.receipt.content_version, 0, len(item.message.event.text), item.message.event.text)
+            return (ConsolidationDraft("topic", "成功后失败话题", (span,), confidence=0.5),)
+        with patch.object(ConsolidationWorkflow, "_candidate_id", side_effect=ValueError("synthetic post-completion bug")):
+            with self.assertRaises(ValueError):
+                self.scheduler.trigger(self.access, reason="manual", provider=provider)
+        run = self.workflow.status(self.access, self.workflow.begin(self.access, (source,),
+            processor_version="consolidation-scheduler-v1").status.run_id)
+        self.assertEqual(run.state, "succeeded")
+        tick = self.scheduler.trigger(self.access, reason="manual", provider=provider)
+        self.assertEqual((tick.processed, self.scheduler.status(self.access).processed), (1, 1))
 
     def test_cli_end_to_end_configure_trigger_status(self) -> None:
         self.submit("合成：CLI 调度来源")

@@ -1,4 +1,8 @@
-"""Explicit consolidation workflow: raw jobs to review-queue drafts. No scheduler, no auto-acceptance."""
+"""Explicit consolidation workflow: raw jobs to review-queue drafts. No scheduler, no auto-acceptance.
+
+The auto tier marks whitelisted topic/navigation_summary drafts `merged`, but nothing consumes those
+rows yet — they remain queue entries; navigation/experience integration is later work. Only the
+profile_tag auto path has a live consumer (confirmed tags reach the must-read profile summary)."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -75,6 +79,7 @@ class ConsolidationWorkflow:
             candidate_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL,
             detail TEXT NOT NULL, category TEXT NOT NULL, confidence REAL NOT NULL, state TEXT NOT NULL,
             proposal_id TEXT, created_at TEXT NOT NULL, sources TEXT NOT NULL)""")
+        db.execute("CREATE INDEX IF NOT EXISTS consolidation_drafts_run_v1 ON consolidation_drafts_v1(run_id)")
         db.execute("""CREATE TABLE IF NOT EXISTS consolidation_settings_v1 (
             id INTEGER PRIMARY KEY CHECK(id=1), tier TEXT NOT NULL, whitelist TEXT NOT NULL)""")
 
@@ -137,12 +142,18 @@ class ConsolidationWorkflow:
             raise MemoryFailure("protected_consolidation_draft")
 
     @staticmethod
-    def _candidate_id(runtime: MemoryRuntime, run_id: str, draft: CandidateDraft) -> str:
-        payload = _json(asdict(draft))
-        return hmac.digest(runtime._fingerprint_key, _json([run_id, payload]).encode("utf-8"), hashlib.sha256).hex()
+    def _candidate_id(runtime: MemoryRuntime, run_id: str, draft: CandidateDraft, source: ConsolidationDraft) -> str:
+        # The mapped draft alone drops kind/category/confidence: two distinct drafts could then
+        # collide on one candidate row and one proposal request. The original draft disambiguates.
+        payload = _json([run_id, asdict(draft), source.kind, source.category, source.confidence])
+        return hmac.digest(runtime._fingerprint_key, payload.encode("utf-8"), hashlib.sha256).hex()
 
     def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
-        """Requires accept scope: profile_tag drafts propose profile entries; nothing is auto-confirmed."""
+        """Requires accept scope: profile_tag drafts propose profile entries; nothing is auto-confirmed.
+
+        Replay is authoritative from the first completion: an already completed run returns its stored
+        draft rows, so later tier/whitelist changes never re-apply to finished drafts.
+        """
         self.runtime._require_scope(access, "accept", "consolidation_complete")
         if not isinstance(drafts, tuple) or not 1 <= len(drafts) <= 32:
             raise MemoryFailure("invalid_consolidation_batch")
@@ -153,6 +164,20 @@ class ConsolidationWorkflow:
             "user_statement" if draft.kind == "profile_tag" else "quoted",
             draft.sources, draft.disputed) for draft in drafts)
         run = self.candidates.complete(access, run_id, token, mapped)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            stored: list[sqlite3.Row] = []
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_drafts_v1'").fetchone():
+                stored = db.execute("""SELECT candidate_id,run_id,kind,label,detail,category,confidence,state,
+                    proposal_id,created_at,sources FROM consolidation_drafts_v1 WHERE run_id=?
+                    ORDER BY created_at,candidate_id""", (run_id,)).fetchall()
+            db.execute("COMMIT")
+        if stored:
+            stored_rows = tuple(ConsolidationDraftRow(row["candidate_id"], row["run_id"], row["kind"], row["label"],
+                row["detail"], row["category"], float(row["confidence"]), row["state"], row["proposal_id"],
+                row["created_at"], tuple(EvidenceSpan(**span) for span in json.loads(row["sources"])))
+                for row in stored)
+            return ConsolidationResult(run, stored_rows)
         now = datetime.now(timezone.utc).isoformat()
         with self.runtime._connection() as db:
             db.execute("BEGIN")
@@ -161,7 +186,7 @@ class ConsolidationWorkflow:
             db.execute("COMMIT")
         rows: list[ConsolidationDraftRow] = []
         for draft, mapped_draft in zip(drafts, mapped):
-            candidate_id = self._candidate_id(self.runtime, run_id, mapped_draft)
+            candidate_id = self._candidate_id(self.runtime, run_id, mapped_draft, draft)
             proposal_id: str | None = None
             state = "disputed" if draft.disputed else "pending_review"
             if tier != "manual" and draft.kind == "profile_tag" and not draft.disputed:

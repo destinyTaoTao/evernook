@@ -137,6 +137,30 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(len(profile_rows), 1)
         self.assertIsNotNone(profile_rows[0]["proposal_id"])
 
+    def test_same_mapped_label_different_confidence_gets_distinct_candidates(self) -> None:
+        span = self.source("合成：同标签不同置信度来源")
+        lease = self.workflow.begin(self.worker, (span.message_id,))
+        assert lease.token is not None
+        result = self.workflow.complete(self.worker, lease.status.run_id, lease.token, (
+            self.draft("profile_tag", "喜欢夜跑", span, confidence=0.4),
+            self.draft("profile_tag", "喜欢夜跑", span, confidence=0.9),
+        ))
+        self.assertEqual(len({row.candidate_id for row in result.drafts}), 2)
+        self.assertEqual(len({row.proposal_id for row in result.drafts}), 2)
+
+    def test_replay_returns_first_completion_despite_tier_change(self) -> None:
+        span = self.source("合成：重放档位来源")
+        drafts = (self.draft("topic", "重放档位话题", span),)
+        lease = self.workflow.begin(self.worker, (span.message_id,))
+        assert lease.token is not None
+        first = self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        self.assertEqual(first.drafts[0].state, "pending_review")
+        self.workflow.configure(self.access, tier="auto")
+        replay = self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        self.assertEqual([row.state for row in replay.drafts], ["pending_review"])
+        self.assertEqual([row.candidate_id for row in replay.drafts], [first.drafts[0].candidate_id])
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 1)
+
     def test_cli_status_and_fail_report_run_state(self) -> None:
         span = self.source("合成：CLI 状态与失败路径来源")
         begin = self.invoke("consolidation-begin", {"source_ids": [span.message_id]})
