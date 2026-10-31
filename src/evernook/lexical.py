@@ -7,6 +7,11 @@ from .models import SearchSpan
 
 NORMALIZATION_VERSION = 1
 
+# NFKD/casefold output depends on the interpreter's Unicode database. The index identity must pin
+# it so an interpreter upgrade surfaces as `behind` (healed by a rebuild) instead of silently
+# desynchronizing stored grams from freshly computed queries.
+NORMALIZATION_IDENTITY = NORMALIZATION_VERSION * 1_000_000 + int(unicodedata.unidata_version.replace(".", ""))
+
 
 def _pieces(text: str) -> Iterator[tuple[str, int, int]]:
     start = 0

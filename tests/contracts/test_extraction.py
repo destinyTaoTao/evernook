@@ -81,6 +81,19 @@ class ExtractionTests(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored.event.text, self.event.text)
 
+    def test_model_shaped_oversize_draft_reports_invalid_output_not_extractor_crash(self) -> None:
+        # Two individually valid quotes can join into a draft beyond the candidate text limit; that is
+        # bad model output with a structured durable category, not a crashed extractor.
+        source = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="long"),
+            text="合" * 100 + "甲" * 2100 + "合" * 100 + "乙" * 2100))
+        self.backend.selection = {"selections": [{"evidence": [
+            {"source": 0, "quote": "甲" * 2100}, {"source": 0, "quote": "乙" * 2100}],
+            "provenance": "user_statement", "disputed": False}]}
+        report = self.processor.process(self.access, (source.message_id,))
+        self.assertEqual(report.error_code, "extraction_invalid_output")
+        self.assertEqual(report.run.state, "failed")
+        self.assertEqual(CandidateWorkflow(self.runtime).status(self.access, report.run.run_id).error_code, "invalid_output")
+
     def test_assistant_role_cannot_be_laundered_into_user_statement(self) -> None:
         assistant = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="assistant"), role="assistant"))
         self.backend.selection = self.selection(0, "小林🙂喜欢乌龙茶。")

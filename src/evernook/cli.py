@@ -140,7 +140,12 @@ def _execute(args: argparse.Namespace) -> object:
             return {"inbox_id": inbox.inbox_id, "key_id": inbox.public["key_id"], "plaintext_read_enabled": False}
         inbox = ProtectedInbox(memory, args.inbox_dir, args.key_dir)
         if args.command == "vault-show":
-            from .vault_local import show_local
+            try:
+                from .vault_local import show_local
+            except ImportError:
+                # tkinter is a stdlib component that some Python builds omit; the vault display
+                # must fail with its own diagnostic instead of a generic operation failure.
+                raise MemoryFailure("vault_display_unavailable") from None
             return show_local(inbox, access, args.object_id, args.purpose)
         if args.command == "vault-pending":
             return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}

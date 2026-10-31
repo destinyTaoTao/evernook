@@ -23,7 +23,7 @@ from .models import (
 )
 from .paths import external, provision_private_directory, verify_private_directory
 from .safety import credential_signal
-from .lexical import NORMALIZATION_VERSION, index_terms, matching_spans, normalize, query_expression
+from .lexical import NORMALIZATION_IDENTITY, index_terms, matching_spans, normalize, query_expression
 
 if TYPE_CHECKING:
     from .archive import ArchiveStatus
@@ -33,7 +33,7 @@ _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=message
 _LEXICAL_INDEXED = f"""SELECT d.message_id FROM lexical_docs d
     JOIN messages original ON original.id=d.message_id
     JOIN (SELECT DISTINCT message_id FROM lexical) tokens ON tokens.message_id=d.message_id
-    WHERE d.normalization_version={NORMALIZATION_VERSION}
+    WHERE d.normalization_version={NORMALIZATION_IDENTITY}
       AND d.content_version=json_extract(original.receipt,'$.content_version')"""
 
 
@@ -179,6 +179,22 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
     return access
 
 
+def _atomic_bytes(path: Path, data: bytes) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, prefix=".provision-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except OSError:
+        raise MemoryFailure("client_provision_failed") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: bool = False) -> tuple[Path, Access]:
     _identifier(client_id)
     _identifier(entry)
@@ -188,9 +204,11 @@ def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: 
     provision_private_directory(root)
     access = Access(client_id, secrets.token_urlsafe(32))
     config_path = root / "runtime.json"
-    config_path.write_text(_json({"schema_version": 1, "data_dir": str(root), "busy_timeout_ms": 5000}), encoding="utf-8")
-    (root / "client.json").write_text(_json({"schema_version": 2, "client_id": client_id, "entry": entry, "token": access.token, "archive_review": allow_archive_review}), encoding="utf-8")
-    (root / "idempotency.key").write_bytes(secrets.token_bytes(32))
+    # Provisioning files are staged and fsynced, then atomically moved into place: a crash mid-write
+    # can no longer leave a half-written file that wedges the directory permanently.
+    _atomic_json(config_path, {"schema_version": 1, "data_dir": str(root), "busy_timeout_ms": 5000})
+    _atomic_json(root / "client.json", {"schema_version": 2, "client_id": client_id, "entry": entry, "token": access.token, "archive_review": allow_archive_review})
+    _atomic_bytes(root / "idempotency.key", secrets.token_bytes(32))
     MemoryRuntime(config_path)
     return config_path, access
 
@@ -271,7 +289,7 @@ class MemoryRuntime:
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
         return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
-                "lexical": True, "lexical_normalization_version": NORMALIZATION_VERSION,
+                "lexical": True, "lexical_normalization_version": NORMALIZATION_IDENTITY,
                 "archive_review": identity.archive_review,
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
@@ -535,6 +553,9 @@ class MemoryRuntime:
             current = self._state(db, request.target_id)
             if current.version != request.expected_version:
                 raise MemoryFailure("version_conflict")
+            if current.status == "purged":
+                # Phase-1 purge scope is frozen: no change may relabel a target already marked purged.
+                raise MemoryFailure("not_recallable")
             evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
             if evidence_row is None or request.evidence_id == request.target_id:
                 raise MemoryFailure("insufficient_evidence")
@@ -911,7 +932,7 @@ class MemoryRuntime:
                     continue
                 db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
                 db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
-                db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_VERSION))
+                db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
                 db.execute("COMMIT")
         return self.lexical_status(access)
 

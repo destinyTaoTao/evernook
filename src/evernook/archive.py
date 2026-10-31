@@ -195,7 +195,13 @@ def restore_archive(source: Path, destination: Path) -> EvidenceArchive:
     if destination.is_relative_to(source) or source.is_relative_to(destination):
         raise MemoryFailure("unsafe_archive_path")
     if destination.exists():
-        if verify_archive(destination) != expected:
+        try:
+            matches = verify_archive(destination) == expected
+        except MemoryFailure:
+            # Any existing non-matching destination — including files that are not archives at all —
+            # must report the same occupied-destination code as the export path.
+            matches = False
+        if not matches:
             raise MemoryFailure("archive_destination_exists")
         return EvidenceArchive(destination)
 

@@ -203,6 +203,10 @@ class FactRegistry:
                 if item not in by_id or by_id[item].kind not in {"plan", "disputed"} or item in resolved:
                     raise MemoryFailure("invalid_fact_resolution")
             now = datetime.now(timezone.utc).isoformat()
+            if rows:
+                # The knowledge watermark must never step backwards: a wall-clock regression between
+                # decisions would fabricate knowledge views that never existed for this subject/predicate.
+                now = max([now] + [row.recorded_at for row in rows], key=_time)
             record = FactRecord(request.request_id, request.subject_id, request.predicate, revision + 1, request.kind,
                 anchor, request.replaces_id, request.candidate_id, processor, draft.text, request.valid_from, request.valid_until, request.occurred_at,
                 learned, now, draft.sources, request.confirmation_id, confirmation_version, request.resolves)

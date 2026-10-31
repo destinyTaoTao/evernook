@@ -94,6 +94,22 @@ class LocalVaultTests(unittest.TestCase):
         self.assertNotIn("sentinel", str(rows))
         self.assertNotIn("合成本地核对", str(rows))
 
+    def test_unavailable_audit_store_never_replaces_the_real_denial_reason(self) -> None:
+        wrong = self.request()
+        # The audit is best-effort: its failure must not mask the actual vault denial code.
+        with patch.object(wrong, "_audit", side_effect=MemoryFailure("storage_busy")):
+            with self.assertRaisesRegex(MemoryFailure, "vault_unlock_refused"):
+                wrong.display_once(b"synthetic wrong password 123", lambda _: None)
+        suppressed = self.request()
+        evidence = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="audit-control"),
+            text="合成：审计失败不掩盖拒绝原因"))
+        assert self.receipt.message is not None
+        self.runtime.change(self.access, Change("synthetic-audit-masking", self.receipt.message.message_id, 1, "suppress",
+            evidence.message_id, "synthetic"))
+        with patch.object(suppressed, "_audit", side_effect=MemoryFailure("storage_busy")):
+            with self.assertRaisesRegex(MemoryFailure, "vault_source_unavailable"):
+                suppressed.display_once(self.password, lambda _: None)
+
     def test_suppression_after_confirmation_prevents_display_and_source_cannot_be_replaced(self) -> None:
         request = self.request()
         evidence = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="control"), text="合成：暂停普通召回", sensitive=False))

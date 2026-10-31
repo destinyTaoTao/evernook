@@ -19,7 +19,7 @@ assert state.replacement_id == correction_receipt.message_id
 
 `action` 仅接受 `correct/revoke/suppress`，分别将目标置为 `corrected/revoked/suppressed`。更正以新证据消息为替代引用，不覆盖或拼改旧原件，也不推断历史有效期。撤销指撤销目标陈述，当前不提供恢复旧内容或撤销一次变更的操作；需要新的显式信息可另存原文。
 
-来源状态从 `active,version=1` 起。`expected_version` 是目标**状态版本**，与不可变原文的 `content_version=1` 不同；变更可靠提交后递增。所有请求含稳定 `request_id`，同 ID 同完整请求返回原历史回执；同 ID 异内容报 `change_conflict`，不同请求使用旧版本报 `version_conflict`。旧回执重试不改变当前新状态，应另用 `state(access,id)` 读取现状。
+来源状态从 `active,version=1` 起。`expected_version` 是目标**状态版本**，与不可变原文的 `content_version=1` 不同；变更可靠提交后递增。所有请求含稳定 `request_id`，同 ID 同完整请求返回原历史回执；同 ID 异内容报 `change_conflict`，不同请求使用旧版本报 `version_conflict`；目标是 purge 阻断态（`purged`）时报 `not_recallable`，两阶段冻结范围不接受改写。旧回执重试不改变当前新状态，应另用 `state(access,id)` 读取现状。
 
 每项变更保存来源证据 ID、简短原因和 UTC 记录时间。证据必须存在、含非空白文本、为 `user/complete`、原件已保存且当前可用，不能以目标自身、投影、助手输出或未完成片段作为确定更正的来源；否则 `insufficient_evidence`。目标不存在、未知操作、非法版本和含已知敏感信号的原因等明确拒绝。这里只核对证据资格与用户显式指向，不声称判断自然语言的事实真伪或自行解决歧义。
 

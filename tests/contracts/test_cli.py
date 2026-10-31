@@ -102,6 +102,20 @@ class CLITests(unittest.TestCase):
         self.assertFalse(status["result"]["consumer_running"])
         self.assertFalse(status["result"]["capabilities"]["vault"])
 
+    def test_vault_show_without_tkinter_reports_the_display_dependency_instead_of_a_generic_failure(self) -> None:
+        from unittest.mock import patch
+
+        from evernook import MemoryFailure, cli as cli_module
+
+        arguments = cli_module._parser().parse_args(["vault-show", "--config", str(self.config),
+            "--access", str(self.access_path), "--inbox-dir", str(self.directory / "inbox"),
+            "--key-dir", str(self.directory / "keys"), "--object-id", "synthetic-object", "--purpose", "review"])
+        # Both modules resolve to import-blocking sentinels, simulating a Python build without tkinter.
+        with patch.dict(sys.modules, {"evernook.vault_local": None, "tkinter": None}), \
+                patch("evernook.protected.ProtectedInbox", lambda *args, **kwargs: object()):
+            with self.assertRaisesRegex(MemoryFailure, "vault_display_unavailable"):
+                cli_module._execute(arguments)
+
     def test_init_and_pair_return_paths_only_and_pair_retries_preserve_identity(self) -> None:
         root = self.directory / "initialized"
         process = subprocess.run([sys.executable, "-m", "evernook.cli", "init", "--data-dir", str(root),

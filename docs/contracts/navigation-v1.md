@@ -32,6 +32,6 @@
 - 时间预算为协作期限，SQLite 锁等待、ACL、文件系统和汇总计数有各自成本，**没有严格 5 秒墙钟或前台时延保证**。本增量没有自动检测宿主空闲、操作系统计划任务或 CPU 占用率控制；需要由宿主在空闲时调度，不能用循环高频 tick 代替调度策略。
 - 摘录只来自完整、原件已保存的用户/助手/工具正文，最多选择范围中较新的有限条目，显示 total_sources / omitted_sources。角色扮演、助手生成或恶意引用均保留为 `untrusted_source_quote`，不推断成现实事实。系统审计与受保护投影不进入摘录。
 - 每条摘录附 message ID、状态/内容版本、表示、Unicode 坐标和原话。导航含扫描水位、生成时间与处理器版本。每次读取及发布都重验来源；更正、撤销或抑制使现有导航立即 stale，包括变更尚未被后台扫描、以及变更目标原先因预算未被摘录的情况。旧文本不再返回，后续 tick 重建范围。
-- 处理失败仅持久化固定 `processor_failed` 类别，下次有界调用可重试；原始异常不进入导航。真正的存储故障可能无法写失败标记，此时保留 running/租约并由过期重领恢复。`read` 可区分 queued/running/expired/succeeded/stale/failed。
+- 协作式让位（canceled/foreground/time_budget）把任务健康地放回 queued 且 `error_code` 为空，只有真实失败类别（`processor_failed`/`stale_source`）写入 `error_code`。处理失败仅持久化固定 `processor_failed` 类别，下次有界调用可重试；原始异常不进入导航。真正的存储故障可能无法写失败标记，此时保留 running/租约并由过期重领恢复。`read` 可区分 queued/running/expired/succeeded/stale/failed。
 
 本增量没有生成式情景摘要、语义主题聚类、自动事实接纳或 T18 经验规则启用，也未接入原生 harness/context-builder。新收到但尚未扫描的记录会通过 status 的 observed head 和 cursor 差异显示积压；旧范围摘要仅代表其已标明的扫描进度。永久删除、控制记录恢复重放及全量派生迁移仍由后续票据完成，不能依靠导航替代这些入口。

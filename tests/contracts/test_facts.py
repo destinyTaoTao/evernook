@@ -170,6 +170,32 @@ class FactTests(unittest.TestCase):
         saved = restarted.decide(self.access, request)
         self.assertEqual(restarted.decide(self.access, request), saved)
 
+    def test_backwards_clock_step_cannot_fabricate_a_knowledge_view_that_never_existed(self) -> None:
+        from datetime import datetime as real_datetime, timezone as real_timezone
+        from unittest.mock import patch
+
+        from evernook.runtime import _time
+
+        old = self.decide("synthetic-watermark", "合成：小林住杭州", 0)
+        earlier = real_datetime(2020, 1, 1, tzinfo=real_timezone.utc)
+
+        class _BackwardsClock:
+            @staticmethod
+            def now(tz: object = None) -> real_datetime:
+                return earlier
+
+        with patch("evernook.facts.datetime", _BackwardsClock):
+            corrected = self.decide("synthetic-watermark-correction", "合成：先前说错，住上海", 1, "correction", replaces=old)
+        # The knowledge watermark is monotonic per subject/predicate even when the wall clock regresses.
+        self.assertGreaterEqual(_time(corrected.recorded_at), _time(old.recorded_at))
+        between = self.facts.query(self.access, old.subject_id, old.predicate,
+            known_at=real_datetime.fromtimestamp(_time(old.recorded_at) - 1800, real_timezone.utc).isoformat())
+        self.assertIsNone(between.fact)
+        self.assertEqual(between.knowledge_revision, 0)
+        current = self.facts.query(self.access, old.subject_id, old.predicate)
+        self.assertEqual(current.fact, corrected)
+        self.assertEqual(current.knowledge_revision, 2)
+
     def test_real_cli_decision_and_query_preserve_unknown_time_and_safe_source_receipts(self) -> None:
         from dataclasses import asdict
         access_file = self.runtime.root / "mcp-access-facts.json"

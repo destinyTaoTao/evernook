@@ -37,11 +37,19 @@ try {
   });
   try {
     // The upstream pipeline truncates by default; reject rather than silently omit evidence.
-    for (const text of input.texts) {
-      const tokens = extractor.tokenizer(text, { truncation: false, padding: false });
-      if (tokens.input_ids.dims.at(-1) > 512) throw new Error('tokens');
+    // Per-item token overflow yields a null vector so one oversize piece cannot wedge a batch.
+    const embeddable = input.texts.map(text =>
+      extractor.tokenizer(text, { truncation: false, padding: false }).input_ids.dims.at(-1) <= 512);
+    const selected = input.texts.filter((_, index) => embeddable[index]);
+    const valid = selected.length
+      ? (await extractor(selected, { pooling: 'mean', normalize: true })).tolist()
+      : [];
+    const vectors = [];
+    let cursor = 0;
+    for (let index = 0; index < input.texts.length; index += 1) {
+      vectors.push(embeddable[index] ? valid[cursor] : null);
+      if (embeddable[index]) cursor += 1;
     }
-    const vectors = (await extractor(input.texts, { pooling: 'mean', normalize: true })).tolist();
     if (networkAttempts) throw new Error('network');
     process.stdout.write(JSON.stringify({ vectors, network_attempts: networkAttempts }) + '\n');
   } finally {

@@ -22,8 +22,9 @@ class SyntheticEmbedding:
         self.error: str | None = None
         self.hook: Callable[[], object] | None = None
         self.invalid: tuple[float, ...] | None = None
+        self.none_for: str | None = None
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]:
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
         self.calls.append(texts)
         if self.hook:
             self.hook()
@@ -31,7 +32,8 @@ class SyntheticEmbedding:
             raise MemoryFailure(self.error)
         if self.invalid is not None:
             return tuple(self.invalid for _ in texts)
-        return tuple((1.0, 0.0, 0.0) if any(word in text for word in ("辛辣", "饮食偏好", "终点", "跨年承诺"))
+        return tuple(None if self.none_for is not None and self.none_for in text else
+                     (1.0, 0.0, 0.0) if any(word in text for word in ("辛辣", "饮食偏好", "终点", "跨年承诺"))
                      else (0.0, 1.0, 0.0) if "账单" in text else (0.0, 0.0, 1.0) for text in texts)
 
 
@@ -92,6 +94,45 @@ class SemanticTests(unittest.TestCase):
         self.assertTrue(dense.recent_since.startswith("2026-10-23"))
         self.assertEqual([hit.evidence.message_id for hit in dense.hits], [target])
         self.assertNotIn("recent_semantic", dense.hits[0].channels)
+
+    def test_unembeddable_chunk_is_marked_explicitly_and_never_blocks_the_queue(self) -> None:
+        blocked = self.save("合成：无法向量化🙂🙂🙂")
+        follower = self.save("合成：账单37.50元。")
+        self.backend.none_for = "🙂🙂🙂"
+        status = self.workflow.refresh(self.access)
+        self.assertEqual((status.state, status.failed_chunks), ("ready", 1))
+        self.assertEqual(status.indexed_messages, 2)
+        calls = len(self.backend.calls)
+        again = self.workflow.refresh(self.access)
+        self.assertEqual(len(self.backend.calls), calls)  # Failure marks are excluded from pending: no re-embed churn.
+        self.assertEqual(again.failed_chunks, 1)
+        page = self.workflow.recall(self.access, "账单")
+        self.assertIn(follower, [hit.evidence.message_id for hit in page.hits])
+        self.assertNotIn(blocked, [hit.evidence.message_id for hit in page.hits])
+        # New content re-embeds the piece and clears the recorded failure.
+        evidence = self.save("合成：更正上一条记录")
+        self.runtime.change(self.access, Change("synthetic-correct", blocked, 1, "correct", evidence, "synthetic"))
+        self.backend.none_for = None
+        healed = self.workflow.refresh(self.access)
+        self.assertEqual(healed.failed_chunks, 0)
+        self.assertEqual(healed.state, "ready")
+
+    def test_recent_window_returns_verified_rows_when_the_budget_fires_at_the_scan_limit(self) -> None:
+        for index in range(257):
+            self.save(f"合成：近期记录{index}", "2026-10-29T00:00:00Z")
+        calls = {"count": 0}
+
+        def check() -> float:
+            calls["count"] += 1
+            if calls["count"] == 257:
+                raise MemoryFailure("recall_canceled")
+            return 1.0
+
+        since, expanded, chars, limited = self.workflow._recent(self.access, "2026-10-30T00:00:00Z", 8192, 7, check=check)
+        self.assertTrue(limited)
+        self.assertEqual(calls["count"], 256)  # The limit return precedes the 257th budget check.
+        self.assertTrue(since.startswith("2026-10-23"))  # Dense recent content keeps the full 7-day floor.
+        self.assertFalse(expanded)
 
     def test_unknown_and_future_times_remain_global_evidence_without_recent_labels(self) -> None:
         unknown = self.save("合成：跨年承诺未知时间", None)

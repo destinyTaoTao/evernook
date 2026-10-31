@@ -280,6 +280,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stderr.strip(), "evernook:unsafe_runtime_permissions")
 
+    def test_malformed_launcher_arguments_are_refused_without_echoing_values(self) -> None:
+        result = subprocess.run([sys.executable, "-m", "evernook.mcp_server", "--config", "synthetic-x",
+                                 "--access", "synthetic-y", "--profile", "bogus-profile-value"],
+                                input="", capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "evernook:invalid_arguments")
+        self.assertNotIn("bogus-profile-value", result.stderr)
+        self.assertNotIn("usage:", result.stderr)
+
     async def test_sqlite_busy_and_failed_insert_return_explicit_protocol_errors_and_safe_retry(self) -> None:
         configuration = json.loads(self.config.read_text(encoding="utf-8"))
         configuration["busy_timeout_ms"] = 0

@@ -17,7 +17,7 @@
 
 ## 可重建索引与降级
 
-可选派生表 `lexical`（FTS5）与 `lexical_docs` 与原文位于同一 SQLite 文件，但独立于原文提交事务，按需创建。原文 schema 仍为 v4；索引单独记录 `normalization_version=1` 与原件内容版本。核心构造与原文提交不要求先创建 FTS5 表。
+可选派生表 `lexical`（FTS5）与 `lexical_docs` 与原文位于同一 SQLite 文件，但独立于原文提交事务，按需创建。原文 schema 仍为 v4；索引单独记录 `normalization_version`（规则版本 × 1,000,000 + 解释器 Unicode 数据库版本，如 16.0.0 → 1*1000000+160000）与原件内容版本；解释器升级改变 NFKD/casefold 输出时索引按同一标识判为落后，刷新后自愈。核心构造与原文提交不要求先创建 FTS5 表。
 
 索引保存归一化一/二/三字 gram，以 `x` 加 UTF-8 十六进制编码构造 ASCII 词项。查询只生成加引号的同类词项并以 AND 连接，所有 SQL 值使用绑定参数；用户输入不会被直接当作 FTS 语法。FTS 仅筛候选，命中还必须回到原文校验连续切片。引号、通配符、`OR`、`NEAR`、SQL 符号均按字面内容处理。[FTS5 官方文档](https://www.sqlite.org/fts5.html)描述其 tokenizer 和查询语法；本实现不依赖默认 tokenizer 自动完成中文短词分词。
 

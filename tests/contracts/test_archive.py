@@ -44,6 +44,19 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaises(MemoryFailure):
             MemoryRuntime(self.root / "restored" / "runtime.json")
 
+    def test_restore_onto_any_occupied_destination_reports_the_same_destination_code(self) -> None:
+        from evernook import restore_archive
+
+        event = Event(Source("test", "session", "main", "occupied"), "user", 1, None, "complete", "合成占用目标。")
+        self.runtime.submit(self.access, event)
+        self.runtime.export_archive(self.access, self.root / "export")
+        occupied = self.root / "occupied"
+        occupied.write_text("synthetic plain file, not an archive", encoding="utf-8")
+        with self.assertRaisesRegex(MemoryFailure, "archive_destination_exists"):
+            restore_archive(self.root / "export", occupied)
+        # No overwrite happened.
+        self.assertEqual(occupied.read_text(encoding="utf-8"), "synthetic plain file, not an archive")
+
     def test_tool_attachments_projection_and_suppression_survive_review_restore(self) -> None:
         from evernook import restore_archive
 

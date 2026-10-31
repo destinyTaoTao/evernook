@@ -43,7 +43,7 @@ for message_id in archive.review_message_ids(limit=100, offset=0):
 - 先在同一父目录的私有临时目录构建，关闭数据库、同步文件、写清单并校验成功后，以目录重命名发布。目标存在时导出拒绝覆盖；文件错误或进程退出前未发布的目录不视为成功。
 - 清单固定归档格式 v1、SQLite schema v4、归档 ID、创建时间、数据库 SHA-256 和消息/重要交代/附件数量。数据库中的 capture 清单保留附件标识、尺寸、SHA-256 和未保存原因，来源映射保留在消息中。
 - 验证拒绝未知版本、宽松布尔数字、额外文件、活动 WAL/SHM/journal、目录外文件引用、数据库哈希/数量/结构完整性及外键错误、缺失或损坏的已保存附件。校验使用只读连接，禁用可信 schema；SQL 执行受 30 秒进度预算约束。文件哈希和复制耗时未设整体截止时间。
-- 常见错误包括 `archive_forbidden`、`unsafe_archive_path`、`archive_destination_exists`、`archive_write_failed`、`archive_snapshot_timeout`、`archive_not_sealed`、`archive_integrity_mismatch`、`attachment_missing`、`attachment_corrupt`、`unsupported_archive` 和 `invalid_archive`，不在错误中回显证据或凭证。
+- `archive_destination_exists` 对任何被占用的还原目标一致返回（含目标存在但不是匹配归档的情形），export/restore 行为一致。常见错误包括 `archive_forbidden`、`unsafe_archive_path`、`archive_destination_exists`、`archive_write_failed`、`archive_snapshot_timeout`、`archive_not_sealed`、`archive_integrity_mismatch`、`attachment_missing`、`attachment_corrupt`、`unsupported_archive` 和 `invalid_archive`，不在错误中回显证据或凭证。
 - 同一归档恢复到同一完整目标可幂等返回；不同归档或损坏目标不覆盖。发布前退出后可向原目标重试；退出留下的私有临时目录不自动合并、扫描或提升为成功结果。
 
 SHA-256 检查完整性，不证明发布者身份或状态最新；有能力同时改写数据库与清单的人可以重算哈希。归档内容继续作为不可信数据，不能执行其中的文本或获得工具权限。归档文件应保持封存，打开后每次审查重新校验；不支持其他程序同时改写归档。

@@ -1,7 +1,6 @@
 """Version 1 stdio adapter. Local launcher credentials are never tool parameters."""
 from __future__ import annotations
 
-import argparse
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 import base64
@@ -20,6 +19,7 @@ from mcp import types
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .models import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryFailure, Source
+from .cli import Parser
 from .runtime import MemoryRuntime
 from .embedding import EmbeddingBackend, LocalMiniLM
 from .semantic import SemanticRecall
@@ -245,13 +245,18 @@ def _encoding_failure(error: BaseException) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="EverNook authenticated stdio MCP v1")
+    # Same hardened parser as the CLI: argparse's default diagnostic repeats user-controlled arguments.
+    parser = Parser(description="EverNook authenticated stdio MCP v1")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--access", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, help="Trusted local MiniLM candidate configuration; disabled if omitted")
     parser.add_argument("--profile", choices=("recall", "trusted-host"), default="recall",
                         help="recall: query tools only (default); trusted-host: all ordinary tools")
-    arguments = parser.parse_args()
+    try:
+        arguments = parser.parse_args()
+    except MemoryFailure as error:
+        sys.stderr.write(f"evernook:{error.code}\n")
+        raise SystemExit(1) from None
     logging.disable(logging.CRITICAL)  # SDK validation/trace logs must not echo request payloads.
     try:
         anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config)

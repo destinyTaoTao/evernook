@@ -36,7 +36,8 @@ class EmbeddingBackend(Protocol):
     @property
     def space(self) -> EmbeddingSpace: ...
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]: ...
+    # A None entry marks a deterministic per-item failure (e.g. model token limit); never a silent truncation.
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]: ...
 
 
 def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
@@ -82,7 +83,7 @@ class LocalMiniLM:
             raise MemoryFailure("invalid_embedding_config")
         return cls(node=Path(config["node"]), transformers_dir=Path(config["transformers_dir"]), model_dir=Path(config["model_dir"]))
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...], ...]:
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
         if (type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120
                 or not isinstance(texts, tuple) or not 1 <= len(texts) <= 16):
             raise MemoryFailure("invalid_embedding_request")
@@ -127,7 +128,7 @@ class LocalMiniLM:
             vectors = value["vectors"]
             if not isinstance(vectors, list) or len(vectors) != len(texts):
                 raise MemoryFailure("invalid_embedding")
-            return tuple(unit_vector(vector, self.space.dimensions) for vector in vectors)
+            return tuple(None if vector is None else unit_vector(vector, self.space.dimensions) for vector in vectors)
         except (OSError, ValueError, TypeError):
             raise MemoryFailure("embedding_unavailable") from None
         finally:

@@ -36,6 +36,7 @@ class BoundaryTests(unittest.TestCase):
             lambda access: self.runtime.publish_context(access, DerivedContext("result", "id", 1, "synthetic")),
             lambda access: self.runtime.read_context(access, "result"),
             lambda access: self.runtime.submit_capture(access, Capture(self.event, "message")),
+            lambda access: self.runtime.submit_stream(access, self.event, ({"type": "finish"},)),
             lambda access: self.runtime.read_capture(access, "id"),
             lambda access: self.runtime.read_attachment(access, "id", "attachment"),
             lambda access: self.runtime.search(access, "茶"),

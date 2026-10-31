@@ -195,7 +195,19 @@ class PurgeWorkflow:
                 self._confirmation(db, preview, decision.confirmation_id)
                 self._check_scope(db, preview.source_ids)
                 for target in db.execute("SELECT * FROM purge_targets_v1 WHERE request_id=? ORDER BY message_id", (decision.request_id,)).fetchall():
-                    current = self.runtime._state(db, target["message_id"])
+                    try:
+                        current = self.runtime._state(db, target["message_id"])
+                    except MemoryFailure as failure:
+                        if failure.code != "message_not_found":
+                            raise
+                        # Messages are only deleted by a completed purge phase 2. Another confirmed
+                        # request over the same id therefore already satisfied this target: complete
+                        # this request as a no-op instead of reporting a misleading missing message.
+                        other = db.execute("SELECT 1 FROM purge_targets_v1 WHERE message_id=? AND request_id<>? LIMIT 1",
+                                           (target["message_id"], decision.request_id)).fetchone()
+                        if other is None:
+                            raise
+                        continue
                     if current.version != target["expected_version"]:
                         raise MemoryFailure("purge_scope_changed")
                     change_id = decision.request_id + ":" + target["message_id"]
@@ -223,7 +235,7 @@ class PurgeWorkflow:
             for table, column in (("important", "message_id"), ("attachments", "message_id"),
                                   ("source_context", "source_id"), ("lexical_docs", "message_id"),
                                   ("semantic_chunks_v1", "message_id"), ("semantic_documents_v1", "message_id"),
-                                  ("jobs", "message_id"), ("captures", "message_id")):
+                                  ("semantic_failures_v1", "message_id"), ("jobs", "message_id"), ("captures", "message_id")):
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
                     db.execute(f"DELETE FROM {table} WHERE {column} IN ({placeholders})", ids)
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='lexical'").fetchone():

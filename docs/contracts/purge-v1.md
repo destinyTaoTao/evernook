@@ -58,4 +58,4 @@ python -m evernook.cli purge --config ... --access ...
 
 旧归档恢复仍为 `review_required`，不能借本增量进入普通召回。`secure_delete` 与 WAL 处理是当前 SQLite 账本的清理措施，不声称对文件系统快照、SSD 磨损均衡、内存、崩溃转储或所有历史副本完成取证级擦除。
 
-受保护投影/受保险库关联的来源得到 `protected_purge_unsupported`，不借普通删除绕过 T24 的端到端保护资产治理。完整票据仍待可控备份清理策略、最新删除记录重放、运行时恢复及长期/故障矩阵验收。验证见[实施报告](../reports/r3-purge-2026-10-31.md)。
+受保护投影/受保险库关联的来源得到 `protected_purge_unsupported`，不借普通删除绕过 T24 的端到端保护资产治理。重叠预览在其目标已被另一确认请求删除后按已完成处理（no-op 完成），不再永久报 `message_not_found`；阻断期目标对 `change` 不可改写（`not_recallable`），purged 状态不能被改写标签。完整票据仍待可控备份清理策略、最新删除记录重放、运行时恢复及长期/故障矩阵验收。验证见[实施报告](../reports/r3-purge-2026-10-31.md)。

@@ -126,6 +126,12 @@ class LocalDisplayRequest:
                 (self.request_id, self.object_id, self.access.client_id, result, datetime.now(timezone.utc).isoformat()))
             db.execute("COMMIT")
 
+    def _best_effort_audit(self, result: str) -> None:
+        try:
+            self._audit(result)
+        except Exception:
+            pass  # The display outcome must win over audit-storage availability.
+
     def display_once(self, password: bytes, sink: Callable[[str], None]) -> None:
         # The only production sink is a local label configured by this helper.
         with self._lock:
@@ -157,7 +163,7 @@ class LocalDisplayRequest:
                         raise ValueError()
                 except (CryptoError, ValueError, TypeError, KeyError):
                     raise MemoryFailure("protected_object_corrupt") from None
-            self._audit("authorization_attempted")
+            self._best_effort_audit("authorization_attempted")
             self.inbox.runtime._authorize(self.access)
             with self.inbox.runtime._connection() as core:
                 core.execute("BEGIN IMMEDIATE")
@@ -173,10 +179,11 @@ class LocalDisplayRequest:
                     sink(event.text)
                 core.execute("COMMIT")
         except MemoryFailure:
-            self._audit("denied")
+            # The audit is best-effort: an unavailable audit store must never replace the real denial.
+            self._best_effort_audit("denied")
             raise
         except Exception:
-            self._audit("denied")
+            self._best_effort_audit("denied")
             raise MemoryFailure("local_display_failed") from None
 
 

@@ -182,6 +182,45 @@ class PurgeTests(unittest.TestCase):
         self.assertEqual(result.state, "completed")
         self.assertIsNone(self.runtime.read(self.access, target))
 
+    def test_change_cannot_relabel_a_target_marked_purged(self) -> None:
+        from contextlib import closing
+        import sqlite3
+        from evernook import Change
+
+        target = self.save("合成purged目标不能被改写。")
+        preview = self.workflow.preview(self.access, "purge-frozen", (target,))
+        confirmation = self.save("合成用户确认冻结的删除范围。")
+        decision = PurgeDecision(preview.request_id, confirmation)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("""CREATE TRIGGER synthetic_purge_freeze BEFORE DELETE ON messages
+                BEGIN SELECT RAISE(ABORT,'synthetic purge interruption'); END""")
+        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            self.workflow.purge(self.access, decision)
+        reopened = MemoryRuntime(self.config)
+        self.assertEqual(reopened.state(self.access, target).status, "purged")
+        instruction = self.save("合成用户随后要求更正被冻结的目标。")
+        with self.assertRaisesRegex(MemoryFailure, "not_recallable"):
+            reopened.change(self.access, Change("correct-purged-target", target, 2, "suppress", instruction, "synthetic"))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("DROP TRIGGER synthetic_purge_freeze")
+        result = PurgeWorkflow(MemoryRuntime(self.config)).purge(self.access, decision)
+        self.assertEqual(result.state, "completed")
+        self.assertIsNone(reopened.read(self.access, target))
+
+    def test_overlapping_preview_completes_as_noop_after_another_request_destroyed_the_target(self) -> None:
+        target = self.save("合成重叠预览的同一目标。")
+        first = self.workflow.preview(self.access, "purge-overlap-a", (target,))
+        second = self.workflow.preview(self.access, "purge-overlap-b", (target,))
+        confirmation = self.save("合成用户确认删除重叠预览目标。")
+        completed = self.workflow.purge(self.access, PurgeDecision(first.request_id, confirmation))
+        self.assertEqual(completed.state, "completed")
+        # The overlapping request is already satisfied: it completes as a no-op instead of reporting
+        # a misleading missing message forever.
+        result = self.workflow.purge(self.access, PurgeDecision(second.request_id, confirmation))
+        self.assertEqual((result.state, result.source_ids), ("completed", (target,)))
+        self.assertIsNone(self.runtime.read(self.access, target))
+        self.assertIsNotNone(self.runtime.read(self.access, confirmation))
+
     def test_scope_includes_capture_references_and_preserves_unshared_attachment_content(self) -> None:
         from evernook import AttachmentInput, Capture
 

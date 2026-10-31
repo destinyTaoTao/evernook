@@ -28,6 +28,7 @@ class SemanticStatus:
     pending_messages: int | None
     source_watermark: str | None
     error_code: str | None = None
+    failed_chunks: int | None = None
 
 
 @dataclass(frozen=True)
@@ -80,20 +81,31 @@ class SemanticRecall:
             space_id TEXT NOT NULL REFERENCES semantic_spaces_v1(id), message_id TEXT NOT NULL REFERENCES messages(id),
             start INTEGER NOT NULL, end INTEGER NOT NULL, state_version INTEGER NOT NULL,
             content_version INTEGER NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(space_id,message_id,start))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS semantic_failures_v1 (
+            space_id TEXT NOT NULL REFERENCES semantic_spaces_v1(id), message_id TEXT NOT NULL REFERENCES messages(id),
+            start INTEGER NOT NULL, state_version INTEGER NOT NULL, content_version INTEGER NOT NULL,
+            error_code TEXT NOT NULL, PRIMARY KEY(space_id,message_id,start))""")
 
     @staticmethod
     def _present(db: sqlite3.Connection) -> bool:
         return bool(db.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('semantic_spaces_v1','semantic_documents_v1','semantic_chunks_v1')").fetchone()[0] == 3)
 
-    def _covered(self) -> str:
-        return """SELECT d.message_id FROM semantic_documents_v1 d
+    @staticmethod
+    def _covered() -> str:
+        # A chunk is acknowledged when it has a current-version vector or an explicit failure record.
+        # The CASE guard keeps older stores without the failure table reporting their existing coverage.
+        return f"""SELECT d.message_id FROM semantic_documents_v1 d
             LEFT JOIN visibility v ON v.message_id=d.message_id
             JOIN messages m ON m.id=d.message_id
             WHERE d.space_id=? AND d.state_version=COALESCE(v.version,1)
               AND d.content_version=json_extract(m.receipt,'$.content_version')
               AND d.chunk_count=(SELECT count(*) FROM semantic_chunks_v1 c
                   WHERE c.space_id=d.space_id AND c.message_id=d.message_id
-                    AND c.state_version=d.state_version AND c.content_version=d.content_version)"""
+                    AND c.state_version=d.state_version AND c.content_version=d.content_version)
+                + CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1')
+                  THEN (SELECT count(*) FROM semantic_failures_v1 f
+                      WHERE f.space_id=d.space_id AND f.message_id=d.message_id
+                        AND f.state_version=d.state_version AND f.content_version=d.content_version) ELSE 0 END"""
 
     def _status(self, db: sqlite3.Connection) -> SemanticStatus:
         counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_ELIGIBLE}").fetchone()
@@ -104,7 +116,16 @@ class SemanticRecall:
         if not self._present(db):
             return SemanticStatus("not_built", space.key, total, 0, total, counts[1])
         covered = int(db.execute(f"SELECT count(*) FROM messages WHERE {_ELIGIBLE} AND id IN ({self._covered()})", (space.key,)).fetchone()[0])
-        return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1])
+        failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone()
+        failed = 0
+        if failure_table:
+            # Only failures that still describe a current recallable source version count as live.
+            failed = int(db.execute(f"""SELECT count(*) FROM semantic_failures_v1 f
+                JOIN messages ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
+                WHERE f.space_id=? AND {_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
+                  AND f.content_version=json_extract(messages.receipt,'$.content_version')""", (space.key,)).fetchone()[0])
+        return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
+                              None, failed)
 
     def status(self, access: Access) -> SemanticStatus:
         self.runtime._authorize(access)
@@ -145,9 +166,12 @@ class SemanticRecall:
                 existing = {int(item[0]) for item in db.execute("""SELECT start FROM semantic_chunks_v1
                     WHERE space_id=? AND message_id=? AND state_version=? AND content_version=?""",
                     (space.key, receipt.message_id, version, receipt.content_version))}
+                failed = {int(item[0]) for item in db.execute("""SELECT start FROM semantic_failures_v1
+                    WHERE space_id=? AND message_id=? AND state_version=? AND content_version=?""",
+                    (space.key, receipt.message_id, version, receipt.content_version))}
                 starts = range(0, max(1, len(text) - space.overlap), space.chunk_size - space.overlap)
                 for start in starts:
-                    if start in existing:
+                    if start in existing or start in failed:
                         continue
                     end = min(len(text), start + space.chunk_size)
                     pending.append((receipt.message_id, version, receipt.content_version, len(text), len(starts), start, end, text[start:end]))
@@ -160,11 +184,14 @@ class SemanticRecall:
         vectors = backend.embed(tuple(item[-1] for item in pending), timeout=timeout)
         if len(vectors) != len(pending):
             raise MemoryFailure("invalid_embedding")
-        encoded = [struct.pack(f"<{space.dimensions}f", *unit_vector(vector, space.dimensions)) for vector in vectors]
+        encoded = [None if vector is None else struct.pack(f"<{space.dimensions}f", *unit_vector(vector, space.dimensions))
+                   for vector in vectors]
+        writable = [(item, code) for item, code in zip(pending, encoded) if code is not None]
+        unembeddable = [item for item, code in zip(pending, encoded) if code is None]
         self.runtime._authorize(access)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            for item, vector in zip(pending, encoded):
+            for item, vector in writable:
                 message_id, version, content_version, length, count, start, end, _ = item
                 current = self.runtime._state(db, message_id)
                 if current.status != "active" or current.version != version:
@@ -173,8 +200,38 @@ class SemanticRecall:
                     (space.key, message_id, version, content_version, length, count))
                 db.execute("INSERT OR REPLACE INTO semantic_chunks_v1 VALUES (?,?,?,?,?,?,?)",
                     (space.key, message_id, start, end, version, content_version, vector))
+                db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
+                    AND (state_version<>? OR content_version<>?)""",
+                    (space.key, message_id, version, content_version))
             db.execute("COMMIT")
+        if unembeddable:
+            self._mark_failures(access, unembeddable)
         return self.status(access)
+
+    def _mark_failures(self, access: Access, items: list[tuple[str, int, int, int, int, int, int, str]]) -> None:
+        """Record deterministic per-chunk model failures so one bad piece cannot wedge the queue."""
+        self.runtime._authorize(access)
+        assert self.space is not None
+        space = self.space
+        grouped: dict[tuple[str, int, int, int, int], list[int]] = {}
+        for item in items:
+            message_id, version, content_version, length, count, start, _, _ = item
+            grouped.setdefault((message_id, version, content_version, length, count), []).append(start)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for (message_id, version, content_version, length, count), starts in grouped.items():
+                current = self.runtime._state(db, message_id)
+                if current.status != "active" or current.version != version:
+                    continue  # A state/content change re-derives the chunk; the stale failure is not recorded.
+                db.execute("INSERT OR REPLACE INTO semantic_documents_v1 VALUES (?,?,?,?,?,?)",
+                    (space.key, message_id, version, content_version, length, count))
+                db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
+                    AND (state_version<>? OR content_version<>?)""",
+                    (space.key, message_id, version, content_version))
+                for start in starts:
+                    db.execute("INSERT OR REPLACE INTO semantic_failures_v1 VALUES (?,?,?,?,?,?)",
+                        (space.key, message_id, start, version, content_version, "token_limit"))
+            db.execute("COMMIT")
 
     @staticmethod
     def _timeout(value: float) -> None:
@@ -190,10 +247,12 @@ class SemanticRecall:
         with self.runtime._connection() as db:
             for row in db.execute(f"""SELECT event,receipt,occurred FROM messages WHERE {_ELIGIBLE}
                     AND occurred<=? ORDER BY occurred DESC,id LIMIT 257""", (instant,)):
-                if check is not None:
-                    check()
+                # The scan-limit return wins at the boundary: verified recent rows must not be dropped
+                # to a deadline/cancel firing on exactly the row where the partial window is promised.
                 if scanned == 256:
                     return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, True
+                if check is not None:
+                    check()
                 scanned += 1
                 chars += len(self.runtime._stored(row).event.text)
                 since = min(since, float(row["occurred"]))
@@ -225,10 +284,12 @@ class SemanticRecall:
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}
                 ORDER BY received,messages.id,c.start LIMIT 10001""", parameters)
             for row in rows:
-                if check is not None:
-                    check()
+                # The scan-limit return wins at the boundary: fully verified chunk hits must not be
+                # dropped to a deadline/cancel firing on exactly the row where partial results are promised.
                 if scanned == 10000:
                     return heapq.nlargest(100, best.values(), key=lambda item: (item[1], item[0].message_id)), scanned, True
+                if check is not None:
+                    check()
                 scanned += 1
                 stored = self.runtime._stored(row)
                 start, end = int(row["start"]), int(row["end"])

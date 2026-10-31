@@ -147,6 +147,24 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(self.runtime.rebuild_lexical(self.access).state, "ready")
         self.assertEqual(self.runtime.search(self.access, "乌龙").hits, expected)
 
+    def test_index_identity_pins_the_interpreter_unicode_database(self) -> None:
+        from evernook.lexical import NORMALIZATION_IDENTITY
+
+        self.runtime.refresh_lexical(self.access)
+        expected = self.runtime.search(self.access, "乌龙").hits
+        self.assertEqual(NORMALIZATION_IDENTITY // 1_000_000, 1)
+        self.assertGreater(NORMALIZATION_IDENTITY % 1_000_000, 0)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as fault:
+            self.assertEqual(fault.execute("SELECT DISTINCT normalization_version FROM lexical_docs").fetchall(),
+                             [(NORMALIZATION_IDENTITY,)])
+            # A store indexed under a different interpreter Unicode database reports behind…
+            fault.execute("UPDATE lexical_docs SET normalization_version=1")
+        self.assertEqual(self.runtime.lexical_status(self.access).state, "behind")
+        # …while the exact fallback still serves complete evidence until the rebuild heals it.
+        self.assertEqual(self.runtime.search(self.access, "乌龙").hits, expected)
+        self.runtime.refresh_lexical(self.access)
+        self.assertEqual(self.runtime.lexical_status(self.access).state, "ready")
+
     def test_invalid_or_sensitive_queries_are_refused_before_search_and_projection_coordinates_stay_separate(self) -> None:
         for query, code in [("", "invalid_query"), (" " * 5, "invalid_query"), ("x" * 257, "invalid_query"),
                             ("bad\ud800", "invalid_encoding"), ("password=synthetic-private", "protected_query")]:

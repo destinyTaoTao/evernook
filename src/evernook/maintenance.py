@@ -315,8 +315,11 @@ class NavigationMaintenance:
             if error is None:
                 assert summary is not None
                 payload = _json(asdict(summary))
+            # Only genuine failure classes carry error_code; cooperative stops (cancel/foreground/time
+            # budget) requeue healthily so a routine yield is never misread as a failure category.
             db.execute("UPDATE navigation_jobs_v1 SET state=?,lease=NULL,lease_until=NULL,result=?,error_code=? WHERE policy=? AND bucket=?",
-                       ("succeeded" if error is None else "failed" if error == "processor_failed" else "queued", payload, error, policy_id, bucket))
+                       ("succeeded" if error is None else "failed" if error == "processor_failed" else "queued", payload,
+                        error if error in ("processor_failed", "stale_source") else None, policy_id, bucket))
             db.execute("COMMIT")
             return error is None
 

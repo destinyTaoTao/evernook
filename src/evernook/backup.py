@@ -396,10 +396,16 @@ def retain_backups(root: Path, key_directory: Path, *, recovery_verified_id: str
     removed: list[str] = []
     if apply:
         for path, status, manifest_hash, _ in eligible:
-            if path.resolve().parent != root or _digest(path / "backup.json") != manifest_hash:
-                raise MemoryFailure("backup_changed_during_retention")
-            _verified_header(path, key_id, sender.verify_key)
-            shutil.rmtree(path)
+            try:
+                if path.resolve().parent != root or _digest(path / "backup.json") != manifest_hash:
+                    raise MemoryFailure("backup_changed_during_retention")
+                _verified_header(path, key_id, sender.verify_key)
+                shutil.rmtree(path)
+            except (MemoryFailure, CryptoError, ValueError, OSError):
+                # A bundle that changed or cannot be removed is never deleted; it is reported as
+                # skipped so one stuck snapshot cannot abort the whole retention run mid-report.
+                skipped.append(path.name)
+                continue
             removed.append(status.backup_id)
     return RetentionResult(tuple(status.backup_id for _, status, _, _ in snapshots if status.backup_id in keep),
                            tuple(item[1].backup_id for item in eligible), tuple(removed), tuple(skipped), recovery_verified_id)

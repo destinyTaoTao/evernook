@@ -21,12 +21,12 @@
 - `Xenova/paraphrase-multilingual-MiniLM-L12-v2`，revision `2c4055b12046f11709e9df2c122e59ffbdc2f900`，q8，384 维，mean pooling + L2 归一化。
 - Node 24.11–24.x、Transformers.js 4.2.0、onnxruntime-node 1.24.3；安装/模型准备独立于推理。核心库与无模型回退仍只依赖 Python 标准库。
 - 每次实际 embedding 校验固定权重/tokenizer 文件 SHA-256，不下载模型，不混用其他权重。适配器与模型文件校验标识、维度、归一化/分块版本都参与空间 ID。
-- 原文按 192 code point 分块、重叠 32；片段保留原文 `[start,end)` 与状态/内容版本。worker 在推理前检查未截断 token 数，超过模型 512 token 上限则明确失败，不能静默裁掉片段尾部。
+- 原文按 192 code point 分块、重叠 32；片段保留原文 `[start,end)` 与状态/内容版本。worker 在推理前检查未截断 token 数，超过模型 512 token 上限的片段按条目显式失败（输出 null 向量），绝不静默裁掉片段尾部，也不会让单个片段拖垮整批推理。
 - 普通核心、CLI/MCP 不默认启用模型；仅可信本地构造 backend 或提供启动配置。转换权重许可链仍未作为发布物验收，代码不分发权重，候选不等于最终生产模型。
 
-`refresh(access, limit=16, timeout=30)` 每次最多处理 16 个缺失片段，分批续建，完整消息覆盖才记入 `indexed_messages`。来源快照在短事务读取，推理在事务外进行，向量与本批覆盖元数据在同一事务提交；提交前复核来源状态版本。中断后重试只补缺失片段；抑制/更正期间的旧计算不能提交。
+`refresh(access, limit=16, timeout=30)` 每次最多处理 16 个缺失片段，分批续建，完整消息覆盖才记入 `indexed_messages`。确定性的逐片段失败（如 token 上限）记录为该空间的显式失败行 `semantic_failures_v1`（绑定状态/内容版本，`error_code='token_limit'`），计入覆盖并从待处理选择中排除；来源或内容版本变化后自动重试，结果经 `status().failed_chunks` 报告。批量/环境性失败（超时、依赖缺失）仍整体抛错、不写失败行。来源快照在短事务读取，推理在事务外进行，向量与本批覆盖元数据在同一事务提交；提交前复核来源状态版本。中断后重试只补缺失片段；抑制/更正期间的旧计算不能提交。
 
-`status(access)` 返回当前配置空间的 `disabled/not_built/behind/ready/unavailable`、来源/完整索引消息数、待处理消息和来源水位。元数据不可用时未知计数为 `null`，`error_code` 保留固定失败码，字面路径仍可查询。水位/ready 仅描述该派生空间覆盖，不能解释为抽取、事实或整体记忆处理完成。保护占位投影不送模型、不计入可向量化原文；普通原文/投影仍由原契约保管。
+`status(access)` 返回当前配置空间的 `disabled/not_built/behind/ready/unavailable`、来源/完整索引消息数、待处理消息、来源水位及 `failed_chunks`（仍可召回且版本匹配的显式失败片段数）。元数据不可用时未知计数为 `null`，`error_code` 保留固定失败码，字面路径仍可查询。水位/ready 仅描述该派生空间覆盖，不能解释为抽取、事实或整体记忆处理完成。保护占位投影不送模型、不计入可向量化原文；普通原文/投影仍由原契约保管。
 
 派生表为 `semantic_spaces_v1/semantic_documents_v1/semantic_chunks_v1`，仍在同一 SQLite，核心原文 schema 保持 v4。不同空间可并存，不自动迁移或混搜；当前没有旧空间垃圾清理或原地热切换服务。普通归档会包含这些派生表的快照，仍未加密且仅受审查恢复，不恢复执行身份或开放普通召回。
 

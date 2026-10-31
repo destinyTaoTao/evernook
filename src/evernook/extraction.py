@@ -203,6 +203,8 @@ class ExtractionProcessor:
             return ExtractionReport(completed, None)
         except Exception as error:
             code = error.code if isinstance(error, MemoryFailure) else "extractor_failed"
+            # Model-shaped candidate validation failures are bad output, not a crashed extractor.
+            code = {"invalid_candidate": "extraction_invalid_output"}.get(code, code)
             safe = code if code in {"extraction_canceled", "extraction_timeout", "extraction_invalid_output",
                 "extraction_quote_not_unique", "extraction_integrity_mismatch", "extraction_unavailable",
                 "extraction_input_not_admitted", "stale_source", "candidate_provenance_mismatch", "protected_candidate"} else "extractor_failed"

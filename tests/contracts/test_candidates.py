@@ -59,26 +59,27 @@ class CandidateTests(unittest.TestCase):
 
         workflow = CandidateWorkflow(self.runtime)
         first = workflow.begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1", lease_seconds=1)
-        assert first.token is not None
+        assert first.token is not None and first.status.lease_until is not None
         with self.assertRaisesRegex(MemoryFailure, "candidate_run_busy"):
             workflow.begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1")
-        time.sleep(1.05)
-        self.assertEqual(workflow.status(self.access, first.status.run_id).state, "expired")
-        with self.assertRaisesRegex(MemoryFailure, "candidate_lease_expired"):
-            workflow.complete(self.access, first.status.run_id, first.token, ())
-        second = CandidateWorkflow(MemoryRuntime(self.config)).begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1")
-        self.assertEqual(second.status.run_id, first.status.run_id)
-        self.assertEqual(second.status.attempt, 2)
-        self.assertNotEqual(first.token, second.token)
-        with self.assertRaisesRegex(MemoryFailure, "invalid_candidate_lease"):
-            workflow.complete(self.access, first.status.run_id, first.token, ())
-        assert second.token is not None
-        failed = workflow.fail(self.access, second.status.run_id, second.token)
-        self.assertEqual((failed.state, failed.error_code), ("failed", "extractor_failed"))
-        third = workflow.begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1")
-        self.assertEqual(third.status.attempt, 3)
-        assert third.token is not None
-        self.assertEqual(workflow.complete(self.access, third.status.run_id, third.token, ()).state, "succeeded")
+        # A controllable clock replaces the thin wall-clock margin: a system time step cannot flake these checks.
+        with patch("evernook.candidates.time.time", return_value=first.status.lease_until + 1):
+            self.assertEqual(workflow.status(self.access, first.status.run_id).state, "expired")
+            with self.assertRaisesRegex(MemoryFailure, "candidate_lease_expired"):
+                workflow.complete(self.access, first.status.run_id, first.token, ())
+            second = CandidateWorkflow(MemoryRuntime(self.config)).begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1")
+            self.assertEqual(second.status.run_id, first.status.run_id)
+            self.assertEqual(second.status.attempt, 2)
+            self.assertNotEqual(first.token, second.token)
+            with self.assertRaisesRegex(MemoryFailure, "invalid_candidate_lease"):
+                workflow.complete(self.access, first.status.run_id, first.token, ())
+            assert second.token is not None
+            failed = workflow.fail(self.access, second.status.run_id, second.token)
+            self.assertEqual((failed.state, failed.error_code), ("failed", "extractor_failed"))
+            third = workflow.begin(self.access, (self.receipt.message_id,), processor_version="synthetic-v1")
+            self.assertEqual(third.status.attempt, 3)
+            assert third.token is not None
+            self.assertEqual(workflow.complete(self.access, third.status.run_id, third.token, ()).state, "succeeded")
 
     def test_multisource_candidates_and_old_completed_runs_disappear_after_source_suppression(self) -> None:
         from evernook import CandidateDraft, CandidateWorkflow, EvidenceSpan
@@ -201,8 +202,15 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(process.returncode, code, process.stderr)
             workflow = CandidateWorkflow(MemoryRuntime(self.config))
             if code != 87:
-                time.sleep(1.05)
-            retry = workflow.begin(self.access, (self.receipt.message_id,), processor_version=mode)
+                # Advance a controlled clock past the child's stored lease instead of sleeping a
+                # thin wall-clock margin that a system time step could invalidate.
+                with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as db:
+                    (lease_until,) = db.execute("SELECT max(lease_until) FROM candidate_runs_v1 WHERE state='running'").fetchone()
+                assert lease_until is not None
+                with patch("evernook.candidates.time.time", return_value=float(lease_until) + 1):
+                    retry = workflow.begin(self.access, (self.receipt.message_id,), processor_version=mode)
+            else:
+                retry = workflow.begin(self.access, (self.receipt.message_id,), processor_version=mode)
             if code == 87:
                 self.assertIsNone(retry.token)
                 self.assertEqual(retry.status.candidate_count, 1)

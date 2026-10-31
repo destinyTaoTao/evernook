@@ -199,8 +199,30 @@ w.tick(a,sys.argv[3],budget=MaintenanceBudget(64,16,5))
         with patch.object(self.work, "_summarize", side_effect=interrupt):
             result = self.work.tick(self.access, self.policy_id, budget=self.budget, cancel=cancel)
         self.assertEqual((result.completed_jobs, result.stop_reason, result.status.succeeded), (0, "canceled", 0))
+        # A cooperative stop requeues healthily: it never persists a failure-looking error_code.
+        queued_view = next(self.work.read(self.access, self.policy_id, bucket) for bucket in result.status.buckets
+                           if self.work.read(self.access, self.policy_id, bucket).state == "queued")
+        self.assertIsNone(queued_view.error_code)
         self.finish()
         self.assertEqual(self.work.status(self.access, self.policy_id).succeeded, 2)
+
+    def test_lease_reclaimed_while_original_worker_still_running_cannot_publish(self) -> None:
+        self.save(1, "合成：租约被接管时原持有者不能发布")
+        self.work._discover(self.access, self.policy_id, self.budget.max_messages, lambda: None)
+        claim = self.work._claim(self.access, self.policy_id)
+        assert claim is not None
+        # Force-expire the lease while the original holder is still finishing its summary.
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as db:
+            db.execute("UPDATE navigation_jobs_v1 SET lease_until=0 WHERE policy=? AND bucket=?", (self.policy_id, claim.bucket))
+        summary = self.work._summarize(self.policy_id, claim)
+        self.assertFalse(self.work._finish(self.access, self.policy_id, claim, summary, None))
+        view = self.work.read(self.access, self.policy_id, claim.bucket)
+        self.assertEqual((view.state, view.summary, view.attempt), ("expired", None, 1))
+        # A reclaiming worker completes the range exactly once; the stale holder published nothing.
+        self.finish()
+        self.assertEqual(self.work.status(self.access, self.policy_id).succeeded, 2)
+        self.assertEqual(self.work.read(self.access, self.policy_id, claim.bucket).attempt, 2)
+        self.assertEqual(self.work.read(self.access, self.policy_id, claim.bucket).state, "succeeded")
 
     def test_cli_uses_explicit_policy_and_budget_and_rejects_invalid_values(self) -> None:
         self.save(1, "合成 CLI 导航")

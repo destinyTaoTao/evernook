@@ -61,7 +61,7 @@ access = pair_client(config, client_id="synthetic-mcp", entry="synthetic-mcp",
 
 成功均为 `{"contract_version":1,"ok":true,"result":...}`；失败 `isError=true`，正文与 structuredContent 均为固定形状，例如 `{"contract_version":1,"ok":false,"error":{"code":"version_conflict"}}`。实际 SDK v2 的 Python 属性是 `is_error/structured_content`，线上 JSON 使用 MCP 定义的 `isError/structuredContent`。
 
-`message_not_found`、`not_recallable`、`unauthorized_source`、`source_conflict`、`version_conflict`、`storage_busy/storage_unavailable` 等复用核心失败语义；格式不符为 `invalid_arguments`，未知工具为 `unknown_tool`。不暴露异常栈、入参或凭证。启动失败只向 stderr 写固定错误码；stdio stdout 专用于协议。SDK 请求日志及默认遥测中间件关闭，不把对话发送到诊断管道。
+`message_not_found`、`not_recallable`、`unauthorized_source`、`source_conflict`、`version_conflict`、`storage_busy/storage_unavailable` 等复用核心失败语义；格式不符为 `invalid_arguments`，未知工具为 `unknown_tool`。不暴露异常栈、入参或凭证。启动失败只向 stderr 写固定错误码（含启动参数格式错误 `invalid_arguments`，与 CLI 共用不回显参数值的解析器）；stdio stdout 专用于协议。SDK 请求日志及默认遥测中间件关闭，不把对话发送到诊断管道。
 
 stdin 显式使用严格 UTF-8 reader，覆盖 SDK 默认的替换解码；非法线上字节会中止连接、报告固定 `invalid_encoding`，不会以 U+FFFD 替换后生成原件成功回执。调用端恢复连接后需按原来源重试合法输入。普通工具参数错误保持会话可继续调用。
 

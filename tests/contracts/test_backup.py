@@ -4,12 +4,14 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 import hashlib
+import shutil
 import struct
 import subprocess
 import sys
 from pathlib import Path
 import tempfile
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from evernook import Access, Change, Event, ImportantMark, MemoryFailure, MemoryRuntime, Source, initialize
@@ -160,6 +162,32 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(set(applied.removed), {ids[1], ids[4]})
         self.assertTrue((backup_root / "foreign.txt").exists())
         self.assertTrue((backup_root / "snapshot-5").exists())
+
+    def test_stuck_snapshot_is_skipped_and_reported_instead_of_aborting_retention(self) -> None:
+        self.runtime.submit(self.access, self.event)
+        backup_root = self.root / "backups-stuck"
+        provision_private_directory(backup_root)
+        now = datetime.now(timezone.utc)
+        ids = []
+        for number, hours in enumerate((0, 0.2, 1, 50, 51, 24 * 31)):
+            with patch("evernook.backup.datetime") as clock:
+                clock.now.return_value = now - timedelta(hours=hours)
+                status = create_backup(self.runtime, self.access, backup_root / ("snapshot-" + str(number)), self.root / "keys")
+            ids.append(status.backup_id)
+        real_rmtree = shutil.rmtree
+
+        def stuck(path: Path, *args: Any, **kwargs: Any) -> None:
+            if path.name == "snapshot-4":
+                raise OSError("synthetic stuck snapshot held by another process")
+            real_rmtree(path, *args, **kwargs)
+
+        with patch("evernook.backup.shutil.rmtree", stuck):
+            applied = retain_backups(backup_root, self.root / "keys", recovery_verified_id=ids[-1], now=now, apply=True)
+        # The stuck bundle is reported as skipped; the other removal and the full report survive.
+        self.assertEqual(applied.removed, (ids[1],))
+        self.assertIn("snapshot-4", applied.skipped)
+        self.assertTrue((backup_root / "snapshot-4").exists())
+        self.assertFalse((backup_root / "snapshot-1").exists())
 
 
 if __name__ == "__main__":
