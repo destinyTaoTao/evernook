@@ -9,6 +9,7 @@ from .runtime import HARNESS_DEFAULT_SCOPES, SCOPES, MemoryRuntime, configure_au
 from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantReview, restore_archive, verify_archive
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 from .consolidation import CONSOLIDATION_KINDS, ConsolidationDraft, ConsolidationDraftRow, ConsolidationQueuePage, ConsolidationResult, ConsolidationWorkflow
+from .facts import FACT_CATEGORIES
 from .embedding import EmbeddingSpace, LocalMiniLM
 from .semantic import RecallHit, RecallPage, SemanticRecall, SemanticStatus
 from .purge import PurgeDecision, PurgePreview, PurgeResult, PurgeWorkflow
@@ -26,6 +27,7 @@ __all__ = [
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",
     "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",
     "CONSOLIDATION_KINDS", "ConsolidationDraft", "ConsolidationDraftRow", "ConsolidationQueuePage", "ConsolidationResult", "ConsolidationWorkflow",
+    "FACT_CATEGORIES",
     "EmbeddingSpace", "LocalMiniLM", "RecallHit", "RecallPage", "SemanticRecall", "SemanticStatus",
     "PurgeDecision", "PurgePreview", "PurgeResult", "PurgeWorkflow",
     "SCHEDULER_REASONS", "ConsolidationScheduler", "SchedulerStatus", "SchedulerTick", "extractive_provider",

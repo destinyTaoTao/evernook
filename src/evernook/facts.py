@@ -13,6 +13,11 @@ from .models import Access, MemoryFailure
 from .runtime import MemoryRuntime, _identifier, _json, _time
 
 
+# Companion-oriented fact categories: important days, relationship milestones and emotional tone.
+# They ride the ordinary temporal-fact machinery; no separate relationship engine exists.
+FACT_CATEGORIES = ("milestone", "important_day", "mood")
+
+
 @dataclass(frozen=True)
 class FactDecision:
     request_id: str
@@ -27,6 +32,7 @@ class FactDecision:
     valid_until: str | None = None
     replaces_id: str | None = None
     resolves: tuple[str, ...] = ()
+    category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,7 @@ class FactRecord:
     confirmation_id: str
     confirmation_version: int
     resolves: tuple[str, ...]
+    category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +158,8 @@ class FactRegistry:
             raise MemoryFailure("fact_predecessor_required")
         if request.kind in {"plan", "disputed"} and request.resolves:
             raise MemoryFailure("invalid_fact_resolution")
+        if request.category is not None and (not isinstance(request.category, str) or request.category not in FACT_CATEGORIES):
+            raise MemoryFailure("invalid_fact_category")
 
     def decide(self, access: Access, request: FactDecision) -> FactRecord:
         """Trusted maintenance boundary: the caller must establish the user's actual confirmation."""
@@ -209,7 +218,7 @@ class FactRegistry:
                 now = max([now] + [row.recorded_at for row in rows], key=_time)
             record = FactRecord(request.request_id, request.subject_id, request.predicate, revision + 1, request.kind,
                 anchor, request.replaces_id, request.candidate_id, processor, draft.text, request.valid_from, request.valid_until, request.occurred_at,
-                learned, now, draft.sources, request.confirmation_id, confirmation_version, request.resolves)
+                learned, now, draft.sources, request.confirmation_id, confirmation_version, request.resolves, request.category)
             db.execute("INSERT INTO fact_decisions_v1 VALUES (?,?,?,?,?,?,?)", (record.fact_id, request.subject_id, request.predicate,
                 record.revision, fingerprint, _json(asdict(request)), _json(asdict(record))))
             db.execute("INSERT INTO fact_heads_v1 VALUES (?,?,?) ON CONFLICT(subject,predicate) DO UPDATE SET revision=excluded.revision",
