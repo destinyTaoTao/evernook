@@ -5,7 +5,7 @@ from .models import (
     ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
     Receipt, RuntimeStatus, Source, StoredMessage, SearchSpan, SearchHit, SearchPage, LexicalStatus,
 )
-from .runtime import MemoryRuntime, initialize, pair_client
+from .runtime import HARNESS_DEFAULT_SCOPES, SCOPES, MemoryRuntime, initialize, pair_client
 from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantReview, restore_archive, verify_archive
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 from .embedding import EmbeddingSpace, LocalMiniLM
@@ -19,6 +19,7 @@ __all__ = [
     "AttachmentInfo", "AttachmentInput", "Capture", "CaptureReceipt",
     "Event", "ImportantItem", "ImportantMark", "ImportantPage", "MemoryFailure", "MemoryRuntime",
     "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize", "pair_client",
+    "HARNESS_DEFAULT_SCOPES", "SCOPES",
     "SearchSpan", "SearchHit", "SearchPage", "LexicalStatus",
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",
     "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",

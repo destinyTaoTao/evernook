@@ -128,7 +128,7 @@ class SemanticRecall:
                               None, failed)
 
     def status(self, access: Access) -> SemanticStatus:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         try:
             with self.runtime._connection() as db:
                 db.execute("BEGIN")
@@ -140,7 +140,7 @@ class SemanticRecall:
                                   None, None, None, None, failure.code)
 
     def refresh(self, access: Access, *, limit: int = 16, timeout: float = 30) -> SemanticStatus:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "maintain")
         if type(limit) is not int or not 1 <= limit <= 16:
             raise MemoryFailure("invalid_page")
         self._timeout(timeout)
@@ -313,7 +313,7 @@ class SemanticRecall:
     def recall(self, access: Access, query: str, *, limit: int = 10, as_of: str | None = None,
                recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
                cancel: threading.Event | None = None) -> RecallPage:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         self._timeout(timeout)
         deadline = time.monotonic() + timeout
         def budget() -> float:

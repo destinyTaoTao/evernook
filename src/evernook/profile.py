@@ -154,7 +154,7 @@ class ProfileRegistry:
 
     def decide(self, access: Access, request: ProfileDecision) -> ProfileRecord:
         """Only a trusted local caller may establish actual user intent; never expose as an LLM tool."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "accept")
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
                 or request.action not in {"propose", "revise", "confirm", "reject", "suppress"}):
@@ -229,7 +229,7 @@ class ProfileRegistry:
             return record
 
     def read(self, access: Access, tag_id: str) -> ProfileView:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         _identifier(tag_id)
         with self.runtime._connection() as db:
             db.execute("BEGIN")
@@ -255,7 +255,7 @@ class ProfileRegistry:
     def summary(self, access: Access, *, categories: tuple[str, ...] | None = None,
                 include_suppressed: bool = False) -> ProfileSummary:
         """Aggregate current tags; suppressed and rejected tags stay out of the default view."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         if categories is not None:
             if (not isinstance(categories, tuple) or any(not isinstance(item, str) for item in categories)
                     or len(categories) != len(set(categories))):
@@ -287,7 +287,7 @@ class ProfileRegistry:
             return ProfileSummary(PROFILE_TAXONOMY_VERSION, tuple(tags))
 
     def history(self, access: Access, tag_id: str, *, limit: int = 100, offset: int = 0) -> ProfileHistoryPage:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         _identifier(tag_id)
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
             raise MemoryFailure("invalid_profile_summary")

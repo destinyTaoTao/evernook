@@ -96,7 +96,7 @@ class ContextBuilder:
 
     def build(self, access: Access, query: str, *, as_of: str, mode: str, timeout: float,
               known_at: str | None = None, cancel: threading.Event | None = None) -> ContextBundle:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         _time(as_of)
         if known_at is not None:
             _time(known_at)

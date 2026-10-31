@@ -59,6 +59,7 @@ def _parser() -> Parser:
     pair.add_argument("--client-id", required=True)
     pair.add_argument("--entry", required=True)
     pair.add_argument("--access", type=Path, required=True)
+    pair.add_argument("--scopes", help="Comma-separated scope pack (e.g. recall,capture); omit for full trusted-local scopes")
     for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile", "vault-show"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
@@ -187,7 +188,8 @@ def _execute(args: argparse.Namespace) -> object:
         pair_client(config, client_id=access.client_id, entry=args.entry, access_path=access_path)
         return {"config": str(config), "access_file": str(access_path)}
     if args.command == "pair":
-        pair_client(args.config, client_id=args.client_id, entry=args.entry, access_path=args.access)
+        scopes = tuple(item.strip() for item in args.scopes.split(",")) if args.scopes else None
+        pair_client(args.config, client_id=args.client_id, entry=args.entry, access_path=args.access, scopes=scopes)
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)

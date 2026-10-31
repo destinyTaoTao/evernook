@@ -81,19 +81,35 @@ def _identifier(value: str) -> None:
         raise MemoryFailure("sensitive_metadata")
 
 
+# Caller scope model: a paired identity carries an explicit scope set. Legacy files (schema 1-3)
+# predate scopes and keep the full set so trusted-local workflows behave exactly as before.
+SCOPES = ("recall", "capture", "maintain", "accept", "admin")
+FULL_SCOPES = SCOPES
+HARNESS_DEFAULT_SCOPES = ("recall", "capture")
+
+
+def _scope_set(value: object) -> frozenset[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise MemoryFailure("invalid_credentials")
+    if len(value) != len(set(value)) or any(item not in SCOPES for item in value):
+        raise MemoryFailure("invalid_credentials")
+    return frozenset(value)
+
+
 @dataclass(frozen=True)
 class _Identity:
     client_id: str
     entry: str
     token: str = field(repr=False)
     archive_review: bool = False
+    scopes: frozenset[str] = frozenset(FULL_SCOPES)
 
 
 def _identities(value: dict[str, Any]) -> dict[str, _Identity]:
     version = value.get("schema_version")
-    if type(version) is not int or version not in (1, 2, 3):
+    if type(version) is not int or version not in (1, 2, 3, 4):
         raise MemoryFailure("invalid_credentials")
-    if version == 3:
+    if version in (3, 4):
         if set(value) != {"schema_version", "clients"} or not isinstance(value["clients"], list) or not value["clients"]:
             raise MemoryFailure("invalid_credentials")
         rows = value["clients"]
@@ -108,15 +124,17 @@ def _identities(value: dict[str, Any]) -> dict[str, _Identity]:
     result: dict[str, _Identity] = {}
     entries: set[str] = set()
     for row in rows:
-        if (not isinstance(row, dict) or set(row) != {"client_id", "entry", "token", "archive_review"}
+        fields = {"client_id", "entry", "token", "archive_review"} | ({"scopes"} if version == 4 else set())
+        if (not isinstance(row, dict) or set(row) != fields
                 or any(not isinstance(row[key], str) for key in ("client_id", "entry", "token"))
                 or type(row["archive_review"]) is not bool or len(row["token"]) < 40):
             raise MemoryFailure("invalid_credentials")
+        scopes = _scope_set(row["scopes"]) if version == 4 else frozenset(FULL_SCOPES)
         _identifier(row["client_id"])
         _identifier(row["entry"])
         if row["client_id"] in result or row["entry"] in entries:
             raise MemoryFailure("invalid_credentials")
-        result[row["client_id"]] = _Identity(**row)
+        result[row["client_id"]] = _Identity(row["client_id"], row["entry"], row["token"], row["archive_review"], scopes)
         entries.add(row["entry"])
     return result
 
@@ -144,10 +162,14 @@ def _atomic_json(path: Path, value: object) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: Path) -> Access:
+def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: Path,
+                scopes: tuple[str, ...] | None = None) -> Access:
     """Trusted local provisioning only. This operation is never exposed as an MCP tool."""
     _identifier(client_id)
     _identifier(entry)
+    if scopes is not None:
+        if not isinstance(scopes, tuple) or any(not isinstance(item, str) or item not in SCOPES for item in scopes):
+            raise MemoryFailure("invalid_scopes")
     runtime = MemoryRuntime(config_path)
     access_path = external(access_path)
     if access_path.parent != runtime.root or not access_path.name.startswith("mcp-access") or access_path.suffix != ".json":
@@ -162,7 +184,10 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
         if any(other.entry == entry and other.client_id != client_id for other in identities.values()):
             raise MemoryFailure("client_conflict")
         if identity is None:
-            identity = _Identity(client_id, entry, secrets.token_urlsafe(32))
+            identity = _Identity(client_id, entry, secrets.token_urlsafe(32),
+                                 scopes=frozenset(scopes) if scopes is not None else frozenset(FULL_SCOPES))
+        elif scopes is not None:
+            identity = replace(identity, scopes=frozenset(scopes))
         access = Access(client_id, identity.token)
         if access_path.exists():
             try:
@@ -172,7 +197,9 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
             if existing_access != access:
                 raise MemoryFailure("access_file_conflict")
         identities[client_id] = identity
-        _atomic_json(runtime.root / "client.json", {"schema_version": 3, "clients": [asdict(row) for row in identities.values()]})
+        _atomic_json(runtime.root / "client.json", {"schema_version": 4, "clients": [
+            {"client_id": row.client_id, "entry": row.entry, "token": row.token,
+             "archive_review": row.archive_review, "scopes": sorted(row.scopes)} for row in identities.values()]})
         if not access_path.exists():
             _atomic_json(access_path, asdict(access))
         db.execute("COMMIT")
@@ -286,11 +313,17 @@ class MemoryRuntime:
             raise MemoryFailure("unauthorized")
         return identity
 
+    def _require_scope(self, access: Access, scope: str) -> _Identity:
+        identity = self._authorize(access)
+        if scope not in identity.scopes:
+            raise MemoryFailure("permission_denied")
+        return identity
+
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
         return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
                 "lexical": True, "lexical_normalization_version": NORMALIZATION_IDENTITY,
-                "archive_review": identity.archive_review,
+                "archive_review": identity.archive_review, "scopes": sorted(identity.scopes),
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
 
     def export_archive(self, access: Access, destination: Path) -> ArchiveStatus:
@@ -325,7 +358,7 @@ class MemoryRuntime:
                 connection.close()
 
     def submit(self, access: Access, event: Event) -> Receipt:
-        identity = self._authorize(access)
+        identity = self._require_scope(access, "capture")
         self._validate_event(event)
         if event.source.entry != identity.entry:
             raise MemoryFailure("unauthorized_source")
@@ -375,7 +408,7 @@ class MemoryRuntime:
 
     def submit_stream(self, access: Access, event: Event, frames: tuple[dict[str, Any], ...]) -> CaptureReceipt:
         """Commit one buffered assistant stream before a trusted host publishes its frames."""
-        self._authorize(access)
+        self._require_scope(access, "capture")
         self._validate_event(event)
         if event.role != "assistant" or not isinstance(frames, tuple) or not 1 <= len(frames) <= 65536:
             raise MemoryFailure("invalid_stream")
@@ -422,14 +455,14 @@ class MemoryRuntime:
         return StoredMessage(Event(**value), Receipt(**json.loads(row["receipt"])))
 
     def read(self, access: Access, message_id: str) -> StoredMessage | None:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         _identifier(message_id)
         with self._connection() as db:
             row = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message_id,)).fetchone()
             return self._stored(row) if row is not None else None
 
     def read_source(self, access: Access, source: Source) -> StoredMessage | None:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         if not isinstance(source, Source):
             raise MemoryFailure("invalid_source")
         for value in asdict(source).values():
@@ -439,7 +472,7 @@ class MemoryRuntime:
             return self._stored(row) if row is not None else None
 
     def list_messages(self, access: Access, *, since: str | None = None, until: str | None = None, limit: int = 100, offset: int = 0) -> Page:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         if type(limit) is not int or not 1 <= limit <= 1000 or type(offset) is not int or offset < 0:
             raise MemoryFailure("invalid_page")
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
@@ -460,7 +493,7 @@ class MemoryRuntime:
             return RuntimeStatus(int(counts[0]), int(counts[1]), important_items=int(counts[2]))
 
     def mark_important(self, access: Access, mark: ImportantMark) -> ImportantItem:
-        self._authorize(access)
+        self._require_scope(access, "maintain")
         if not isinstance(mark, ImportantMark):
             raise MemoryFailure("invalid_mark")
         _identifier(mark.message_id)
@@ -497,7 +530,7 @@ class MemoryRuntime:
 
     def read_important(self, access: Access, important_id: str, *, cursor: int | None = None,
                        limit: int = 2048, content_version: int = 1) -> ImportantPage:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         _identifier(important_id)
         if type(limit) is not int or not 1 <= limit <= 4096 or (cursor is not None and type(cursor) is not int):
             raise MemoryFailure("invalid_page")
@@ -529,13 +562,13 @@ class MemoryRuntime:
         return MessageState(str(row["id"]), int(row["version"]), str(row["status"]), row["replacement_id"], row["change_id"])
 
     def state(self, access: Access, message_id: str) -> MessageState:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         _identifier(message_id)
         with self._connection() as db:
             return self._state(db, message_id)
 
     def change(self, access: Access, request: Change) -> MessageState:
-        self._authorize(access)
+        self._require_scope(access, "maintain")
         if not isinstance(request, Change) or type(request.expected_version) is not int or request.expected_version < 1:
             raise MemoryFailure("invalid_change")
         for value in [request.request_id, request.target_id, request.evidence_id, request.reason]:
@@ -589,7 +622,7 @@ class MemoryRuntime:
 
     def publish_context(self, access: Access, context: DerivedContext) -> ContextReceipt:
         """Commit a caller-produced result only while its evidence version is still recallable."""
-        self._authorize(access)
+        self._require_scope(access, "capture")
         if (not isinstance(context, DerivedContext) or type(context.source_version) is not int
                 or context.source_version < 1 or not isinstance(context.text, str) or type(context.protected) is not bool):
             raise MemoryFailure("invalid_context")
@@ -640,7 +673,7 @@ class MemoryRuntime:
         return CaptureReceipt(**value)
 
     def submit_capture(self, access: Access, capture: Capture) -> CaptureReceipt:
-        identity = self._authorize(access)
+        identity = self._require_scope(access, "capture")
         if not isinstance(capture, Capture):
             raise MemoryFailure("invalid_capture")
         event = capture.event
@@ -772,7 +805,7 @@ class MemoryRuntime:
         return result
 
     def read_capture(self, access: Access, message_id: str) -> CaptureReceipt | None:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         _identifier(message_id)
         with self._connection() as db:
             db.execute("BEGIN")
@@ -807,7 +840,7 @@ class MemoryRuntime:
         return data
 
     def read_attachment(self, access: Access, message_id: str, attachment_id: str) -> bytes | None:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         _identifier(message_id)
         _identifier(attachment_id)
         with self._connection() as db:
@@ -822,7 +855,7 @@ class MemoryRuntime:
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
                until: str | None = None, limit: int = 10, offset: int = 0) -> SearchPage:
-        self._authorize(access)
+        self._require_scope(access, "recall")
         if (not isinstance(query, str) or not query.strip() or len(query) > 256
                 or not isinstance(mode, str) or mode not in {"exact", "lexical"}):
             raise MemoryFailure("invalid_query")
@@ -908,7 +941,7 @@ class MemoryRuntime:
             normalization_version INTEGER NOT NULL)""")
 
     def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
-        self._authorize(access)
+        self._require_scope(access, "maintain")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         try:
@@ -937,7 +970,7 @@ class MemoryRuntime:
         return self.lexical_status(access)
 
     def rebuild_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
-        self._authorize(access)
+        self._require_scope(access, "maintain")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         try:

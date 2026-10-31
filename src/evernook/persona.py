@@ -141,7 +141,7 @@ class PersonaRegistry:
 
     def set(self, access: Access, request: PersonaSet) -> PersonaBlockRecord:
         """Trusted local boundary: the caller must establish the user's actual confirmation."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "accept")
         if not isinstance(request, PersonaSet) or type(request.expected_revision) is not int or request.expected_revision < 0:
             raise MemoryFailure("invalid_persona")
         if request.block not in PERSONA_BLOCKS:
@@ -180,7 +180,7 @@ class PersonaRegistry:
 
     def rollback(self, access: Access, request: PersonaRollback) -> PersonaRollbackResult:
         """Restore every block to its content as of target_seq; the rollback itself is a new traceable change."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "accept")
         if (not isinstance(request, PersonaRollback) or type(request.target_seq) is not int
                 or type(request.expected_seq) is not int or request.target_seq < 1 or request.expected_seq < 0):
             raise MemoryFailure("invalid_persona")
@@ -229,7 +229,7 @@ class PersonaRegistry:
         return result
 
     def view(self, access: Access, *, as_of_seq: int | None = None) -> PersonaView:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         if as_of_seq is not None and (type(as_of_seq) is not int or as_of_seq < 1):
             raise MemoryFailure("invalid_persona")
         with self.runtime._connection() as db:
@@ -240,7 +240,7 @@ class PersonaRegistry:
                 {block: self._latest(db, block, as_of_seq=None if as_of_seq is None else as_of_seq) for block in PERSONA_BLOCKS})
 
     def history(self, access: Access, block: str, *, limit: int = 100, offset: int = 0) -> PersonaHistoryPage:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         if block not in PERSONA_BLOCKS or type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
             raise MemoryFailure("invalid_persona")
         with self.runtime._connection() as db:

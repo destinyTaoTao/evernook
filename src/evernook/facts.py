@@ -154,7 +154,7 @@ class FactRegistry:
 
     def decide(self, access: Access, request: FactDecision) -> FactRecord:
         """Trusted maintenance boundary: the caller must establish the user's actual confirmation."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "accept")
         self._validate(request)
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
         with self.runtime._connection() as db:
@@ -231,7 +231,7 @@ class FactRegistry:
 
     def query(self, access: Access, subject_id: str, predicate: str, *, valid_at: str | None = None,
               known_at: str | None = None) -> FactView:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         _identifier(subject_id)
         _identifier(predicate)
         now = datetime.now(timezone.utc).isoformat()

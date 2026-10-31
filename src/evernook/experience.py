@@ -140,7 +140,7 @@ class ExperienceRegistry:
 
     def decide(self, access: Access, request: ExperienceDecision) -> ExperienceRecord:
         """Only a trusted local caller may establish actual user intent; never expose as an LLM tool."""
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "accept")
         if (not isinstance(request, ExperienceDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str) or request.action not in {"propose", "revise", "enable", "reject", "disable"}):
             raise MemoryFailure("invalid_experience_decision")
@@ -215,7 +215,7 @@ class ExperienceRegistry:
             return record
 
     def read(self, access: Access, experience_id: str) -> ExperienceView:
-        self.runtime._authorize(access)
+        self.runtime._require_scope(access, "recall")
         _identifier(experience_id)
         with self.runtime._connection() as db:
             db.execute("BEGIN")
