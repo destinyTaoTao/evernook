@@ -109,6 +109,10 @@ def _parser() -> Parser:
         ("experience-from-navigation", "Create an extractive experience candidate from existing navigation"),
         ("purge-preview", "Preview an exact ordinary-source purge scope; does not delete evidence"),
         ("purge", "Trusted confirmed purge of the exact previewed scope; never a model tool"),
+        ("persona-set", "Trusted user-confirmed persona block update; never a model tool"),
+        ("persona-rollback", "Restore all persona blocks to a past snapshot as a traceable change"),
+        ("persona-read", "Read current or as-of persona blocks"),
+        ("persona-history", "Read one persona block's version history"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -234,6 +238,17 @@ def _execute(args: argparse.Namespace) -> object:
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
         return ExtractionProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
+    if args.command.startswith("persona-"):
+        from .persona import PersonaRegistry, PersonaRollback, PersonaSet
+        personas = PersonaRegistry(runtime)
+        value = _input()
+        if args.command == "persona-set":
+            return personas.set(access, PersonaSet(**value))
+        if args.command == "persona-rollback":
+            return personas.rollback(access, PersonaRollback(**value))
+        if args.command == "persona-history":
+            return personas.history(access, **value)
+        return personas.view(access, **value)
     if args.command in ("fact-decide", "fact-query"):
         from .facts import FactDecision, FactRegistry
         registry = FactRegistry(runtime)
