@@ -157,7 +157,7 @@ class ProfileRegistry:
         self.runtime._require_scope(access, "accept", "profile_decide")
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
-                or request.action not in {"propose", "revise", "confirm", "reject", "suppress"}):
+                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm"}):
             raise MemoryFailure("invalid_profile_decision")
         for identifier in (request.request_id, request.tag_id):
             _identifier(identifier)
@@ -165,6 +165,9 @@ class ProfileRegistry:
             if request.draft is None or request.confirmation_id is not None:
                 raise MemoryFailure("invalid_profile_decision")
             self._validate(request.draft)
+        elif request.action == "auto_confirm":
+            if request.draft is not None or request.confirmation_id is not None:
+                raise MemoryFailure("invalid_profile_decision")
         else:
             if request.draft is not None or request.confirmation_id is None:
                 raise MemoryFailure("profile_user_confirmation_required")
@@ -179,8 +182,7 @@ class ProfileRegistry:
                     raise MemoryFailure("profile_request_conflict")
                 repeated = self._record(existing["record"])
                 self._sources(db, repeated.draft)
-                if repeated.state == "confirmed":
-                    assert repeated.confirmation_id is not None
+                if repeated.state == "confirmed" and repeated.confirmation_id is not None:
                     if self._confirmation(db, repeated.confirmation_id) != repeated.confirmation_version:
                         raise MemoryFailure("profile_user_confirmation_required")
                 return repeated
@@ -197,19 +199,30 @@ class ProfileRegistry:
                 content_revision = 1 if previous is None else previous.content_revision + 1
                 state = "draft"
             else:
-                assert previous is not None and request.confirmation_id is not None
+                assert previous is not None and request.draft is None
                 draft, content_revision = previous.draft, previous.content_revision
-                confirmation = self._confirmation(db, request.confirmation_id)
-                approval = db.execute("SELECT tag_id,reviewed_revision,action FROM profile_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
-                binding = (request.tag_id, request.expected_revision, request.action)
-                if approval is not None and tuple(approval) != binding:
-                    raise MemoryFailure("profile_confirmation_conflict")
-                received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
-                if _time(received) < _time(previous.recorded_at):
-                    raise MemoryFailure("profile_confirmation_predates_review")
+                if request.action != "auto_confirm":
+                    assert request.confirmation_id is not None
+                    confirmation = self._confirmation(db, request.confirmation_id)
+                    approval = db.execute("SELECT tag_id,reviewed_revision,action FROM profile_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
+                    binding = (request.tag_id, request.expected_revision, request.action)
+                    if approval is not None and tuple(approval) != binding:
+                        raise MemoryFailure("profile_confirmation_conflict")
+                    received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
+                    if _time(received) < _time(previous.recorded_at):
+                        raise MemoryFailure("profile_confirmation_predates_review")
                 if request.action == "confirm":
                     if previous.state not in {"draft", "suppressed"}:
                         raise MemoryFailure("invalid_profile_transition")
+                    self._sources(db, draft)
+                    state = "confirmed"
+                elif request.action == "auto_confirm":
+                    # Whitelist guard: only the low-risk interest category may skip user review,
+                    # so direct calls can never auto-confirm preferences, goals or boundaries.
+                    if previous.state != "draft":
+                        raise MemoryFailure("invalid_profile_transition")
+                    if previous.draft.category != "interest":
+                        raise MemoryFailure("profile_auto_confirm_limited")
                     self._sources(db, draft)
                     state = "confirmed"
                 elif request.action == "reject":
@@ -220,7 +233,9 @@ class ProfileRegistry:
                     if previous.state != "confirmed":
                         raise MemoryFailure("invalid_profile_transition")
                     state = "suppressed"
-                db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
+                if request.action != "auto_confirm":
+                    assert request.confirmation_id is not None
+                    db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
             record = ProfileRecord(request.tag_id, revision + 1, content_revision, state, PROFILE_TAXONOMY_VERSION,
                 draft, datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
             db.execute("INSERT INTO profile_events_v1 VALUES (?,?,?,?,?)",
@@ -242,8 +257,7 @@ class ProfileRegistry:
         state, error = record.state, None
         try:
             self._sources(db, record.draft)
-            if state == "confirmed":
-                assert record.confirmation_id is not None
+            if state == "confirmed" and record.confirmation_id is not None:
                 if self._confirmation(db, record.confirmation_id) != record.confirmation_version:
                     raise MemoryFailure("profile_user_confirmation_required")
         except MemoryFailure as failure:

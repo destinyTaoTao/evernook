@@ -16,6 +16,11 @@ from .safety import credential_signal
 
 
 CONSOLIDATION_KINDS = ("profile_tag", "topic", "navigation_summary")
+CONSOLIDATION_TIERS = ("manual", "review", "auto")
+# Low-risk merge universe: tiers may narrow the whitelist below but never widen it, so facts,
+# experience, persona and non-interest profile categories can never skip user confirmation.
+LOW_RISK_KINDS = ("topic", "navigation_summary")
+LOW_RISK_PROFILE_CATEGORIES = ("interest",)
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,39 @@ class ConsolidationWorkflow:
             candidate_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL,
             detail TEXT NOT NULL, category TEXT NOT NULL, confidence REAL NOT NULL, state TEXT NOT NULL,
             proposal_id TEXT, created_at TEXT NOT NULL, sources TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS consolidation_settings_v1 (
+            id INTEGER PRIMARY KEY CHECK(id=1), tier TEXT NOT NULL, whitelist TEXT NOT NULL)""")
+
+    @staticmethod
+    def _settings(db: sqlite3.Connection) -> tuple[str, dict[str, set[str]]]:
+        row = db.execute("SELECT tier,whitelist FROM consolidation_settings_v1 WHERE id=1").fetchone()
+        if row is None:
+            return "review", {"kinds": set(LOW_RISK_KINDS), "profile_categories": set(LOW_RISK_PROFILE_CATEGORIES)}
+        whitelist = json.loads(row["whitelist"])
+        return str(row["tier"]), {"kinds": set(whitelist["kinds"]), "profile_categories": set(whitelist["profile_categories"])}
+
+    def configure(self, access: Access, *, tier: str, kinds: tuple[str, ...] | None = None,
+                  profile_categories: tuple[str, ...] | None = None) -> dict[str, object]:
+        """Trusted maintenance boundary; the whitelist may only narrow the low-risk universe."""
+        self.runtime._require_scope(access, "maintain", "consolidation_configure")
+        if not isinstance(tier, str) or tier not in CONSOLIDATION_TIERS:
+            raise MemoryFailure("invalid_consolidation_tier")
+        if kinds is None:
+            kinds = LOW_RISK_KINDS
+        if profile_categories is None:
+            profile_categories = LOW_RISK_PROFILE_CATEGORIES
+        if (not isinstance(kinds, tuple) or any(item not in LOW_RISK_KINDS for item in kinds)
+                or not isinstance(profile_categories, tuple)
+                or any(item not in LOW_RISK_PROFILE_CATEGORIES for item in profile_categories)):
+            raise MemoryFailure("invalid_consolidation_whitelist")
+        whitelist = _json({"kinds": sorted(set(kinds)), "profile_categories": sorted(set(profile_categories))})
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._schema(db)
+            db.execute("""INSERT INTO consolidation_settings_v1 VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET
+                tier=excluded.tier, whitelist=excluded.whitelist""", (tier, whitelist))
+            db.execute("COMMIT")
+        return {"tier": tier, "kinds": sorted(set(kinds)), "profile_categories": sorted(set(profile_categories))}
 
     def begin(self, access: Access, source_ids: tuple[str, ...], *, processor_version: str = "consolidation-explicit-v1",
               lease_seconds: int = 300) -> CandidateLease:
@@ -116,18 +154,29 @@ class ConsolidationWorkflow:
             draft.sources, draft.disputed) for draft in drafts)
         run = self.candidates.complete(access, run_id, token, mapped)
         now = datetime.now(timezone.utc).isoformat()
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            self._schema(db)
+            tier, whitelist = self._settings(db)
+            db.execute("COMMIT")
         rows: list[ConsolidationDraftRow] = []
         for draft, mapped_draft in zip(drafts, mapped):
             candidate_id = self._candidate_id(self.runtime, run_id, mapped_draft)
             proposal_id: str | None = None
-            if draft.kind == "profile_tag":
+            state = "disputed" if draft.disputed else "pending_review"
+            if tier != "manual" and draft.kind == "profile_tag" and not draft.disputed:
                 proposal = self.profile.decide(access, ProfileDecision(
                     f"consolidation-{candidate_id}", f"consol-{candidate_id[:32]}", 0, "propose",
                     ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources)))
                 proposal_id = proposal.tag_id
+                if tier == "auto" and draft.category in whitelist["profile_categories"]:
+                    self.profile.decide(access, ProfileDecision(
+                        f"consolidation-auto-{candidate_id}", proposal.tag_id, 1, "auto_confirm"))
+                    state = "merged"
+            elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
+                state = "merged"
             rows.append(ConsolidationDraftRow(candidate_id, run_id, draft.kind, draft.label, draft.detail,
-                draft.category, draft.confidence, "disputed" if draft.disputed else "pending_review",
-                proposal_id, now, draft.sources))
+                draft.category, draft.confidence, state, proposal_id, now, draft.sources))
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             self._schema(db)

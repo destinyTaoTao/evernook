@@ -132,6 +132,7 @@ def _parser() -> Parser:
         ("consolidation-queue", "Read the consolidation review queue"),
         ("consolidation-status", "Read one consolidation run status"),
         ("consolidation-fail", "Mark a consolidation run failed with an error code"),
+        ("consolidation-configure", "Set consolidation tier and the low-risk merge whitelist"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -346,6 +347,12 @@ def _execute(args: argparse.Namespace) -> object:
             return consolidation.complete(access, **value)
         if args.command == "consolidation-queue":
             return consolidation.queue(access, **value)
+        if args.command == "consolidation-configure":
+            if isinstance(value.get("kinds"), list):
+                value["kinds"] = tuple(value["kinds"])
+            if isinstance(value.get("profile_categories"), list):
+                value["profile_categories"] = tuple(value["profile_categories"])
+            return consolidation.configure(access, **value)
         if args.command == "consolidation-status":
             return consolidation.status(access, **value)
         return consolidation.fail(access, **value)
