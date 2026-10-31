@@ -107,6 +107,8 @@ def _parser() -> Parser:
         ("experience-decide", "Trusted version-bound experience review; never a model tool"),
         ("experience-read", "Read the current source-validated experience draft/state"),
         ("experience-from-navigation", "Create an extractive experience candidate from existing navigation"),
+        ("purge-preview", "Preview an exact ordinary-source purge scope; does not delete evidence"),
+        ("purge", "Trusted confirmed purge of the exact previewed scope; never a model tool"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -176,6 +178,16 @@ def _execute(args: argparse.Namespace) -> object:
         return {"access_file": str(args.access)}
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command in ("purge-preview", "purge"):
+        from .purge import PurgeDecision, PurgeWorkflow
+        purge_workflow = PurgeWorkflow(runtime)
+        value = _input()
+        if args.command == "purge":
+            return purge_workflow.purge(access, PurgeDecision(**value))
+        if not isinstance(value.get("source_ids"), list):
+            raise MemoryFailure("invalid_arguments")
+        value["source_ids"] = tuple(value["source_ids"])
+        return purge_workflow.preview(access, **value)
     if args.command.startswith("experience-"):
         from .candidates import EvidenceSpan
         from .experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry

@@ -6,9 +6,9 @@ Local-first, evidence-backed memory for agent harnesses and AI companions.
 
 EverNook 是供 dsh、pi、桌宠等接入的外挂长期记忆模块：通过原生插件或 MCP 保存交流，并为聊天上下文提供相关记忆。目标是保存多年对话、逐字回取重要交代、跨会话保持连续性，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 
-> **当前状态：已有本地证据账本、CLI/MCP、显式离线语义召回、加密备份、受保护收件箱/本地显示、时态事实、候选抽取、预算上下文、可补跑导航、经验草案及 dsh/pi SDK 适配；尚无生产启用或完整产品验收。** 真实支持范围见[当前架构](docs/current-architecture.md)与各项[契约](docs/contracts)。
+> **当前状态：已有本地证据账本、CLI/MCP、显式离线语义召回、加密备份、受保护收件箱/本地显示、时态事实、候选抽取、预算上下文、可补跑导航、经验草案、普通来源确认删除及 dsh/pi SDK 适配；尚无生产启用或完整产品验收。** 真实支持范围见[当前架构](docs/current-architecture.md)与各项[契约](docs/contracts)。
 
-**2026-10-31 开发已按用户要求暂停并保存交接。家里电脑请检出 `codex/r3-experience-drafts`；完整状态、依赖重建、已验证结果与待办见[换机交接](docs/handoff-2026-10-31.md)。`main` 尚未合入这组堆叠 PR。**
+**2026-10-31 已从换机交接继续开发；当前完整分支为 `codex/r3-experience-drafts`。历史状态、依赖重建、已验证结果与待办见[换机交接](docs/handoff-2026-10-31.md)。`main` 尚未合入这组堆叠 PR。**
 
 ## 我们希望做到什么
 
@@ -44,7 +44,7 @@ flowchart LR
 
 图中为证据账本的基础调用。dsh/pi 显式 SDK profile 已实现采集/基本召回注入，但未启用日常桌面 profile，桌宠目标尚未指定；没有已部署的共享守护服务。普通归档未加密，另有显式加密备份；恢复不开放普通召回。[当前实现与流程图](docs/current-architecture.md)列出完整增量与缺口；[目标架构](docs/architecture.md)保留后续设计。
 
-候选任务支持来源版本/片段校验、租约重试和失效过滤，本地 Qwen 候选摘录可显式运行；事实与经验接纳需可信本地用户决定。日/周/字面主题导航可以有界补跑，但没有日常后台计划任务。详见[抽取](docs/contracts/extraction-v1.md)、[事实](docs/contracts/facts-v1.md)、[导航](docs/contracts/navigation-v1.md)与[经验](docs/contracts/experience-v1.md)。
+候选任务支持来源版本/片段校验、租约重试和失效过滤，本地 Qwen 候选摘录可显式运行；事实与经验接纳需可信本地用户决定。日/周/字面主题导航可以有界补跑，但没有日常后台计划任务。普通来源可在精确预览和用户确认后删除并传播到派生资产，既有备份和宿主副本仍明确保留为残留。详见[抽取](docs/contracts/extraction-v1.md)、[事实](docs/contracts/facts-v1.md)、[导航](docs/contracts/navigation-v1.md)、[经验](docs/contracts/experience-v1.md)与[删除](docs/contracts/purge-v1.md)。
 
 ## 文档导航
 

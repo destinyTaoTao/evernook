@@ -10,6 +10,7 @@ from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantRev
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 from .embedding import EmbeddingSpace, LocalMiniLM
 from .semantic import RecallHit, RecallPage, SemanticRecall, SemanticStatus
+from .purge import PurgeDecision, PurgePreview, PurgeResult, PurgeWorkflow
 
 __all__ = [
     "Access", "ArchiveView", "Change", "ChangeRecord", "ContextReceipt", "DerivedContext",
@@ -20,4 +21,5 @@ __all__ = [
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",
     "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",
     "EmbeddingSpace", "LocalMiniLM", "RecallHit", "RecallPage", "SemanticRecall", "SemanticStatus",
+    "PurgeDecision", "PurgePreview", "PurgeResult", "PurgeWorkflow",
 ]

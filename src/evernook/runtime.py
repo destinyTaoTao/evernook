@@ -322,6 +322,10 @@ class MemoryRuntime:
     @staticmethod
     def _persist_event(db: sqlite3.Connection, event: Event, retained: Event, fingerprint: bytes) -> Receipt:
         source = _json(asdict(event.source))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='purge_targets_v1'").fetchone():
+            if db.execute("""SELECT 1 FROM purge_targets_v1 t JOIN purge_requests_v1 r ON r.request_id=t.request_id
+                WHERE t.source=? AND r.state IN ('blocked','completed')""", (source,)).fetchone():
+                raise MemoryFailure("source_purged")
         existing = db.execute("SELECT fingerprint, receipt FROM messages WHERE source=?", (source,)).fetchone()
         if existing is not None:
             if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
