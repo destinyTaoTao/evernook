@@ -18,7 +18,8 @@ def main() -> None:
 
     def rename(source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
                destination: str | bytes | os.PathLike[str] | os.PathLike[bytes]) -> None:
-        if str(destination) == str(target) and sys.argv[4] == "before":
+        # create_backup resolves the destination (8.3 short names differ from the test path), so compare resolved.
+        if Path(destination).resolve() == target.resolve() and sys.argv[4] == "before":
             os._exit(86)
         original(source, destination)
 

@@ -9,6 +9,7 @@ import time
 from typing import Any, Protocol
 
 from .facts import FactRegistry
+from .experience import ExperienceRegistry
 from .models import Access, MemoryFailure, Receipt
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
@@ -30,6 +31,7 @@ class ContextPolicy:
     recent_target_chars: int
     pinned_ids: tuple[str, ...] = ()
     fact_keys: tuple[tuple[str, str], ...] = ()
+    experience_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,9 +73,12 @@ class ContextBuilder:
                 or not 0 <= policy.pinned_tokens <= policy.normal_tokens
                 or not 1 <= policy.recent_days <= 36500 or not 1 <= policy.recent_target_chars <= 1048576
                 or not isinstance(policy.pinned_ids, tuple) or len(policy.pinned_ids) > 64
-                or not isinstance(policy.fact_keys, tuple) or len(policy.fact_keys) > 64):
+                or not isinstance(policy.fact_keys, tuple) or len(policy.fact_keys) > 64
+                or not isinstance(policy.experience_ids, tuple) or len(policy.experience_ids) > 64):
             raise MemoryFailure("invalid_context_policy")
         for item in policy.pinned_ids:
+            _identifier(item)
+        for item in policy.experience_ids:
             _identifier(item)
         for key in policy.fact_keys:
             if not isinstance(key, tuple) or len(key) != 2:
@@ -160,6 +165,27 @@ class ContextBuilder:
                     references.extend((span.message_id, span.state_version, span.content_version) for span in record.sources)
                     references.append((record.confirmation_id, record.confirmation_version, 1))
                 items.append(_Item("facts", subject + ":" + predicate, asdict(view), tuple(dict.fromkeys(references))))
+            experiences = ExperienceRegistry(self.runtime)
+            for experience_id in dict.fromkeys(self.policy.experience_ids):
+                budget()
+                if known_at is not None:
+                    omitted.append(OmittedEvidence(experience_id, "experience_history_unavailable"))
+                    continue
+                try:
+                    experience = experiences.read(access, experience_id)
+                except MemoryFailure as error:
+                    if error.code != "experience_not_found":
+                        raise
+                    omitted.append(OmittedEvidence(experience_id, error.code))
+                    continue
+                if experience.state != "enabled" or experience.record is None:
+                    omitted.append(OmittedEvidence(experience_id, "experience_" + experience.state))
+                    continue
+                experience_record = experience.record
+                references = [(span.message_id, span.state_version, span.content_version) for span in experience_record.draft.sources]
+                assert experience_record.confirmation_id is not None and experience_record.confirmation_version is not None
+                references.append((experience_record.confirmation_id, experience_record.confirmation_version, 1))
+                items.append(_Item("reviewed_experience", experience_id, asdict(experience), tuple(references)))
             if query.strip():
                 recalled = self.recall.recall(access, query, limit=32, as_of=as_of,
                     recent_days=self.policy.recent_days, recent_target_chars=self.policy.recent_target_chars,
@@ -194,6 +220,9 @@ class ContextBuilder:
             db.execute("BEGIN")
             for item in items:
                 usable = True
+                if item.kind == "reviewed_experience":
+                    current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
+                    usable = current.state == "enabled" and current.revision == item.data["revision"]
                 for message_id, version, content_version in item.references:
                     try:
                         state = self.runtime._state(db, message_id)

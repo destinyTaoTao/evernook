@@ -1,6 +1,6 @@
 # T16 显式预算的证据上下文构造增量
 
-`evernook.context.ContextBuilder` 组合显式必读、时态事实/未完成计划/争议及相关原文。所有输出都标为 `untrusted_memory_context`，不修改人设、执行规则或工具权限。该模块尚未替换dsh的基本字符上限注入，也未新增模型可调用的构造/写入接口。
+`evernook.context.ContextBuilder` 组合显式必读、时态事实/未完成计划/争议、显式选择并经用户审查的经验及相关原文。所有输出都标为 `untrusted_memory_context`，不修改人设、执行规则或工具权限。该模块尚未替换dsh/pi的基本字符上限注入，也未新增模型可调用的构造/写入接口。
 
 ## 必填策略与真实计数
 
@@ -14,7 +14,7 @@
 
 1. 按配置顺序取得必读原话，检查独立必读额度。单项超过4096 code point的内联范围时记录 `important_requires_paging`，保留逐页精确回取入口，不能将截断说成完整重要交代。
 2. 按明确事实键查询有效/知识时间，保持现实、计划和争议分开，附来源、candidate/processor及确认版本；事实仍为数据，不变成人设指令。
-3. 召回相关原文，附通道、词法/语义水位、近期扩展及降级状态；重新读取来源，展开至多2048 code point的有界片段，明确实际坐标、总长和bounded_excerpt标记。不将system/developer审计作为对话注入。
+3. 按可选 experience_ids 纳入当前 enabled 的[经验](experience-v1.md)，其正文仍不授予执行权限；未确认/停用/争议项省略，最终快照再次检查修订。known_at 历史查询省略当前经验并说明历史能力缺失。随后召回相关原文，附通道、词法/语义水位、近期扩展及降级状态；重新读取来源，展开至多2048 code point的有界片段，明确实际坐标、总长和bounded_excerpt标记。不将system/developer审计作为对话注入。
 4. 返回前用同一可见性快照检查全部来源状态与版本。构造期间更正/抑制/删除的材料会移除，不通过派生上下文绕过。
 5. 按完整payload计数，超限从末尾移除整个相关项，保留必读优先顺序。必读仍可能因全局额度不足被明确省略；不是无条件承诺所有置顶都能放入。所有省略ID/原因在sideband，payload含省略数量，`complete=false`。连框架元数据都超限时返回空payload及 `context_envelope_over_budget`。
 

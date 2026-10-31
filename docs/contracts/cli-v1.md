@@ -62,3 +62,5 @@ evernook status --config E:\evernook-lab\synthetic-cli-data\runtime.json --acces
 验证：`python -m unittest discover -s tests/contracts -p test_cli.py -v` 只需核心；完整协议回归使用 `.[dev]` 后执行 `python -m unittest discover -s tests/contracts -v` 与 `python -m mypy`。缺少可选 `mcp` 时，不能把导入失败计为完整套件通过。
 
 T13新增可信本地 `fact-decide` 与普通 `fact-query`，两者使用JSON stdin和同一身份/账本，详见 [事实契约](facts-v1.md)。决定接口要求真实用户确认及来源/版本，不得作为模型shell工具开放；MCP仅增加读取。
+
+T19新增可信本地 `purge-preview` 与 `purge`：先提交精确来源范围，再使用预览之后的真实用户确认执行，详见[普通来源删除契约](purge-v1.md)。预览不删除；既有归档、备份和宿主副本残留必须保留在回执中。两个命令均不注册为 MCP 工具。
