@@ -10,6 +10,8 @@ from typing import Any, Protocol
 
 from .facts import FactRegistry
 from .experience import ExperienceRegistry
+from .persona import PERSONA_BLOCKS, PersonaRegistry
+from .profile import ProfileRegistry
 from .models import Access, MemoryFailure, Receipt
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
@@ -32,6 +34,8 @@ class ContextPolicy:
     pinned_ids: tuple[str, ...] = ()
     fact_keys: tuple[tuple[str, str], ...] = ()
     experience_ids: tuple[str, ...] = ()
+    persona_tokens: int = 0
+    profile_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -68,9 +72,11 @@ class ContextBuilder:
         if recall.runtime is not runtime or not isinstance(policy, ContextPolicy):
             raise MemoryFailure("invalid_context_policy")
         if (any(type(value) is not int for value in (policy.normal_tokens, policy.deep_tokens, policy.pinned_tokens,
-                                                   policy.recent_days, policy.recent_target_chars))
+                                                   policy.recent_days, policy.recent_target_chars,
+                                                   policy.persona_tokens, policy.profile_tokens))
                 or not 128 <= policy.normal_tokens <= policy.deep_tokens <= 131072
                 or not 0 <= policy.pinned_tokens <= policy.normal_tokens
+                or not 0 <= policy.persona_tokens <= 131072 or not 0 <= policy.profile_tokens <= 131072
                 or not 1 <= policy.recent_days <= 36500 or not 1 <= policy.recent_target_chars <= 1048576
                 or not isinstance(policy.pinned_ids, tuple) or len(policy.pinned_ids) > 64
                 or not isinstance(policy.fact_keys, tuple) or len(policy.fact_keys) > 64
@@ -151,6 +157,36 @@ class ContextBuilder:
                         omitted.append(OmittedEvidence(important_id, error.code))
                     else:
                         raise
+            if self.policy.persona_tokens > 0:
+                budget()
+                persona_used = 0
+                persona_view = PersonaRegistry(self.runtime).view(access)
+                for block in PERSONA_BLOCKS:
+                    persona_record = persona_view.blocks.get(block)
+                    if persona_record is None or not persona_record.text:
+                        continue
+                    data = {"block": block, "text": persona_record.text, "revision": persona_record.revision,
+                            "recorded_at": persona_record.recorded_at}
+                    cost = self._tokens(_json(data))
+                    if persona_used + cost > self.policy.persona_tokens:
+                        omitted.append(OmittedEvidence("persona:" + block, "persona_budget"))
+                        continue
+                    persona_used += cost
+                    # Persona is user-confirmed on its own; evidence messages do not gate injection here.
+                    items.append(_Item("persona", "persona:" + block, data, ()))
+            if self.policy.profile_tokens > 0:
+                budget()
+                profile_used = 0
+                summary = ProfileRegistry(self.runtime).summary(access)
+                for tag in sorted(summary.tags, key=lambda item: (-item.draft.confidence, item.tag_id)):
+                    data = {"tag_id": tag.tag_id, "category": tag.draft.category, "label": tag.draft.label,
+                            "confidence": tag.draft.confidence, "recorded_at": tag.recorded_at}
+                    cost = self._tokens(_json(data))
+                    if profile_used + cost > self.policy.profile_tokens:
+                        omitted.append(OmittedEvidence("profile:" + tag.tag_id, "profile_budget"))
+                        continue
+                    profile_used += cost
+                    items.append(_Item("profile", "profile:" + tag.tag_id, data, ()))
             facts = FactRegistry(self.runtime)
             for subject, predicate in dict.fromkeys(self.policy.fact_keys):
                 budget()
