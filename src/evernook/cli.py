@@ -113,6 +113,10 @@ def _parser() -> Parser:
         ("persona-rollback", "Restore all persona blocks to a past snapshot as a traceable change"),
         ("persona-read", "Read current or as-of persona blocks"),
         ("persona-history", "Read one persona block's version history"),
+        ("profile-decide", "Trusted profile tag lifecycle decision (propose/confirm/correct-like); never a model tool"),
+        ("profile-read", "Read one profile tag's current versioned state"),
+        ("profile-summary", "Aggregate current confirmed profile tags by category"),
+        ("profile-history", "Read one profile tag's revision history"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -238,6 +242,26 @@ def _execute(args: argparse.Namespace) -> object:
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
         return ExtractionProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
+    if args.command.startswith("profile-"):
+        from .candidates import EvidenceSpan
+        from .profile import ProfileDecision, ProfileDraft, ProfileRegistry
+        profiles = ProfileRegistry(runtime)
+        value = _input()
+        if args.command == "profile-decide":
+            draft = value.get("draft")
+            if draft is not None:
+                if not isinstance(draft, dict) or not isinstance(draft.get("sources"), list):
+                    raise MemoryFailure("invalid_arguments")
+                draft["sources"] = tuple(EvidenceSpan(**span) for span in draft["sources"])
+                value["draft"] = ProfileDraft(**draft)
+            return profiles.decide(access, ProfileDecision(**value))
+        if args.command == "profile-read":
+            return profiles.read(access, **value)
+        if args.command == "profile-summary":
+            if isinstance(value.get("categories"), list):
+                value["categories"] = tuple(value["categories"])
+            return profiles.summary(access, **value)
+        return profiles.history(access, **value)
     if args.command.startswith("persona-"):
         from .persona import PersonaRegistry, PersonaRollback, PersonaSet
         personas = PersonaRegistry(runtime)
