@@ -732,6 +732,10 @@ class MemoryRuntime:
             existing = db.execute("SELECT manifest FROM captures WHERE message_id=?", (receipt.message_id,)).fetchone()
             if existing is not None:
                 return self._check_capture(db, self._capture_receipt(existing["manifest"]))
+            # A new capture must not depend on a message that is no longer recallable; otherwise a blocked
+            # purge could never finish because the late dependent would fail the scope recheck forever.
+            if capture.input_id is not None and self._state(db, capture.input_id).status != "active":
+                raise MemoryFailure("not_recallable")
             gaps = tuple(f"attachment:{info.attachment_id}:{info.gap}" for info in infos if info.gap is not None)
             if protected:
                 gaps += ("protected_original_not_saved",)

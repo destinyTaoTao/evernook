@@ -154,6 +154,34 @@ class PurgeTests(unittest.TestCase):
         self.assertIsNone(reopened.read(self.access, target))
         self.assertEqual(PurgeWorkflow(MemoryRuntime(self.config)).purge(self.access, decision), result)
 
+    def test_interrupted_cleanup_rejects_new_capture_dependencies_and_recovers(self) -> None:
+        from contextlib import closing
+        import sqlite3
+        from evernook import Capture
+
+        target = self.save("合成中断后不能新增引用的删除目标。")
+        preview = self.workflow.preview(self.access, "purge-capture-race", (target,))
+        confirmation = self.save("合成用户确认彻底删除中断后的目标。")
+        decision = PurgeDecision(preview.request_id, confirmation)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("""CREATE TRIGGER synthetic_purge_capture_interruption BEFORE DELETE ON messages
+                BEGIN SELECT RAISE(ABORT,'synthetic purge interruption'); END""")
+        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            self.workflow.purge(self.access, decision)
+
+        dependent = Event(Source("test", "purge-session", "main", "post-block-dependent"), "tool", 9, None,
+            "complete", "合成清理中断后的工具结果。")
+        with self.assertRaisesRegex(MemoryFailure, "not_recallable"):
+            self.runtime.submit_capture(self.access, Capture(dependent, "tool_result", input_id=target,
+                tool_name="synthetic-tool"))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("DROP TRIGGER synthetic_purge_capture_interruption")
+
+        result = PurgeWorkflow(MemoryRuntime(self.config)).purge(self.access, decision)
+
+        self.assertEqual(result.state, "completed")
+        self.assertIsNone(self.runtime.read(self.access, target))
+
     def test_scope_includes_capture_references_and_preserves_unshared_attachment_content(self) -> None:
         from evernook import AttachmentInput, Capture
 

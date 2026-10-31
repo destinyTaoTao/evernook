@@ -36,6 +36,8 @@ python -m evernook.cli purge --config ... --access ...
 
 第二阶段先 checkpoint/truncate 旧 WAL，启用 `secure_delete`，再在另一事务中物理删除当前账本内的普通原文、附件、重要交代、任务、派生上下文和索引记录。失败不会撤销第一阶段；使用原 request_id/confirmation_id 重试可续清。进入阻断阶段后不再要求确认消息保持活跃，已完成请求返回稳定回执。
 
+阻断期间（含清理中断后）不允许为删除目标新增引用依赖：新 capture 的 `input_id` 指向已不处于 `active` 状态的消息时得到 `not_recallable`，同源幂等重试仍返回原回执。否则清理中断后新增的依赖会让每次续清都卡在范围复查上，请求永远无法完成。预览后的范围外新引用依旧在执行前复查并得到 `purge_scope_has_dependents`。
+
 `purge_targets_v1`/`purge_requests_v1` 只保留请求、来源身份、HMAC 指纹、版本、确认 ID、状态和回执，不保留被删正文。墓碑会进入之后的普通归档/加密快照，供未来恢复准入核对；本增量没有实现旧备份重放或正常运行库发布。
 
 ## 派生传播
