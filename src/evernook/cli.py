@@ -138,6 +138,8 @@ def _parser() -> Parser:
         ("scheduler-status", "Read scheduler settings and progress"),
         ("scheduler-session-end", "Capture-scope hook marking a session boundary"),
         ("scheduler-trigger", "Run one bounded consolidation pass (extractive builtin provider)"),
+        ("preset-apply", "Apply the companion preset of recommended defaults; overrides win"),
+        ("preset-show", "Read the applied or recommended companion preset"),
     ):
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
@@ -371,6 +373,12 @@ def _execute(args: argparse.Namespace) -> object:
         if args.command == "scheduler-session-end":
             return scheduler.session_end(access, **value)
         return scheduler.trigger(access, **value)
+    if args.command.startswith("preset-"):
+        from .preset import apply_preset, show_preset
+        value = _input()
+        if args.command == "preset-apply":
+            return apply_preset(access, runtime, **value)
+        return show_preset(access, runtime, **value)
         if args.command == "consolidation-status":
             return consolidation.status(access, **value)
         return consolidation.fail(access, **value)

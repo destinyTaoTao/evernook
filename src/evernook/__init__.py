@@ -14,6 +14,7 @@ from .embedding import EmbeddingSpace, LocalMiniLM
 from .semantic import RecallHit, RecallPage, SemanticRecall, SemanticStatus
 from .purge import PurgeDecision, PurgePreview, PurgeResult, PurgeWorkflow
 from .scheduler import SCHEDULER_REASONS, ConsolidationScheduler, SchedulerStatus, SchedulerTick, extractive_provider
+from .preset import COMPANION_PRESET, COMPANION_PRESET_VERSION, PresetView, apply_preset, show_preset
 from .persona import PERSONA_BLOCKS, PersonaBlockRecord, PersonaHistoryPage, PersonaRegistry, PersonaRollback, PersonaRollbackResult, PersonaSet, PersonaView
 from .profile import PROFILE_CATEGORIES, PROFILE_TAXONOMY_VERSION, ProfileDecision, ProfileDraft, ProfileHistoryPage, ProfileRecord, ProfileRegistry, ProfileSummary, ProfileView
 
@@ -31,6 +32,7 @@ __all__ = [
     "EmbeddingSpace", "LocalMiniLM", "RecallHit", "RecallPage", "SemanticRecall", "SemanticStatus",
     "PurgeDecision", "PurgePreview", "PurgeResult", "PurgeWorkflow",
     "SCHEDULER_REASONS", "ConsolidationScheduler", "SchedulerStatus", "SchedulerTick", "extractive_provider",
+    "COMPANION_PRESET", "COMPANION_PRESET_VERSION", "PresetView", "apply_preset", "show_preset",
     "PERSONA_BLOCKS", "PersonaBlockRecord", "PersonaHistoryPage", "PersonaRegistry", "PersonaRollback", "PersonaRollbackResult", "PersonaSet", "PersonaView",
     "PROFILE_CATEGORIES", "PROFILE_TAXONOMY_VERSION", "ProfileDecision", "ProfileDraft", "ProfileHistoryPage", "ProfileRecord", "ProfileRegistry", "ProfileSummary", "ProfileView",
 ]
