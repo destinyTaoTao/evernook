@@ -190,6 +190,35 @@ test('actual database write failure rejects dispatch before provider invocation'
   } finally { await handle.dispose(); await host.close(); }
 });
 
+test('protected input is projection-only and a later safe turn resumes without its raw history after adapter restart', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter);
+  const handle = await host.create('synthetic-protected-history');
+  let fresh: Awaited<ReturnType<typeof installMemory>> | undefined;
+  try {
+    handle.agent.followup(user('protected-history', 'password=synthetic-history-dsh-123'));
+    await handle.agent.whenIdle();
+    assert.equal(adapter.requests.length, 0);
+    assert.ok(host.rows().some(row => row.event.role === 'user' && !row.receipt.original_saved));
+    handle.agent.followup(user('safe-after-protected', '合成：后续安全问题'));
+    await handle.agent.whenIdle();
+    assert.equal(adapter.requests.length, 1, JSON.stringify(host.errors.map(error => String(error))));
+    assert.doesNotMatch(JSON.stringify(adapter.requests[0]), /synthetic-history-dsh-123/);
+    assert.equal(host.memory.status(handle.agent.session.id).protected_originals_not_saved, 1);
+    assert.equal(host.memory.status(handle.agent.session.id).provider_history, 'current_safe_turn_only');
+    assert.ok(host.memory.status(handle.agent.session.id).capture_gaps.some(gap => gap.includes('protected_original_not_saved')));
+    assert.doesNotMatch(JSON.stringify(host.rows()), /synthetic-history-dsh-123/);
+    await host.memory.close();
+    fresh = await installMemory(host.ctx, host.config);
+    await fresh.rescan(handle.agent.session.id);
+    handle.agent.followup(user('safe-after-restart', '合成：重启后继续安全交流'));
+    await handle.agent.whenIdle();
+    assert.equal(adapter.requests.length, 2);
+    assert.doesNotMatch(JSON.stringify(adapter.requests[1]), /synthetic-history-dsh-123/);
+    assert.equal(fresh.status(handle.agent.session.id).protected_originals_not_saved, 1);
+  } finally { await fresh?.close(); await handle.dispose(); await host.close(); }
+});
+
 test('native file references and tool events preserve exact text, input links and explicit unsupported gaps on replay', async () => {
   const adapter = new Synthetic();
   adapter.toolOnce = true;

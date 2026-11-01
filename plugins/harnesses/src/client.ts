@@ -35,6 +35,32 @@ export interface RecallResult {
   evidence_state: string;
 }
 
+/** After a protected native record, keep only the current safe turn and fixed system context.
+ * The host's raw history remains untouched; an unprovable boundary blocks dispatch. */
+export function safeHistory<T extends { role: string; content?: unknown }>(messages: T[], safeInput: string,
+    protectedTexts: ReadonlySet<string>): { messages: T[]; omitted: number } {
+  if (!protectedTexts.size) return { messages, omitted: 0 };
+  const text = (content: unknown): string => typeof content === 'string' ? content
+    : Array.isArray(content) ? content.filter(block => block?.type === 'text').map(block => block.text).join('') : '';
+  const boundary = messages.findLastIndex(message => message.role === 'user' && text(message.content) === safeInput);
+  if (boundary < 0) throw new Error('evernook:safe_input_boundary_unavailable');
+  const kept = messages.filter((message, index) => index >= boundary || message.role === 'system');
+  assertProtectedHistoryExcluded(kept, protectedTexts);
+  return { messages: kept, omitted: messages.length - kept.length };
+}
+
+export function assertProtectedHistoryExcluded(value: unknown, protectedTexts: ReadonlySet<string>): void {
+  if (!protectedTexts.size) return;
+  // Sections, tool declarations and provider replay metadata are visible too. Check serialized
+  // fields and joined scalar values so split blocks cannot hide a known protected original.
+  const joined = (value: unknown): string => typeof value === 'string' ? value
+    : value && typeof value === 'object' ? Object.values(value).map(joined).join('') : '';
+  const content = joined(value);
+  const serialized = JSON.stringify(value) ?? '';
+  if ([...protectedTexts].some(value => value && (content.includes(value)
+      || serialized.includes(JSON.stringify(value).slice(1, -1))))) throw new Error('evernook:protected_history_not_excluded');
+}
+
 /** Trusted native transport. Client identity is loaded by Python from an ACL-checked file. */
 export class MemoryClient {
   private client: Client;

@@ -25,7 +25,7 @@ const output = process.env.EVERNOOK_TEST_OUTPUT;
 if (!python || !output) throw new Error('Set external synthetic EVERNOOK_TEST_PYTHON and EVERNOOK_TEST_OUTPUT');
 const checkout = resolve(import.meta.dirname, '../../..');
 
-async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = []) {
+async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'pi-native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; c,a=initialize(Path(sys.argv[1]),client_id='synthetic-pi',entry='pi'); p=c.parent/'mcp-access-pi.json'; pair_client(c,client_id=a.client_id,entry='pi',access_path=p); print(json.dumps({'config':str(c),'access':str(p)}))";
@@ -59,7 +59,11 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     extensionFactories: [async pi => {
       memory = await installPiMemory(pi, { python: python!, config: paths.config, access: paths.access, entry: 'pi',
         cwd: checkout, target: faux.getModel(), tools });
-      pi.on('context', (_event, ctx) => { context = ctx; });
+      pi.on('context', (event, ctx) => {
+        context = ctx;
+        if (systemHistory && JSON.stringify(event.messages).includes('safe-probe')) return { messages: [...event.messages,
+          { role: 'system' as const, content: 'fixed', sections: { historical: systemHistory }, timestamp: Date.now() }] };
+      });
       pi.on('provider_stream_event', () => {
         rawChecks.push(rows().some(row => row.event.role === 'assistant' && row.event.text === reply && row.receipt.original_saved));
         rawObserver?.();
@@ -131,6 +135,37 @@ test('real pi input storage failure prevents target provider even when extension
     await host.session.prompt('合成：不能假装保存成功').catch(() => {});
     assert.equal(host.requests.length, 0);
     assert.equal(host.rows().length, 0);
+  } finally { await host.close(); }
+});
+
+test('pi resumes safe input after protected history and a full rescan without dispatching the raw original', async () => {
+  const host = await boot();
+  try {
+    await host.session.prompt('password=synthetic-history-pi-123').catch(() => {});
+    assert.equal(host.requests.length, 0);
+    assert.ok(host.rows().some(row => row.event.role === 'user' && !row.receipt.original_saved));
+    await host.session.prompt('合成：后续安全问题');
+    assert.equal(host.requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(host.requests[0]), /synthetic-history-pi-123/);
+    assert.doesNotMatch(JSON.stringify(host.rows()), /synthetic-history-pi-123/);
+    await host.session.reload();
+    await host.session.prompt('合成：重启后继续安全交流');
+    assert.equal(host.requests.length, 2);
+    assert.doesNotMatch(JSON.stringify(host.requests[1]), /synthetic-history-pi-123/);
+    await host.rescan();
+    await host.session.prompt('合成：重扫后继续安全交流');
+    assert.equal(host.requests.length, 3);
+    assert.doesNotMatch(JSON.stringify(host.requests[2]), /synthetic-history-pi-123/);
+  } finally { await host.close(); }
+});
+
+test('pi final dispatch rejects protected history reintroduced in provider-visible system sections', async () => {
+  const secret = 'password=synthetic-system-history-123';
+  const host = await boot('合成安全回复', [], secret);
+  try {
+    await host.session.prompt(secret).catch(() => {});
+    await host.session.prompt('safe-probe').catch(() => {});
+    assert.equal(host.requests.length, 0);
   } finally { await host.close(); }
 });
 

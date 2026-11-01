@@ -5,7 +5,7 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session-persistence';
 import type {} from '@deepseek-ai/dsh-system-prompt';
-import { MemoryClient, type Attachment, type Event, type MemoryConfig, type Receipt } from './client.ts';
+import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt } from './client.ts';
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
@@ -45,6 +45,8 @@ export async function installMemory(ctx: Context, config: Config) {
   const latest = new Map<string, { text: string; receipt: Receipt }>();
   const disposers: (() => void)[] = [];
   const captureGaps = new Map<string, string[]>();
+  const protectedTexts = new Map<string, Set<string>>();
+  const excludedHistory = new Map<string, number>();
 
   async function attachmentsOf(content: readonly ContentBlock[]): Promise<Attachment[]> {
     const result: Attachment[] = [];
@@ -76,8 +78,12 @@ export async function installMemory(ctx: Context, config: Config) {
   }
   async function saveInput(value: Event, content: readonly ContentBlock[]) {
     const receipt = await client.capture(value, 'message', await attachmentsOf(content));
-    captureGaps.set(value.source.session, receipt.gaps);
-    if (receipt.gaps.some(gap => gap.includes('protected_original_not_saved'))) throw new Error('evernook:protected_input_not_saved');
+    captureGaps.set(value.source.session, [...new Set([...(captureGaps.get(value.source.session) ?? []), ...receipt.gaps])]);
+    if (!receipt.message.original_saved) {
+      const texts = protectedTexts.get(value.source.session) ?? new Set<string>();
+      texts.add(value.text);
+      protectedTexts.set(value.source.session, texts);
+    }
     return receipt.message;
   }
 
@@ -183,6 +189,15 @@ export async function installMemory(ctx: Context, config: Config) {
       yield* next();
       return;
     }
+    const sessionId = String(options.sessionId);
+    const input = latest.get(sessionId);
+    if (!input?.receipt.original_saved) throw new Error('evernook:protected_input_not_saved');
+    const safe = safeHistory(options.messages, input.text, protectedTexts.get(sessionId) ?? new Set());
+    assertProtectedHistoryExcluded({ ...options, messages: safe.messages }, protectedTexts.get(sessionId) ?? new Set());
+    excludedHistory.set(sessionId, safe.omitted);
+    // The SDK freezes loop requests. A screened request uses its public one-shot path;
+    // this outer barrier still retains every frame until the same durable save succeeds.
+    const incoming = safe.omitted ? ctx.llm.stream({ ...options, messages: safe.messages, toolHistory: undefined }) : next();
     const attempt = randomUUID();
     const timestamp = Date.now();
     const source = String(options.sessionId);
@@ -191,7 +206,7 @@ export async function installMemory(ctx: Context, config: Config) {
     const frames: StreamChunk[] = [];
     let bytes = 0;
     try {
-      for await (const frame of next()) {
+      for await (const frame of incoming) {
         options.signal?.throwIfAborted();
         bytes += Buffer.byteLength(JSON.stringify(frame), 'utf8') + 1;
         if (bytes > maxStreamBytes) throw new Error('evernook:stream_too_large');
@@ -219,6 +234,12 @@ export async function installMemory(ctx: Context, config: Config) {
   let closed = false;
   return {
     capture,
+    status(sessionId: SessionId) {
+      const key = String(sessionId);
+      return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
+        protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
+        provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };
+    },
     async rescan(sessionId: SessionId) {
       const handle = await ctx.sessionPersistence.open(sessionId, 'read');
       try { const contents = await handle.read(); through.delete(String(sessionId)); await ingest(handle.header, contents.events); }
