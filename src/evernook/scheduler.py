@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -25,6 +25,7 @@ class SchedulerStatus:
     max_runs_per_trigger: int
     processed: int
     session_marks: int
+    skip_reasons: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,9 @@ class ConsolidationScheduler:
             paused, sources, runs = self._settings(db)
             processed = int(db.execute("SELECT count(*) FROM scheduler_progress_v1").fetchone()[0])
             marks = int(db.execute("SELECT count(*) FROM scheduler_sessions_v1").fetchone()[0])
-            return SchedulerStatus(paused, sources, runs, processed, marks)
+            reasons = {str(row["state"])[8:]: int(row["count"]) for row in db.execute(
+                "SELECT state,count(*) AS count FROM scheduler_progress_v1 WHERE state LIKE 'skipped:%' GROUP BY state")}
+            return SchedulerStatus(paused, sources, runs, processed, marks, reasons)
 
     def pause(self, access: Access, *, paused: bool) -> SchedulerStatus:
         return self.configure(access, paused=paused)
@@ -133,9 +136,8 @@ class ConsolidationScheduler:
         """Bounded consolidation pass over unprocessed pending raw jobs; idempotent and crash-resumable.
 
         Trigger reasons are labels: the host owns trigger timing and session marks are observability
-        bookkeeping, not a queue this method drains. Undraftable batches (system/developer or partial
-        sources, or a provider with nothing to draft) are recorded as skipped so one head batch cannot
-        wedge every younger pending message behind a repeated crash.
+        bookkeeping, not a queue this method drains. Ineligible sources are individually skipped
+        before batching; transient provider failures leave eligible evidence retryable.
         """
         self.runtime._require_scope(access, "maintain", "scheduler_trigger")
         if not isinstance(reason, str) or reason not in SCHEDULER_REASONS:
@@ -149,26 +151,37 @@ class ConsolidationScheduler:
             if paused:
                 db.execute("COMMIT")
                 return SchedulerTick(reason, "paused", (), 0, self._remaining(db))
-            candidates = db.execute(f"""SELECT messages.id FROM messages JOIN jobs ON jobs.message_id=messages.id
+            # Old versions skipped whole mixed batches without a reason. Recheck those sources;
+            # new per-source reasons and verified empty results make this a one-time recovery.
+            db.execute("DELETE FROM scheduler_progress_v1 WHERE state='skipped'")
+            candidates = db.execute(f"""SELECT messages.id,messages.event,messages.receipt FROM messages JOIN jobs ON jobs.message_id=messages.id
                 WHERE jobs.state='pending' AND messages.id NOT IN (SELECT message_id FROM scheduler_progress_v1)
                 AND {_RECALLABLE} ORDER BY messages.received, messages.id LIMIT ?""",
                 (sources_limit * runs_limit,)).fetchall()
             db.execute("COMMIT")
-        source_ids = [str(row["id"]) for row in candidates]
+        source_ids: list[str] = []
+        progress: list[tuple[str, str, str]] = []
+        for row in candidates:
+            message = self.runtime._stored(row)
+            skip_reason = None
+            if message.event.role not in {"user", "assistant", "tool"}:
+                skip_reason = "unsupported_role"
+            elif message.event.completion != "complete":
+                skip_reason = "incomplete_source"
+            elif not message.receipt.original_saved:
+                skip_reason = "protected_projection"
+            elif not message.event.text.strip():
+                skip_reason = "empty_source"
+            if skip_reason is None:
+                source_ids.append(str(row["id"]))
+            else:
+                progress.append((str(row["id"]), "", "skipped:" + skip_reason))
         run_ids: list[str] = []
-        processed = 0
         for index in range(0, len(source_ids), sources_limit):
             if len(run_ids) >= runs_limit:
                 break
             batch = tuple(source_ids[index:index + sources_limit])
-            try:
-                lease = self.workflow.begin(access, batch, processor_version="consolidation-scheduler-v1")
-            except MemoryFailure as error:
-                if error.code != "unsupported_extraction_source":
-                    raise
-                self._record_progress(batch, None, "skipped")
-                processed += len(batch)
-                continue
+            lease = self.workflow.begin(access, batch, processor_version="consolidation-scheduler-v1")
             run_id = lease.status.run_id
             if lease.token is None:
                 try:
@@ -177,9 +190,9 @@ class ConsolidationScheduler:
                     if error.code != "incomplete_consolidation":
                         raise
                     result = self.workflow.recover(access, run_id, provider or extractive_provider)
-                self._record_progress(batch, run_id, "consolidated" if result.drafts else "skipped")
+                progress.extend((message_id, run_id, "consolidated" if result.drafts else "skipped:no_drafts")
+                                for message_id in batch)
                 run_ids.append(run_id)
-                processed += len(batch)
                 continue
             try:
                 drafts = provider(lease) if provider is not None else extractive_provider(lease)
@@ -188,14 +201,13 @@ class ConsolidationScheduler:
                         raise MemoryFailure("invalid_consolidation_draft")
                 if drafts:
                     self.workflow.complete(access, run_id, lease.token, drafts)
-                    self._record_progress(batch, run_id, "consolidated")
+                    progress.extend((message_id, run_id, "consolidated") for message_id in batch)
                 else:
                     # An empty draft set is a legitimate outcome: end the run with no candidates
                     # so an all-filtered chunk cannot crash-loop on invalid_consolidation_batch.
                     self.workflow.candidates.complete(access, run_id, lease.token, ())
-                    self._record_progress(batch, run_id, "skipped")
+                    progress.extend((message_id, run_id, "skipped:no_drafts") for message_id in batch)
                 run_ids.append(run_id)
-                processed += len(batch)
             except Exception:
                 try:
                     # Provider bugs raise non-domain exceptions too; an unfailed lease would stay
@@ -204,17 +216,22 @@ class ConsolidationScheduler:
                 except MemoryFailure:
                     pass  # An already-succeeded run cannot fail; replay records progress instead.
                 raise
-        return SchedulerTick(reason, None, tuple(run_ids), processed, self._remaining_count(source_ids[processed:]))
+        processed = self._record_progress(progress)
+        return SchedulerTick(reason, None, tuple(run_ids), processed, self._remaining_count([]))
 
-    def _record_progress(self, batch: tuple[str, ...], run_id: str | None, state: str) -> None:
+    def _record_progress(self, progress: list[tuple[str, str, str]]) -> int:
+        # Keep the whole selected window stable until every asset is durable. Partial progress
+        # would shift the next scan boundary and give overlapping sources a different run key.
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            for message_id in batch:
+            before = db.total_changes
+            for message_id, run_id, state in progress:
                 db.execute("""INSERT INTO scheduler_progress_v1 VALUES (?,?,?,?)
-                    ON CONFLICT(message_id) DO UPDATE SET run_id=excluded.run_id,
-                    state=excluded.state, processed_at=excluded.processed_at""",
-                    (message_id, run_id or "", state, datetime.now(timezone.utc).isoformat()))
+                    ON CONFLICT(message_id) DO NOTHING""",
+                    (message_id, run_id, state, datetime.now(timezone.utc).isoformat()))
+            count = db.total_changes - before
             db.execute("COMMIT")
+            return count
 
     def _remaining_count(self, leftover: list[str]) -> int:
         with self.runtime._connection() as db:

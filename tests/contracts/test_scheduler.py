@@ -164,6 +164,126 @@ class SchedulerTests(unittest.TestCase):
         replay = self.scheduler.trigger(self.access, reason="manual", provider=lambda lease: ())
         self.assertEqual((replay.processed, replay.run_ids), (0, ()))
 
+    def test_default_mixed_batch_keeps_valid_user_evidence_and_reports_individual_skip_reasons(self) -> None:
+        for event_id, role, completion, sensitive in (
+            ("mixed-system", "system", "complete", False),
+            ("mixed-partial", "assistant", "partial", False),
+            ("mixed-projection", "user", "complete", True),
+        ):
+            self.runtime.submit(self.worker, Event(Source("worker", "mixed", "main", event_id),
+                role, 1, None, completion, "合成：混合批次不适用来源", sensitive=sensitive))
+        user = self.submit("合成：混合批次中用户喜欢胶片摄影")
+        tick = self.scheduler.trigger(self.access, reason="manual")
+        rows = self.workflow.queue(self.access).rows
+        self.assertEqual(len(rows), 1)
+        self.assertEqual([span.message_id for span in rows[0].sources], [user])
+        self.assertEqual((tick.processed, tick.remaining), (4, 0))
+        self.assertEqual(self.scheduler.status(self.access).skip_reasons,
+            {"unsupported_role": 1, "incomplete_source": 1, "protected_projection": 1})
+        replay = ConsolidationScheduler(MemoryRuntime(self.config)).trigger(self.access, reason="manual")
+        self.assertEqual((replay.processed, replay.remaining), (0, 0))
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 1)
+
+    def test_mixed_batch_provider_failure_leaves_valid_sources_retryable(self) -> None:
+        self.runtime.submit(self.worker, Event(Source("worker", "mixed", "main", "retry-system"),
+            "system", 1, None, "complete", "合成：系统来源"))
+        user = self.submit("合成：失败后仍应沉淀的用户证据")
+        def unavailable(lease: CandidateLease) -> tuple[ConsolidationDraft, ...]:
+            raise MemoryFailure("dependency_unavailable")
+        with self.assertRaisesRegex(MemoryFailure, "dependency_unavailable"):
+            self.scheduler.trigger(self.access, reason="manual", provider=unavailable)
+        self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
+        recovered = ConsolidationScheduler(MemoryRuntime(self.config)).trigger(self.access, reason="manual",
+            provider=self.topic_provider({user: "合成恢复话题"}))
+        self.assertEqual((recovered.processed, recovered.remaining), (2, 0))
+        self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["合成恢复话题"])
+        self.assertEqual(self.scheduler.status(self.access).skip_reasons, {"unsupported_role": 1})
+
+    def test_legacy_whole_batch_skip_is_rechecked_without_repeating_new_skips(self) -> None:
+        from contextlib import closing
+        import sqlite3
+
+        user = self.submit("合成：旧版混合批次被误跳过的用户证据")
+        self.scheduler.configure(self.access)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("INSERT INTO scheduler_progress_v1 VALUES (?,'','skipped','2026-10-30T10:00:00+08:00')", (user,))
+            db.commit()
+        tick = self.scheduler.trigger(self.access, reason="manual")
+        self.assertEqual((tick.processed, tick.remaining), (1, 0))
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 1)
+        self.assertEqual(self.scheduler.trigger(self.access, reason="manual").processed, 0)
+
+    def test_mixed_window_crash_before_progress_reuses_existing_assets_without_regrouping(self) -> None:
+        from contextlib import closing
+        import sqlite3
+
+        self.runtime.submit(self.worker, Event(Source("worker", "mixed", "main", "crash-system"),
+            "system", 1, None, "complete", "合成：混合窗口系统来源"))
+        for index in range(8):
+            self.submit(f"合成：混合窗口用户{index}")
+        self.scheduler.configure(self.access)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("""CREATE TRIGGER synthetic_progress_crash BEFORE INSERT ON scheduler_progress_v1
+                BEGIN SELECT RAISE(ABORT,'synthetic progress crash'); END""")
+        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            self.scheduler.trigger(self.access, reason="manual")
+        self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 7)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("DROP TRIGGER synthetic_progress_crash")
+        reopened = ConsolidationScheduler(MemoryRuntime(self.config))
+        self.assertEqual(reopened.trigger(self.access, reason="manual").processed, 8)
+        self.assertEqual(reopened.trigger(self.access, reason="manual").processed, 1)
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 8)
+
+    def test_interleaved_mixed_window_cannot_claim_a_differently_grouped_overlapping_run(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event as Signal
+
+        self.runtime.submit(self.worker, Event(Source("worker", "mixed", "main", "concurrent-system"),
+            "system", 1, None, "complete", "合成：并发混合窗口系统来源"))
+        for index in range(8):
+            self.submit(f"合成：并发混合窗口用户{index}")
+        entered, release = Signal(), Signal()
+        def paused(lease: CandidateLease) -> tuple[ConsolidationDraft, ...]:
+            entered.set()
+            if not release.wait(20):
+                raise RuntimeError("synthetic concurrency timeout")
+            return self.topic_provider({})(lease)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(self.scheduler.trigger, self.access, reason="manual", provider=paused)
+            try:
+                self.assertTrue(entered.wait(20))
+                with self.assertRaisesRegex(MemoryFailure, "candidate_run_busy"):
+                    ConsolidationScheduler(MemoryRuntime(self.config)).trigger(self.access, reason="manual")
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=20).processed, 8)
+        self.assertEqual(self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({})).processed, 1)
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 8)
+
+    def test_later_run_failure_keeps_the_entire_mixed_window_progress_uncommitted(self) -> None:
+        self.runtime.submit(self.worker, Event(Source("worker", "mixed", "main", "multi-system"),
+            "system", 1, None, "complete", "合成：多批窗口系统来源"))
+        for index in range(4):
+            self.submit(f"合成：多批窗口用户{index}")
+        self.scheduler.configure(self.access, max_sources_per_run=2, max_runs_per_trigger=2)
+        calls = 0
+        def second_fails(lease: CandidateLease) -> tuple[ConsolidationDraft, ...]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryFailure("dependency_unavailable")
+            return self.topic_provider({})(lease)
+        with self.assertRaisesRegex(MemoryFailure, "dependency_unavailable"):
+            self.scheduler.trigger(self.access, reason="manual", provider=second_fails)
+        self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 2)
+        tick = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({}))
+        self.assertEqual((tick.processed, tick.remaining), (4, 1))
+        self.assertEqual(len(self.workflow.queue(self.access).rows), 3)
+
     def test_crash_between_completion_and_progress_resumes_without_assertion(self) -> None:
         text = "合成：崩溃补跑来源"
         source = self.submit(text)
