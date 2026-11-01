@@ -124,6 +124,69 @@ class FactTests(unittest.TestCase):
         self.assertIn(moved.fact_id, view.unavailable_ids)
         self.assertEqual(self.facts.query(self.access, old.subject_id, old.predicate, valid_at="2022-01-01T00:00:00+08:00").fact, old)
 
+    def test_purged_successor_does_not_resurrect_old_fact_after_restart(self) -> None:
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+
+        old = self.decide("purge-before", "合成：旧住所杭州", 0)
+        moved = self.decide("purge-after", "合成：新住所上海", 1, "change", replaces=old,
+            valid_from="2023-01-01T00:00:00+08:00")
+        other = self.decide("purge-other", "合成：另一主体住成都", 0, subject="synthetic-person-b")
+        purge = PurgeWorkflow(self.runtime)
+        preview = purge.preview(self.access, "purge-successor", (moved.sources[0].message_id,))
+        _, approval = self.candidate("合成：用户确认彻底删除新住所来源")
+        decision = PurgeDecision(preview.request_id, approval)
+        result = purge.purge(self.access, decision)
+
+        reopened = FactRegistry(MemoryRuntime(self.config))
+        current = reopened.query(self.access, old.subject_id, old.predicate)
+        self.assertIsNone(current.fact)
+        self.assertEqual(current.state, "source_unavailable")
+        self.assertEqual(current.revision, 2)
+        historical = reopened.query(self.access, old.subject_id, old.predicate,
+            valid_at="2022-01-01T00:00:00+08:00")
+        self.assertEqual(historical.fact, old)
+        self.assertEqual(historical.effective_until, moved.valid_from)
+        self.assertEqual(reopened.query(self.access, other.subject_id, other.predicate).fact, other)
+        self.assertEqual(PurgeWorkflow(reopened.runtime).purge(self.access, decision), result)
+
+    def test_purged_correction_stays_unavailable_through_interrupted_cleanup_and_retries(self) -> None:
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+
+        old = self.decide("erased-old", "合成：原先说错的住所", 0)
+        corrected = self.decide("erased-correction", "合成：更正后的住所", 1, "correction", replaces=old)
+        purge = PurgeWorkflow(self.runtime)
+        preview = purge.preview(self.access, "purge-correction", (corrected.confirmation_id,))
+        _, approval = self.candidate("合成：用户确认删除纠错来源")
+        decision = PurgeDecision(preview.request_id, approval)
+        with closing(sqlite3.connect(self.runtime.root / "memory.sqlite3")) as db:
+            db.execute("""CREATE TRIGGER synthetic_fact_purge_interruption BEFORE DELETE ON messages
+                BEGIN SELECT RAISE(ABORT,'synthetic purge interruption'); END""")
+        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            purge.purge(self.access, decision)
+        reopened = FactRegistry(MemoryRuntime(self.config))
+        self.assertIsNone(reopened.query(self.access, old.subject_id, old.predicate).fact)
+        with closing(sqlite3.connect(self.runtime.root / "memory.sqlite3")) as db:
+            db.execute("DROP TRIGGER synthetic_fact_purge_interruption")
+        result = PurgeWorkflow(reopened.runtime).purge(self.access, decision)
+        self.assertEqual(PurgeWorkflow(MemoryRuntime(self.config)).purge(self.access, decision), result)
+        for valid_at in (None, "2021-01-01T00:00:00+08:00"):
+            view = reopened.query(self.access, old.subject_id, old.predicate, valid_at=valid_at)
+            self.assertIsNone(view.fact)
+            self.assertEqual(view.state, "source_unavailable")
+            self.assertEqual((view.revision, view.knowledge_revision), (2, 2))
+        before = reopened.query(self.access, old.subject_id, old.predicate, known_at=old.recorded_at)
+        self.assertEqual(before.fact, old)
+        candidate, evidence = self.candidate("合成：删除后重新提供的住所")
+        with self.assertRaisesRegex(MemoryFailure, "fact_source_purged"):
+            reopened.decide(self.access, FactDecision(corrected.fact_id, old.subject_id, old.predicate,
+                candidate, evidence, 2, "correction", old.valid_from, replaces_id=old.fact_id))
+        with self.assertRaisesRegex(MemoryFailure, "fact_revision_conflict"):
+            reopened.decide(self.access, FactDecision("erased-stale", old.subject_id, old.predicate,
+                candidate, evidence, 1, "correction", old.valid_from, replaces_id=old.fact_id))
+        new = reopened.decide(self.access, FactDecision("erased-new", old.subject_id, old.predicate,
+            candidate, evidence, 2, "change", "2024-01-01T00:00:00+08:00", replaces_id=corrected.fact_id))
+        self.assertEqual((new.revision, reopened.query(self.access, old.subject_id, old.predicate).fact), (3, new))
+
     def test_unknown_time_not_inferred_from_import_and_unknown_knowledge_cutoff_has_no_fact(self) -> None:
         candidate, evidence = self.candidate("合成：导入记录时间未知", occurred_at=None)
         record = self.facts.decide(self.access, FactDecision("synthetic-unknown", "synthetic-person-a", "residence", candidate, evidence, 0, "assert"))

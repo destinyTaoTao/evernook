@@ -30,6 +30,8 @@
 
 查询先选时间链/最新纠错，再检查所选来源与确认的当前状态；新事实来源不可用时返回 `source_unavailable`，不重新选旧事实冒充当前。争议/计划保留各自来源；返回candidate/processor版本、原文片段坐标及确认版本。原文保持不可重写，派生文本仍是不可信数据。单键超过10000个决定明确报 `fact_scope_too_large`，不返回伪装完整的截断结果。
 
+确认删除来源或确认记录时，事实正文及来源片段清除，但无正文时间控制与修订继续保留；当前值和最新纠错不可用时仍返回 `source_unavailable`。历史查询只能取得当时有效且当前仍可读取的事实，不能复活已删除的纠错正文；未受影响的早期现实变化时段仍保留正确上界。删除不回退 CAS 修订，已删除决定的请求 ID 重试或复用得到 `fact_source_purged`。
+
 ## CLI 与 MCP
 
 `fact-decide --config ... --access ...` 从UTF-8 stdin接收完整决定JSON，`resolves`用数组。`fact-query` 从stdin接收subject_id、predicate及可选valid_at/known_at。它们不执行抽取或猜测主体ID。

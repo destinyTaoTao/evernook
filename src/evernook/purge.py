@@ -9,6 +9,7 @@ import json
 import sqlite3
 
 from .models import Access, Change, MemoryFailure, MessageState
+from .facts import FactRegistry
 from .runtime import MemoryRuntime, _identifier, _json, _time
 
 
@@ -143,20 +144,12 @@ class PurgeWorkflow:
                 db.execute("DELETE FROM fact_candidates_v1 WHERE run_id=?", (run_id,))
                 db.execute("DELETE FROM candidate_runs_v1 WHERE id=?", (run_id,))
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_decisions_v1'").fetchone():
-            affected: set[tuple[str, str]] = set()
+            FactRegistry._schema(db)
             for row in db.execute("SELECT id,subject,predicate,record FROM fact_decisions_v1").fetchall():
                 record = json.loads(row["record"])
                 references = {span["message_id"] for span in record["sources"]} | {record["confirmation_id"]}
                 if targets.intersection(references):
-                    affected.add((str(row["subject"]), str(row["predicate"])))
-                    db.execute("DELETE FROM fact_decisions_v1 WHERE id=?", (row["id"],))
-            for subject, predicate in affected:
-                remaining = db.execute("SELECT COALESCE(max(revision),0) FROM fact_decisions_v1 WHERE subject=? AND predicate=?",
-                                       (subject, predicate)).fetchone()[0]
-                if remaining:
-                    db.execute("UPDATE fact_heads_v1 SET revision=? WHERE subject=? AND predicate=?", (remaining, subject, predicate))
-                else:
-                    db.execute("DELETE FROM fact_heads_v1 WHERE subject=? AND predicate=?", (subject, predicate))
+                    FactRegistry._erase(db, FactRegistry._record(row["record"]))
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='experience_events_v1'").fetchone():
             affected_ids: set[str] = set()
             for row in db.execute("SELECT experience_id,record FROM experience_events_v1").fetchall():

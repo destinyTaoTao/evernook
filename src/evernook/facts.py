@@ -1,7 +1,7 @@
 """Explicit source-backed temporal assertions. No model acceptance or persona mutation."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -87,6 +87,18 @@ class FactRegistry:
         db.execute("""CREATE TABLE IF NOT EXISTS fact_decisions_v1 (id TEXT PRIMARY KEY, subject TEXT NOT NULL,
             predicate TEXT NOT NULL, revision INTEGER NOT NULL, fingerprint BLOB NOT NULL, request TEXT NOT NULL,
             record TEXT NOT NULL, UNIQUE(subject,predicate,revision))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS fact_tombstones_v1 (id TEXT PRIMARY KEY, subject TEXT NOT NULL,
+            predicate TEXT NOT NULL, revision INTEGER NOT NULL, record TEXT NOT NULL,
+            UNIQUE(subject,predicate,revision))""")
+
+    @staticmethod
+    def _erase(db: sqlite3.Connection, record: FactRecord) -> None:
+        # Retain only temporal/control metadata, never erased text, evidence or request payloads.
+        control = replace(record, candidate_id="", processor_version="", text="", learned_at=None,
+                          sources=(), confirmation_id="", confirmation_version=0, category=None)
+        db.execute("INSERT INTO fact_tombstones_v1 VALUES (?,?,?,?,?)",
+                   (record.fact_id, record.subject_id, record.predicate, record.revision, _json(asdict(control))))
+        db.execute("DELETE FROM fact_decisions_v1 WHERE id=?", (record.fact_id,))
 
     @staticmethod
     def _record(raw: str) -> FactRecord:
@@ -99,7 +111,12 @@ class FactRegistry:
     def _rows(db: sqlite3.Connection, subject: str, predicate: str) -> tuple[FactRecord, ...]:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_decisions_v1'").fetchone():
             return ()
-        rows = db.execute("SELECT record FROM fact_decisions_v1 WHERE subject=? AND predicate=? ORDER BY revision LIMIT 10001", (subject, predicate)).fetchall()
+        query = "SELECT record,revision FROM fact_decisions_v1 WHERE subject=? AND predicate=?"
+        args: tuple[str, ...] = (subject, predicate)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_tombstones_v1'").fetchone():
+            query += " UNION ALL SELECT record,revision FROM fact_tombstones_v1 WHERE subject=? AND predicate=?"
+            args += (subject, predicate)
+        rows = db.execute(query + " ORDER BY revision LIMIT 10001", args).fetchall()
         if len(rows) > 10000:
             raise MemoryFailure("fact_scope_too_large")
         return tuple(FactRegistry._record(row["record"]) for row in rows)
@@ -169,6 +186,8 @@ class FactRegistry:
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             self._schema(db)
+            if db.execute("SELECT 1 FROM fact_tombstones_v1 WHERE id=?", (request.request_id,)).fetchone():
+                raise MemoryFailure("fact_source_purged")
             existing = db.execute("SELECT fingerprint,record FROM fact_decisions_v1 WHERE id=?", (request.request_id,)).fetchone()
             if existing is not None:
                 if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
@@ -227,6 +246,8 @@ class FactRegistry:
         return record
 
     def _available(self, db: sqlite3.Connection, record: FactRecord) -> bool:
+        if not record.sources:
+            return False
         try:
             sources = self.workflow._sources(db, tuple(span.message_id for span in record.sources))
             self.workflow._validate(CandidateDraft(record.text, "user_statement", record.sources), sources)

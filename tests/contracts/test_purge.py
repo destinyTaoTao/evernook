@@ -90,7 +90,7 @@ class PurgeTests(unittest.TestCase):
             candidates.status(self.access, lease.status.run_id)
         with self.assertRaisesRegex(MemoryFailure, "candidate_run_not_found"):
             candidates.complete(self.access, running.status.run_id, running.token, ())
-        self.assertEqual(facts.query(self.access, "synthetic-person", "residence").state, "no_fact")
+        self.assertEqual(facts.query(self.access, "synthetic-person", "residence").state, "source_unavailable")
         with self.assertRaisesRegex(MemoryFailure, "experience_not_found"):
             experiences.read(self.access, "synthetic-lesson")
         self.assertIsNone(self.runtime.read_context(self.access, context.result_id))
