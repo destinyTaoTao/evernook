@@ -82,7 +82,7 @@ class CompanionContextTests(unittest.TestCase):
         self.persona("address", "称呼：小合成", 0, "ctx-address")
         self.confirmed_tag("ctx-tag-high", "喜欢摄影", 0.9)
         self.confirmed_tag("ctx-tag-low", "周末爬山", 0.3)
-        bundle = self.build("合成", replace(self.policy, persona_tokens=500, profile_tokens=150))
+        bundle = self.build("合成", replace(self.policy, persona_tokens=500, profile_tokens=200))
         omitted = {item.evidence_id: item.reason for item in bundle.omitted}
         self.assertEqual(omitted.get("persona:address"), "persona_budget")
         self.assertEqual(omitted.get("profile:ctx-tag-low"), "profile_budget")
@@ -116,6 +116,73 @@ class CompanionContextTests(unittest.TestCase):
         tone_payloads = [item["data"]["text"] for item in json.loads(fourth.payload)["items"]
                          if item["kind"] == "persona" and item["evidence_id"] == "persona:tone"]
         self.assertEqual(tone_payloads, ["活泼！"])
+
+    def test_profile_suppressed_after_summary_is_removed_from_final_context(self) -> None:
+        registry = ProfileRegistry(self.runtime)
+        self.confirmed_tag("ctx-interleaved", "合成唯一画像标记", 0.8)
+        changed = False
+        outer = self
+        class InterleavingCounter(SyntheticCounter):
+            def count(self, text: str) -> int:
+                nonlocal changed
+                if not changed and '"tag_id"' in text and "ctx-interleaved" in text:
+                    changed = True
+                    registry.decide(outer.access, ProfileDecision("ctx-interleaved-suppress", "ctx-interleaved", 2,
+                        "suppress", confirmation_id=outer.save("合成：抑制刚才的画像")))
+                return len(text)
+        self.counter = InterleavingCounter()
+        bundle = self.build("")
+        self.assertTrue(changed)
+        self.assertNotIn("profile:ctx-interleaved", self.ids(bundle))
+        self.assertNotIn("合成唯一画像标记", bundle.payload)
+        self.assertTrue(any(item.evidence_id == "profile:ctx-interleaved"
+            and item.reason == "source_changed_during_context" for item in bundle.omitted))
+
+    def test_revised_purged_or_unconfirmed_profile_snapshot_is_not_delivered(self) -> None:
+        from evernook import Change
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+
+        registry = ProfileRegistry(self.runtime)
+        for action in ("revise", "purge", "confirmation"):
+            with self.subTest(action=action):
+                tag_id = "ctx-race-" + action
+                label = "合成旧画像唯一标记" + action
+                self.confirmed_tag(tag_id, label, 0.8)
+                original = registry.read(self.access, tag_id).record
+                assert original is not None and original.confirmation_id is not None
+                changed = False
+                outer = self
+                class InterleavingCounter(SyntheticCounter):
+                    def count(self, text: str) -> int:
+                        nonlocal changed
+                        assert original is not None
+                        if not changed and '"tag_id"' in text and tag_id in text:
+                            changed = True
+                            if action == "revise":
+                                updated_text = "合成：更正后的画像来源"
+                                source = outer.save(updated_text)
+                                registry.decide(outer.access, ProfileDecision("revise-" + tag_id, tag_id, 2, "revise",
+                                    ProfileDraft("interest", "合成新画像", 0.8,
+                                        (EvidenceSpan(source, 1, "original", 1, 0, len(updated_text), updated_text),))))
+                                registry.decide(outer.access, ProfileDecision("reconfirm-" + tag_id, tag_id, 3, "confirm",
+                                    confirmation_id=outer.save("合成：确认更正后的画像")))
+                            elif action == "purge":
+                                purge = PurgeWorkflow(outer.runtime)
+                                preview = purge.preview(outer.access, "purge-" + tag_id, (original.draft.sources[0].message_id,))
+                                purge.purge(outer.access, PurgeDecision(preview.request_id,
+                                    outer.save("合成：确认删除预览中的画像来源")))
+                            else:
+                                assert original.confirmation_id is not None and original.confirmation_version is not None
+                                outer.runtime.change(outer.access, Change("suppress-" + tag_id, original.confirmation_id,
+                                    original.confirmation_version, "suppress", outer.save("合成：抑制画像确认"), "synthetic"))
+                        return len(text)
+                self.counter = InterleavingCounter()
+                bundle = self.build("", replace(self.policy, profile_tokens=2000))
+                self.assertTrue(changed)
+                self.assertNotIn("profile:" + tag_id, self.ids(bundle))
+                self.assertNotIn(label, bundle.payload)
+                self.assertTrue(any(item.evidence_id == "profile:" + tag_id
+                    and item.reason == "source_changed_during_context" for item in bundle.omitted))
 
 
 if __name__ == "__main__":

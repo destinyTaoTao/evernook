@@ -180,13 +180,18 @@ class ContextBuilder:
                 summary = ProfileRegistry(self.runtime).summary(access)
                 for tag in sorted(summary.tags, key=lambda item: (-item.draft.confidence, item.tag_id)):
                     data = {"tag_id": tag.tag_id, "category": tag.draft.category, "label": tag.draft.label,
-                            "confidence": tag.draft.confidence, "recorded_at": tag.recorded_at}
+                            "confidence": tag.draft.confidence, "recorded_at": tag.recorded_at,
+                            "revision": tag.revision, "content_revision": tag.content_revision}
                     cost = self._tokens(_json(data))
                     if profile_used + cost > self.policy.profile_tokens:
                         omitted.append(OmittedEvidence("profile:" + tag.tag_id, "profile_budget"))
                         continue
                     profile_used += cost
-                    items.append(_Item("profile", "profile:" + tag.tag_id, data, ()))
+                    profile_references = [(span.message_id, span.state_version, span.content_version) for span in tag.draft.sources]
+                    if tag.confirmation_id is not None:
+                        assert tag.confirmation_version is not None
+                        profile_references.append((tag.confirmation_id, tag.confirmation_version, 1))
+                    items.append(_Item("profile", "profile:" + tag.tag_id, data, tuple(profile_references)))
             facts = FactRegistry(self.runtime)
             for subject, predicate in dict.fromkeys(self.policy.fact_keys):
                 budget()
@@ -259,6 +264,15 @@ class ContextBuilder:
                 if item.kind == "reviewed_experience":
                     current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
                     usable = current.state == "enabled" and current.revision == item.data["revision"]
+                if item.kind == "profile":
+                    try:
+                        profile = ProfileRegistry(self.runtime)._view(db, item.data["tag_id"])
+                        usable = (profile.state == "confirmed" and profile.revision == item.data["revision"]
+                                  and profile.content_revision == item.data["content_revision"])
+                    except MemoryFailure as error:
+                        if error.code != "profile_not_found":
+                            raise
+                        usable = False
                 for message_id, version, content_version in item.references:
                     try:
                         state = self.runtime._state(db, message_id)
