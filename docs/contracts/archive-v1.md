@@ -41,7 +41,7 @@ for message_id in archive.review_message_ids(limit=100, offset=0):
 
 - 使用 SQLite Backup API 获取一致性快照，不直接复制活动数据库主文件；快照分批复制，复制阶段超过 30 秒明确失败，不返回成功。此限制没有经过规模性能校准。
 - 先在同一父目录的私有临时目录构建，关闭数据库、同步文件、写清单并校验成功后，以目录重命名发布。目标存在时导出拒绝覆盖；文件错误或进程退出前未发布的目录不视为成功。
-- 清单固定归档格式 v1、SQLite schema v4、归档 ID、创建时间、数据库 SHA-256 和消息/重要交代/附件数量。数据库中的 capture 清单保留附件标识、尺寸、SHA-256 和未保存原因，来源映射保留在消息中。
+- 清单支持归档格式 v1/v2、SQLite schema v4、归档 ID、创建时间、数据库 SHA-256 和消息/重要交代/附件数量。新导出使用 v2，附由源账本密钥计算的认证值；普通只读校验仍不持有密钥，因此只验证格式和完整性。数据库中的 capture 清单保留附件标识、尺寸、SHA-256 和未保存原因，来源映射保留在消息中。
 - 验证拒绝未知版本、宽松布尔数字、额外文件、活动 WAL/SHM/journal、目录外文件引用、数据库哈希/数量/结构完整性及外键错误、缺失或损坏的已保存附件。校验使用只读连接，禁用可信 schema；SQL 执行受 30 秒进度预算约束。文件哈希和复制耗时未设整体截止时间。
 - `archive_destination_exists` 对任何被占用的还原目标一致返回（含目标存在但不是匹配归档的情形），export/restore 行为一致。常见错误包括 `archive_forbidden`、`unsafe_archive_path`、`archive_destination_exists`、`archive_write_failed`、`archive_snapshot_timeout`、`archive_not_sealed`、`archive_integrity_mismatch`、`attachment_missing`、`attachment_corrupt`、`unsupported_archive` 和 `invalid_archive`，不在错误中回显证据或凭证。
 - 同一归档恢复到同一完整目标可幂等返回；不同归档或损坏目标不覆盖。发布前退出后可向原目标重试；退出留下的私有临时目录不自动合并、扫描或提升为成功结果。
@@ -52,6 +52,12 @@ SHA-256 检查完整性，不证明发布者身份或状态最新；有能力同
 
 `restore_archive` 只向新目录发布可审查的普通证据副本，返回 `EvidenceArchive`。它没有普通 `read/search/submit`，不生成运行时配置、访问凭证或 HMAC 密钥，也没有把 `review_required` 改为可召回状态的接口。源运行时不受恢复影响。
 
-归档可能早于用户后续的更正、抑制或删除。由于本轮没有可证明完整的最新控制记录重放和运行时恢复材料，**所有恢复结果一律保持 `review_required`，不能因快照内部校验通过就开放普通召回。** 保留历史原档用于审查，不表示失效记录可以重新进入回答。
+归档可能早于用户后续的更正、抑制或删除。所有恢复结果一律保持 `review_required`，不能因快照内部校验通过或控制重放而开放普通召回。保留历史原档用于审查，不表示失效记录可以重新进入回答。
 
-T09 仍未交付加密备份目的地/恢复材料、小时/日调度与保留、恢复后的最新控制记录重放及普通召回准入，也未验收 RPO/RTO、物理掉电或长期运行。相关依赖门禁保持有效；本轮不关闭整张 T09。
+## 可信控制检查点与审查副本重放
+
+`capture_control_checkpoint(runtime, access)` 由具备 `admin` 和 `archive_review` 权限的可信本地维护端从来源账本的一致性快照取得带认证的账本标识和控制摘要。调用端必须从可信来源独立取得并保存该检查点；它证明的是捕获时的控制状态，不证明某个克隆库就是全局最新库。`replay_archive_controls(runtime, access, source, destination, checkpoint=checkpoint)` 检查归档来源认证、账本身份和检查点与当前来源控制状态一致，在独立新目录重放普通消息控制、确认删除和相关事实/画像/经验版本；旧版 v1 缺少来源认证，仍可受限审查，但不能用此入口证明来源。若水位变化、历史分叉、来源不可用或控制无法完整验证，则拒绝发布，而不是声称完成。
+
+结果仍是 `EvidenceArchive`，可用 `review_message`、`review_fact`、`review_profile` 和 `review_experience` 审查，返回值保持 `archive_only`。`control_coverage()` 需要可信来源、权限和独立保存的认证检查点；缺少任何一项返回 `unverified`。`current_at_check` 仅表示该次比较中归档、检查点与来源控制摘要一致；来源变化或检查点不匹配返回 `stale`。同一来源归档及未变控制水位重复调用可返回原结果；其他占用目标不覆盖。恢复不复制普通客户端令牌或原账本密钥，不改变源账本和原归档。控制证据可能包含新的普通原文，因此输出仍是未加密的私人归档。
+
+正常运行库发布及普通召回准入仍未完成，也未验收 RPO/RTO、物理掉电或长期运行。相关依赖门禁保持有效；本轮不关闭整张 T09。

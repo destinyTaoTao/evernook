@@ -130,11 +130,12 @@ class ProfileRegistry:
             except UnicodeError:
                 raise MemoryFailure("invalid_encoding") from None
 
-    def _sources(self, db: sqlite3.Connection, draft: ProfileDraft) -> None:
+    @staticmethod
+    def _sources(db: sqlite3.Connection, draft: ProfileDraft) -> None:
         for span in draft.sources:
-            state = self.runtime._state(db, span.message_id)
+            state = MemoryRuntime._state(db, span.message_id)
             row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (span.message_id,)).fetchone()
-            message = self.runtime._stored(row)
+            message = MemoryRuntime._stored(row)
             if (state.status != "active" or state.version != span.state_version
                     or message.receipt.content_version != span.content_version or not message.receipt.original_saved):
                 raise MemoryFailure("stale_profile_source")
@@ -143,10 +144,11 @@ class ProfileRegistry:
             if message.event.text[span.start:span.end] != span.expected_text:
                 raise MemoryFailure("profile_span_mismatch")
 
-    def _confirmation(self, db: sqlite3.Connection, message_id: str) -> int:
-        state = self.runtime._state(db, message_id)
+    @staticmethod
+    def _confirmation(db: sqlite3.Connection, message_id: str) -> int:
+        state = MemoryRuntime._state(db, message_id)
         row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
-        message = self.runtime._stored(row)
+        message = MemoryRuntime._stored(row)
         if (state.status != "active" or message.event.role != "user" or message.event.completion != "complete"
                 or not message.receipt.original_saved or not message.event.text.strip()):
             raise MemoryFailure("profile_user_confirmation_required")
@@ -254,15 +256,16 @@ class ProfileRegistry:
             db.execute("BEGIN")
             return self._view(db, tag_id)
 
-    def _view(self, db: sqlite3.Connection, tag_id: str) -> ProfileView:
-        record = self._latest(db, tag_id)
+    @staticmethod
+    def _view(db: sqlite3.Connection, tag_id: str) -> ProfileView:
+        record = ProfileRegistry._latest(db, tag_id)
         if record is None:
             raise MemoryFailure("profile_not_found")
         state, error = record.state, None
         try:
-            self._sources(db, record.draft)
+            ProfileRegistry._sources(db, record.draft)
             if state == "confirmed" and record.confirmation_id is not None:
-                if self._confirmation(db, record.confirmation_id) != record.confirmation_version:
+                if ProfileRegistry._confirmation(db, record.confirmation_id) != record.confirmation_version:
                     raise MemoryFailure("profile_user_confirmation_required")
         except MemoryFailure as failure:
             if failure.code not in {"stale_profile_source", "message_not_found", "profile_span_mismatch", "profile_user_confirmation_required"}:

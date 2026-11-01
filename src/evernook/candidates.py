@@ -85,14 +85,15 @@ class CandidateWorkflow:
     def _hash(self, value: str) -> bytes:
         return hmac.digest(self.runtime._fingerprint_key, value.encode("utf-8"), hashlib.sha256)
 
-    def _sources(self, db: sqlite3.Connection, ids: tuple[str, ...]) -> tuple[ExtractionSource, ...]:
+    @staticmethod
+    def _sources(db: sqlite3.Connection, ids: tuple[str, ...]) -> tuple[ExtractionSource, ...]:
         sources: list[ExtractionSource] = []
         for message_id in ids:
-            state = self.runtime._state(db, message_id)
+            state = MemoryRuntime._state(db, message_id)
             if state.status != "active":
                 raise MemoryFailure("stale_source")
             row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
-            stored = self.runtime._stored(row)
+            stored = MemoryRuntime._stored(row)
             if stored.event.completion != "complete" or stored.event.role not in {"user", "assistant", "tool"}:
                 raise MemoryFailure("unsupported_extraction_source")
             sources.append(ExtractionSource(stored, state.version))

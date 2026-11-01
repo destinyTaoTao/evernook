@@ -391,6 +391,16 @@ class MemoryRuntime:
                   content BLOB NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(message_id,attachment_id));
                 PRAGMA user_version=4;
                 COMMIT;""")
+            # A non-secret, key-bound ledger identity travels with ordinary snapshots; the
+            # idempotency key itself remains outside archives and is never copied into them.
+            ledger_id = hmac.digest(self._fingerprint_key, b"evernook-ledger-identity-v1", hashlib.sha256).hex()
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE IF NOT EXISTS ledger_identity_v1 (id INTEGER PRIMARY KEY CHECK(id=1), ledger_id TEXT NOT NULL)")
+            db.execute("INSERT OR IGNORE INTO ledger_identity_v1 VALUES (1,?)", (ledger_id,))
+            stored_id = db.execute("SELECT ledger_id FROM ledger_identity_v1 WHERE id=1").fetchone()
+            if stored_id is None or not hmac.compare_digest(str(stored_id[0]), ledger_id):
+                raise MemoryFailure("ledger_identity_mismatch")
+            db.execute("COMMIT")
 
     def _authorize(self, access: Access) -> _Identity:
         if not isinstance(access, Access):

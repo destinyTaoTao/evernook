@@ -115,11 +115,12 @@ class ExperienceRegistry:
             except UnicodeError:
                 raise MemoryFailure("invalid_encoding") from None
 
-    def _sources(self, db: sqlite3.Connection, draft: ExperienceDraft) -> None:
+    @staticmethod
+    def _sources(db: sqlite3.Connection, draft: ExperienceDraft) -> None:
         for span in draft.sources:
-            state = self.runtime._state(db, span.message_id)
+            state = MemoryRuntime._state(db, span.message_id)
             row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (span.message_id,)).fetchone()
-            message = self.runtime._stored(row)
+            message = MemoryRuntime._stored(row)
             if (state.status != "active" or state.version != span.state_version
                     or message.receipt.content_version != span.content_version or not message.receipt.original_saved):
                 raise MemoryFailure("stale_experience_source")
@@ -129,10 +130,11 @@ class ExperienceRegistry:
             if message.event.text[span.start:span.end] != span.expected_text:
                 raise MemoryFailure("experience_span_mismatch")
 
-    def _confirmation(self, db: sqlite3.Connection, message_id: str) -> int:
-        state = self.runtime._state(db, message_id)
+    @staticmethod
+    def _confirmation(db: sqlite3.Connection, message_id: str) -> int:
+        state = MemoryRuntime._state(db, message_id)
         row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
-        message = self.runtime._stored(row)
+        message = MemoryRuntime._stored(row)
         if (state.status != "active" or message.event.role != "user" or message.event.completion != "complete"
                 or not message.receipt.original_saved or not message.event.text.strip()):
             raise MemoryFailure("experience_user_confirmation_required")
@@ -221,16 +223,17 @@ class ExperienceRegistry:
             db.execute("BEGIN")
             return self._view(db, experience_id)
 
-    def _view(self, db: sqlite3.Connection, experience_id: str) -> ExperienceView:
-        record = self._latest(db, experience_id)
+    @staticmethod
+    def _view(db: sqlite3.Connection, experience_id: str) -> ExperienceView:
+        record = ExperienceRegistry._latest(db, experience_id)
         if record is None:
             raise MemoryFailure("experience_not_found")
         state, error = record.state, None
         try:
-            self._sources(db, record.draft)
+            ExperienceRegistry._sources(db, record.draft)
             if state == "enabled":
                 assert record.confirmation_id is not None
-                if self._confirmation(db, record.confirmation_id) != record.confirmation_version:
+                if ExperienceRegistry._confirmation(db, record.confirmation_id) != record.confirmation_version:
                     raise MemoryFailure("experience_user_confirmation_required")
             if record.draft.disputed:
                 state = "disputed"

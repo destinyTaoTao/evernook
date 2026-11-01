@@ -138,10 +138,11 @@ class FactRegistry:
             raise MemoryFailure("fact_requires_user_statement")
         return draft, str(run["processor"])
 
-    def _confirmation(self, db: sqlite3.Connection, message_id: str) -> tuple[int, str | None]:
-        state = self.runtime._state(db, message_id)
+    @staticmethod
+    def _confirmation(db: sqlite3.Connection, message_id: str) -> tuple[int, str | None]:
+        state = MemoryRuntime._state(db, message_id)
         row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
-        message = self.runtime._stored(row)
+        message = MemoryRuntime._stored(row)
         if (state.status != "active" or message.event.role != "user" or message.event.completion != "complete"
                 or not message.receipt.original_saved or not message.event.text.strip()):
             raise MemoryFailure("insufficient_evidence")
@@ -245,13 +246,14 @@ class FactRegistry:
             db.execute("COMMIT")
         return record
 
-    def _available(self, db: sqlite3.Connection, record: FactRecord) -> bool:
+    @staticmethod
+    def _available(db: sqlite3.Connection, record: FactRecord) -> bool:
         if not record.sources:
             return False
         try:
-            sources = self.workflow._sources(db, tuple(span.message_id for span in record.sources))
-            self.workflow._validate(CandidateDraft(record.text, "user_statement", record.sources), sources)
-            confirmation, _ = self._confirmation(db, record.confirmation_id)
+            sources = CandidateWorkflow._sources(db, tuple(span.message_id for span in record.sources))
+            CandidateWorkflow._validate(CandidateDraft(record.text, "user_statement", record.sources), sources)
+            confirmation, _ = FactRegistry._confirmation(db, record.confirmation_id)
             return confirmation == record.confirmation_version
         except MemoryFailure as error:
             if error.code in {"stale_source", "message_not_found", "candidate_span_mismatch", "protected_candidate",
@@ -262,56 +264,61 @@ class FactRegistry:
     def query(self, access: Access, subject_id: str, predicate: str, *, valid_at: str | None = None,
               known_at: str | None = None) -> FactView:
         self.runtime._require_scope(access, "recall", "fact_query")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            return self._query_snapshot(db, subject_id, predicate, valid_at=valid_at, known_at=known_at)
+
+    @staticmethod
+    def _query_snapshot(db: sqlite3.Connection, subject_id: str, predicate: str, *, valid_at: str | None = None,
+                        known_at: str | None = None) -> FactView:
         _identifier(subject_id)
         _identifier(predicate)
         now = datetime.now(timezone.utc).isoformat()
         at, known = now if valid_at is None else valid_at, now if known_at is None else known_at
         at_time, known_time = _time(at), _time(known)
-        with self.runtime._connection() as db:
-            db.execute("BEGIN")
-            all_rows = self._rows(db, subject_id, predicate)
-            rows = [row for row in all_rows if _time(row.recorded_at) <= known_time]
-            resolved = {item for row in rows for item in row.resolves}
-            anchors: dict[str, FactRecord] = {}
-            for row in rows:
-                if row.kind in {"assert", "change", "correction"}:
-                    anchors[row.anchor_id] = row
-            # Do not filter unavailable successors before choosing time: that would resurrect old facts.
-            roots = [row for row in rows if row.kind in {"assert", "change"}]
-            eligible = [row for row in roots if row.valid_from is not None and _time(row.valid_from) <= at_time]
-            chosen = anchors[eligible[-1].anchor_id] if eligible else None
-            unknown = [row for row in roots if row.valid_from is None]
-            if chosen is None and unknown and valid_at is None:
-                chosen = anchors[unknown[-1].anchor_id]
-            if chosen is not None and chosen.valid_until is not None and _time(chosen.valid_until) <= at_time:
-                chosen = None
-            effective_until = chosen.valid_until if chosen is not None else None
-            if chosen is not None:
-                successors = [row.valid_from for row in roots if row.valid_from is not None
-                    and row.anchor_id != chosen.anchor_id and (chosen.valid_from is None or _time(row.valid_from) > _time(chosen.valid_from))]
-                boundaries = successors + ([effective_until] if effective_until is not None else [])
-                effective_until = min(boundaries, key=_time) if boundaries else None
-            unavailable: list[str] = []
-            available: dict[str, bool] = {}
-            def visible(row: FactRecord) -> bool:
-                if row.fact_id not in available:
-                    available[row.fact_id] = self._available(db, row)
-                    if not available[row.fact_id]:
-                        unavailable.append(row.fact_id)
-                return available[row.fact_id]
-            plans = tuple(row for row in rows if row.kind == "plan" and row.fact_id not in resolved and visible(row))
-            disputes = tuple(row for row in rows if row.kind == "disputed" and row.fact_id not in resolved
-                and (row.valid_from is None or _time(row.valid_from) <= at_time)
-                and (row.valid_until is None or _time(row.valid_until) > at_time) and visible(row))
-            state = "current" if valid_at is None else "historical"
-            if chosen is None:
-                state = "unknown_time" if unknown else "no_fact"
-            elif not visible(chosen):
-                chosen, state = None, "source_unavailable"
-            elif chosen.valid_from is None:
-                state = "unknown_time"
-            if disputes:
-                state = "disputed"
-            return FactView(subject_id, predicate, all_rows[-1].revision if all_rows else 0,
-                rows[-1].revision if rows else 0, state, chosen, plans, disputes, tuple(unavailable), bool(disputes), at, known,
-                effective_until if chosen is not None else None)
+        all_rows = FactRegistry._rows(db, subject_id, predicate)
+        rows = [row for row in all_rows if _time(row.recorded_at) <= known_time]
+        resolved = {item for row in rows for item in row.resolves}
+        anchors: dict[str, FactRecord] = {}
+        for row in rows:
+            if row.kind in {"assert", "change", "correction"}:
+                anchors[row.anchor_id] = row
+        # Do not filter unavailable successors before choosing time: that would resurrect old facts.
+        roots = [row for row in rows if row.kind in {"assert", "change"}]
+        eligible = [row for row in roots if row.valid_from is not None and _time(row.valid_from) <= at_time]
+        chosen = anchors[eligible[-1].anchor_id] if eligible else None
+        unknown = [row for row in roots if row.valid_from is None]
+        if chosen is None and unknown and valid_at is None:
+            chosen = anchors[unknown[-1].anchor_id]
+        if chosen is not None and chosen.valid_until is not None and _time(chosen.valid_until) <= at_time:
+            chosen = None
+        effective_until = chosen.valid_until if chosen is not None else None
+        if chosen is not None:
+            successors = [row.valid_from for row in roots if row.valid_from is not None
+                and row.anchor_id != chosen.anchor_id and (chosen.valid_from is None or _time(row.valid_from) > _time(chosen.valid_from))]
+            boundaries = successors + ([effective_until] if effective_until is not None else [])
+            effective_until = min(boundaries, key=_time) if boundaries else None
+        unavailable: list[str] = []
+        available: dict[str, bool] = {}
+        def visible(row: FactRecord) -> bool:
+            if row.fact_id not in available:
+                available[row.fact_id] = FactRegistry._available(db, row)
+                if not available[row.fact_id]:
+                    unavailable.append(row.fact_id)
+            return available[row.fact_id]
+        plans = tuple(row for row in rows if row.kind == "plan" and row.fact_id not in resolved and visible(row))
+        disputes = tuple(row for row in rows if row.kind == "disputed" and row.fact_id not in resolved
+            and (row.valid_from is None or _time(row.valid_from) <= at_time)
+            and (row.valid_until is None or _time(row.valid_until) > at_time) and visible(row))
+        state = "current" if valid_at is None else "historical"
+        if chosen is None:
+            state = "unknown_time" if unknown else "no_fact"
+        elif not visible(chosen):
+            chosen, state = None, "source_unavailable"
+        elif chosen.valid_from is None:
+            state = "unknown_time"
+        if disputes:
+            state = "disputed"
+        return FactView(subject_id, predicate, all_rows[-1].revision if all_rows else 0,
+            rows[-1].revision if rows else 0, state, chosen, plans, disputes, tuple(unavailable), bool(disputes), at, known,
+            effective_until if chosen is not None else None)
