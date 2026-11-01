@@ -31,3 +31,5 @@
 
 - `evernook.adapters.conformance.ConformanceSuite` 对实现 `AdapterSurface` 的适配器运行固定检查（原文回读、幂等、敏感投影、预算诚实性、抑制排除、作用域纪律、缺口披露），返回 `ConformanceReport`（逐项 passed/detail 与总体结论）。
 - 新外壳接入验收标准：全套件通过（本仓库内以参考适配器的契约测试为准）。
+
+套件需要独立可信的 `profile_runtime` 和 `profile_access` 建立、确认及抑制合成画像；缺少夹具时对应检查失败，普通适配器身份仍保持最小权限。套件独立使用指定 counter 重新计算完整 payload，核对原始请求上限并拒绝重复 JSON 键。报告 `counter_id` 与 `counter_scope` 区分默认合成字符单位和调用方提供的计数器；后者本身不证明已验证目标模型 tokenizer。正式宿主准入仍需对应真实 tokenizer 和 SDK 链路验收。

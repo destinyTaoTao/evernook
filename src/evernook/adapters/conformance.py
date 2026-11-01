@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from uuid import uuid4
 
-from ..context import ContextPolicy
-from ..models import Event, MemoryFailure, Source
+from ..context import ContextBundle, ContextPolicy, TokenCounter
+from ..models import Access, Event, MemoryFailure, Source
+from ..candidates import EvidenceSpan
+from ..profile import ProfileDecision, ProfileDraft, ProfileRegistry
+from ..runtime import MemoryRuntime
 from .surface import AdapterSurface
 
 
@@ -19,6 +24,8 @@ class CheckResult:
 class ConformanceReport:
     adapter: str
     results: tuple[CheckResult, ...]
+    counter_id: str = ""
+    counter_scope: str = "synthetic_contract_only"
 
     @property
     def passed(self) -> bool:
@@ -33,9 +40,14 @@ class _Counter:
 
 
 class ConformanceSuite:
-    def __init__(self, adapter: AdapterSurface):
+    def __init__(self, adapter: AdapterSurface, *, profile_runtime: MemoryRuntime | None = None,
+                 profile_access: Access | None = None, counter: TokenCounter | None = None):
         self.adapter = adapter
         self._sequence_number = 0
+        self._session_id = "suite-" + uuid4().hex
+        self.profile_runtime, self.profile_access = profile_runtime, profile_access
+        self.counter = counter if counter is not None else _Counter()
+        self.counter_scope = "synthetic_contract_only" if counter is None else "supplied_counter_not_model_verified"
 
     def run(self) -> ConformanceReport:
         checks = (
@@ -47,11 +59,11 @@ class ConformanceSuite:
             self._scope_discipline(),
             self._gap_disclosure_declares_uncovered(),
         )
-        return ConformanceReport(self.adapter.name, checks)
+        return ConformanceReport(self.adapter.name, checks, self.counter.counter_id, self.counter_scope)
 
     def _text_event(self, text: str, *, role: str = "user") -> Event:
         self._sequence_number += 1
-        source = Source("conformance", "suite", "main", str(self._sequence_number))
+        source = Source("conformance", self._session_id, "main", str(self._sequence_number))
         return Event(source, role, self._sequence_number, "2026-10-30T12:00:00+08:00", "complete", text)
 
     def _capture_roundtrip_original(self) -> CheckResult:
@@ -78,31 +90,66 @@ class ConformanceSuite:
 
     def _injection_holds_budget_and_reports_omissions(self) -> CheckResult:
         policy = ContextPolicy(512, 512, 64, 7, 512, persona_tokens=16)
-        bundle = self.adapter.inject("合成", policy, _Counter())
-        within = "untrusted_memory_context" in bundle.payload and bundle.used_tokens <= bundle.token_limit
-        honest_over_budget = bundle.payload == "" and "context_envelope_over_budget" in bundle.degraded
-        ok = within or honest_over_budget
+        bundle = self.adapter.inject("合成", policy, self.counter)
+        ok = self._honest_bundle(bundle, policy)
         return CheckResult("injection_holds_budget_and_reports_omissions", ok,
-                           f"used={bundle.used_tokens} limit={bundle.token_limit}" if within
-                           else "payload cleared with explicit envelope_over_budget" if honest_over_budget
-                           else "payload not an untrusted envelope or budget exceeded silently")
+                           f"independent_count={self.counter.count(bundle.payload)} requested_limit={policy.normal_tokens}"
+                           if ok else "payload envelope, independent count or requested budget mismatch")
+
+    def _honest_bundle(self, bundle: ContextBundle, policy: ContextPolicy) -> bool:
+        actual = self.counter.count(bundle.payload)
+        if (type(actual) is not int or actual < 0 or (bundle.payload and actual == 0)
+                or type(bundle.used_tokens) is not int or type(bundle.token_limit) is not int
+                or bundle.used_tokens != actual or bundle.token_limit != policy.normal_tokens
+                or actual > policy.normal_tokens or bundle.mode != "normal" or bundle.counter_id != self.counter.counter_id):
+            return False
+        if not bundle.payload:
+            return "context_envelope_over_budget" in bundle.degraded and not bundle.complete and bundle.evidence_count == 0
+        def unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON key")
+                result[key] = value
+            return result
+        try:
+            payload = json.loads(bundle.payload, object_pairs_hook=unique_keys)
+        except ValueError:
+            return False
+        return isinstance(payload, dict) and payload.get("kind") == "untrusted_memory_context" and isinstance(payload.get("items"), list)
 
     def _injection_excludes_suppressed_profile_tags(self) -> CheckResult:
-        import json
-        bundle = self.adapter.inject("合成", ContextPolicy(512, 512, 64, 7, 512, persona_tokens=16,
-                                                           profile_tokens=256), _Counter())
-        if bundle.payload == "" and "context_envelope_over_budget" in bundle.degraded:
-            return CheckResult("injection_excludes_suppressed_profile_tags", True,
-                               "payload cleared explicitly; nothing injected at all")
+        if self.profile_runtime is None or self.profile_access is None:
+            return CheckResult("injection_excludes_suppressed_profile_tags", False,
+                               "independent trusted profile fixture required; adapter identity remains unprivileged")
+        tag_id = "conformance-profile-" + uuid4().hex
+        marker = "synthetic-profile-marker-" + uuid4().hex
+        source = self.adapter.capture(self._text_event(marker)).message
+        registry = ProfileRegistry(self.profile_runtime)
+        registry.decide(self.profile_access, ProfileDecision("propose-" + tag_id, tag_id, 0, "propose",
+            ProfileDraft("interest", marker, 0.9, (EvidenceSpan(source.message_id, 1, "original", 1, 0, len(marker), marker),))))
+        confirmation = self.adapter.capture(self._text_event("合成：确认符合性测试画像")).message
+        registry.decide(self.profile_access, ProfileDecision("confirm-" + tag_id, tag_id, 1, "confirm",
+            confirmation_id=confirmation.message_id))
+        policy = ContextPolicy(4096, 4096, 64, 7, 512, profile_tokens=2048)
+        before = self.adapter.inject("", policy, self.counter)
+        before_ok = self._honest_bundle(before, policy) and bool(before.payload)
         try:
-            payload = json.loads(bundle.payload)
-            items = payload.get("items", [])
-            ok = all(item["evidence_id"] for item in items if item["kind"] == "profile")
-        except ValueError:
-            ok = False
+            items = json.loads(before.payload)["items"]
+            before_ok = before_ok and any(item.get("kind") == "profile" and item.get("evidence_id") == "profile:" + tag_id
+                and item.get("data", {}).get("label") == marker for item in items)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            before_ok = False
+        suppression = self.adapter.capture(self._text_event("合成：抑制符合性测试画像")).message
+        registry.decide(self.profile_access, ProfileDecision("suppress-" + tag_id, tag_id, 2, "suppress",
+            confirmation_id=suppression.message_id))
+        after = self.adapter.inject("", policy, self.counter)
+        after_ok = self._honest_bundle(after, policy)
+        decoded = json.dumps(json.loads(after.payload), ensure_ascii=False) if after_ok and after.payload else ""
+        ok = before_ok and after_ok and tag_id not in decoded and marker not in decoded
         return CheckResult("injection_excludes_suppressed_profile_tags", ok,
-                           "injected profile items carry resolved evidence ids" if ok
-                           else "payload is not parseable or profile items lack evidence ids")
+                           "confirmed fixture visible before suppression; identity and unique content absent afterward" if ok
+                           else "profile fixture missing before suppression or suppressed identity/content still injected")
 
     def _scope_discipline(self) -> CheckResult:
         try:
