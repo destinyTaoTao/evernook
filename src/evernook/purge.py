@@ -141,6 +141,8 @@ class PurgeWorkflow:
             runs = [str(row["id"]) for row in db.execute("SELECT id,sources FROM candidate_runs_v1")
                     if targets.intersection(item[0] for item in json.loads(row["sources"]))]
             for run_id in runs:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_results_v1'").fetchone():
+                    db.execute("DELETE FROM consolidation_results_v1 WHERE run_id=?", (run_id,))
                 db.execute("DELETE FROM fact_candidates_v1 WHERE run_id=?", (run_id,))
                 db.execute("DELETE FROM candidate_runs_v1 WHERE id=?", (run_id,))
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_decisions_v1'").fetchone():

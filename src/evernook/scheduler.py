@@ -171,9 +171,13 @@ class ConsolidationScheduler:
                 continue
             run_id = lease.status.run_id
             if lease.token is None:
-                # The run already succeeded (a crash can land between completion and progress
-                # bookkeeping): record progress and continue instead of dying on a missing lease.
-                self._record_progress(batch, run_id, "consolidated")
+                try:
+                    result = self.workflow.result(access, run_id)
+                except MemoryFailure as error:
+                    if error.code != "incomplete_consolidation":
+                        raise
+                    result = self.workflow.recover(access, run_id, provider or extractive_provider)
+                self._record_progress(batch, run_id, "consolidated" if result.drafts else "skipped")
                 run_ids.append(run_id)
                 processed += len(batch)
                 continue

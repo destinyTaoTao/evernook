@@ -5,6 +5,7 @@ rows yet — they remain queue entries; navigation/experience integration is lat
 profile_tag auto path has a live consumer (confirmed tags reach the must-read profile summary)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -80,6 +81,8 @@ class ConsolidationWorkflow:
             detail TEXT NOT NULL, category TEXT NOT NULL, confidence REAL NOT NULL, state TEXT NOT NULL,
             proposal_id TEXT, created_at TEXT NOT NULL, sources TEXT NOT NULL)""")
         db.execute("CREATE INDEX IF NOT EXISTS consolidation_drafts_run_v1 ON consolidation_drafts_v1(run_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS consolidation_results_v1 (
+            run_id TEXT PRIMARY KEY REFERENCES candidate_runs_v1(id), candidate_ids TEXT NOT NULL)""")
         db.execute("""CREATE TABLE IF NOT EXISTS consolidation_settings_v1 (
             id INTEGER PRIMARY KEY CHECK(id=1), tier TEXT NOT NULL, whitelist TEXT NOT NULL)""")
 
@@ -148,13 +151,63 @@ class ConsolidationWorkflow:
         payload = _json([run_id, asdict(draft), source.kind, source.category, source.confidence])
         return hmac.digest(runtime._fingerprint_key, payload.encode("utf-8"), hashlib.sha256).hex()
 
-    def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
-        """Requires accept scope: profile_tag drafts propose profile entries; nothing is auto-confirmed.
+    @staticmethod
+    def _draft_row(row: sqlite3.Row) -> ConsolidationDraftRow:
+        return ConsolidationDraftRow(row["candidate_id"], row["run_id"], row["kind"], row["label"],
+            row["detail"], row["category"], float(row["confidence"]), row["state"], row["proposal_id"],
+            row["created_at"], tuple(EvidenceSpan(**span) for span in json.loads(row["sources"])))
 
-        Replay is authoritative from the first completion: an already completed run returns its stored
-        draft rows, so later tier/whitelist changes never re-apply to finished drafts.
-        """
+    def _result(self, db: sqlite3.Connection, run: CandidateRun) -> ConsolidationResult:
+        if run.state != "succeeded":
+            raise MemoryFailure("incomplete_consolidation")
+        marker = db.execute("SELECT candidate_ids FROM consolidation_results_v1 WHERE run_id=?", (run.run_id,)).fetchone()
+        if marker is None:
+            if run.candidate_count == 0:
+                return ConsolidationResult(run, ())
+            raise MemoryFailure("incomplete_consolidation")
+        rows = {row["candidate_id"]: row for row in db.execute(
+            "SELECT * FROM consolidation_drafts_v1 WHERE run_id=?", (run.run_id,))}
+        expected = json.loads(marker["candidate_ids"])
+        if set(expected) != set(rows):
+            raise MemoryFailure("incomplete_consolidation")
+        return ConsolidationResult(run, tuple(self._draft_row(rows[item]) for item in expected))
+
+    def result(self, access: Access, run_id: str) -> ConsolidationResult:
+        """Read proof that all assets, rather than only the candidate run, completed."""
+        self.runtime._require_scope(access, "maintain", "consolidation_result")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._schema(db)
+            run = self.candidates._status(db, self.candidates._row(db, run_id))
+            result = self._result(db, run)
+            db.execute("COMMIT")
+            return result
+
+    def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
+        """Commit candidate success, profile effects and the full review queue atomically."""
+        if not isinstance(token, str):
+            raise MemoryFailure("invalid_candidate_batch")
+        return self._complete(access, run_id, token, drafts)
+
+    def recover(self, access: Access, run_id: str,
+                provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]]) -> ConsolidationResult:
+        """Repair legacy partial runs only when regenerated drafts match their committed candidates."""
+        self.runtime._require_scope(access, "accept", "consolidation_recover")
+        identity = self.runtime._require_scope(access, "maintain", "consolidation_recover")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            row = self.candidates._row(db, run_id)
+            run = self.candidates._status(db, row)
+            if row["owner"] != identity.client_id or run.state != "succeeded":
+                raise MemoryFailure("invalid_candidate_lease")
+            sources = self.candidates._sources(db, run.source_ids)
+        drafts = provider(CandidateLease(run, None, sources))
+        return self._complete(access, run_id, None, drafts)
+
+    def _complete(self, access: Access, run_id: str, token: str | None,
+                  drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
         self.runtime._require_scope(access, "accept", "consolidation_complete")
+        identity = self.runtime._require_scope(access, "maintain", "candidate_complete")
         if not isinstance(drafts, tuple) or not 1 <= len(drafts) <= 32:
             raise MemoryFailure("invalid_consolidation_batch")
         for draft in drafts:
@@ -163,56 +216,45 @@ class ConsolidationWorkflow:
             (draft.label + "\n" + draft.detail).strip() if draft.detail else draft.label,
             "user_statement" if draft.kind == "profile_tag" else "quoted",
             draft.sources, draft.disputed) for draft in drafts)
-        run = self.candidates.complete(access, run_id, token, mapped)
-        with self.runtime._connection() as db:
-            db.execute("BEGIN")
-            stored: list[sqlite3.Row] = []
-            if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_drafts_v1'").fetchone():
-                stored = db.execute("""SELECT candidate_id,run_id,kind,label,detail,category,confidence,state,
-                    proposal_id,created_at,sources FROM consolidation_drafts_v1 WHERE run_id=?
-                    ORDER BY created_at,candidate_id""", (run_id,)).fetchall()
-            db.execute("COMMIT")
-        if stored:
-            stored_rows = tuple(ConsolidationDraftRow(row["candidate_id"], row["run_id"], row["kind"], row["label"],
-                row["detail"], row["category"], float(row["confidence"]), row["state"], row["proposal_id"],
-                row["created_at"], tuple(EvidenceSpan(**span) for span in json.loads(row["sources"])))
-                for row in stored)
-            return ConsolidationResult(run, stored_rows)
-        now = datetime.now(timezone.utc).isoformat()
-        with self.runtime._connection() as db:
-            db.execute("BEGIN")
-            self._schema(db)
-            tier, whitelist = self._settings(db)
-            db.execute("COMMIT")
-        rows: list[ConsolidationDraftRow] = []
-        for draft, mapped_draft in zip(drafts, mapped):
-            candidate_id = self._candidate_id(self.runtime, run_id, mapped_draft, draft)
-            proposal_id: str | None = None
-            state = "disputed" if draft.disputed else "pending_review"
-            if tier != "manual" and draft.kind == "profile_tag" and not draft.disputed:
-                proposal = self.profile.decide(access, ProfileDecision(
-                    f"consolidation-{candidate_id}", f"consol-{candidate_id[:32]}", 0, "propose",
-                    ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources)))
-                proposal_id = proposal.tag_id
-                if tier == "auto" and draft.category in whitelist["profile_categories"]:
-                    self.profile.decide(access, ProfileDecision(
-                        f"consolidation-auto-{candidate_id}", proposal.tag_id, 1, "auto_confirm"))
-                    state = "merged"
-            elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
-                state = "merged"
-            rows.append(ConsolidationDraftRow(candidate_id, run_id, draft.kind, draft.label, draft.detail,
-                draft.category, draft.confidence, state, proposal_id, now, draft.sources))
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            lease_row = self.candidates._row(db, run_id)
+            run = self.candidates._complete(db, identity.client_id, run_id, token, mapped)
             self._schema(db)
-            for row in rows:
-                db.execute("""INSERT INTO consolidation_drafts_v1 VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(candidate_id) DO UPDATE SET state=excluded.state, created_at=excluded.created_at""",
-                    (row.candidate_id, row.run_id, row.kind, row.label, row.detail, row.category,
-                     row.confidence, row.state, row.proposal_id, row.created_at,
-                     _json([asdict(span) for span in row.sources])))
+            if db.execute("SELECT 1 FROM consolidation_results_v1 WHERE run_id=?", (run_id,)).fetchone():
+                return self._result(db, run)
+            tier, whitelist = self._settings(db)
+            now = datetime.now(timezone.utc).isoformat()
+            candidate_ids: list[str] = []
+            for draft, mapped_draft in zip(drafts, mapped):
+                candidate_id = self._candidate_id(self.runtime, run_id, mapped_draft, draft)
+                if candidate_id in candidate_ids:
+                    continue
+                candidate_ids.append(candidate_id)
+                if db.execute("SELECT 1 FROM consolidation_drafts_v1 WHERE candidate_id=?", (candidate_id,)).fetchone():
+                    continue
+                proposal_id: str | None = None
+                state = "disputed" if draft.disputed else "pending_review"
+                if tier != "manual" and draft.kind == "profile_tag" and not draft.disputed:
+                    proposal = self.profile._decide(db, ProfileDecision(
+                        f"consolidation-{candidate_id}", f"consol-{candidate_id[:32]}", 0, "propose",
+                        ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources)))
+                    proposal_id = proposal.tag_id
+                    if tier == "auto" and draft.category in whitelist["profile_categories"]:
+                        self.profile._decide(db, ProfileDecision(
+                            f"consolidation-auto-{candidate_id}", proposal.tag_id, 1, "auto_confirm"))
+                        state = "merged"
+                elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
+                    state = "merged"
+                db.execute("INSERT INTO consolidation_drafts_v1 VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (candidate_id, run_id, draft.kind, draft.label, draft.detail, draft.category,
+                     draft.confidence, state, proposal_id, now, _json([asdict(span) for span in draft.sources])))
+            db.execute("INSERT INTO consolidation_results_v1 VALUES (?,?)", (run_id, _json(candidate_ids)))
+            result = self._result(db, run)
+            if token is not None:
+                self.candidates._lease(lease_row, identity.client_id, token)
             db.execute("COMMIT")
-        return ConsolidationResult(run, tuple(rows))
+            return result
 
     def queue(self, access: Access, *, limit: int = 100, offset: int = 0) -> ConsolidationQueuePage:
         """Review queue read; drafts never enter recall."""
@@ -228,8 +270,5 @@ class ConsolidationWorkflow:
                 LIMIT ? OFFSET ?""", (limit + 1, offset)).fetchall()
             result: list[ConsolidationDraftRow] = []
             for row in rows[:limit]:
-                value = json.loads(row["sources"])
-                result.append(ConsolidationDraftRow(row["candidate_id"], row["run_id"], row["kind"], row["label"],
-                    row["detail"], row["category"], float(row["confidence"]), row["state"], row["proposal_id"],
-                    row["created_at"], tuple(EvidenceSpan(**span) for span in value)))
+                result.append(self._draft_row(row))
             return ConsolidationQueuePage(tuple(result), offset + limit if len(rows) > limit else None)

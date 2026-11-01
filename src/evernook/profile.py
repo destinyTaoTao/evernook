@@ -155,6 +155,13 @@ class ProfileRegistry:
     def decide(self, access: Access, request: ProfileDecision) -> ProfileRecord:
         """Only a trusted local caller may establish actual user intent; never expose as an LLM tool."""
         self.runtime._require_scope(access, "accept", "profile_decide")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            record = self._decide(db, request)
+            db.execute("COMMIT")
+            return record
+
+    def _decide(self, db: sqlite3.Connection, request: ProfileDecision) -> ProfileRecord:
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
                 or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm"}):
@@ -173,75 +180,72 @@ class ProfileRegistry:
                 raise MemoryFailure("profile_user_confirmation_required")
             _identifier(request.confirmation_id)
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
-        with self.runtime._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._schema(db)
-            existing = db.execute("SELECT fingerprint,record FROM profile_events_v1 WHERE request_id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("profile_request_conflict")
-                repeated = self._record(existing["record"])
-                self._sources(db, repeated.draft)
-                if repeated.state == "confirmed" and repeated.confirmation_id is not None:
-                    if self._confirmation(db, repeated.confirmation_id) != repeated.confirmation_version:
-                        raise MemoryFailure("profile_user_confirmation_required")
-                return repeated
-            previous = self._latest(db, request.tag_id)
-            revision = 0 if previous is None else previous.revision
-            if revision != request.expected_revision:
-                raise MemoryFailure("profile_revision_conflict")
-            if (request.action == "propose") != (previous is None):
-                raise MemoryFailure("invalid_profile_transition")
-            confirmation = None
-            if request.draft is not None:
-                draft = request.draft
+        self._schema(db)
+        existing = db.execute("SELECT fingerprint,record FROM profile_events_v1 WHERE request_id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("profile_request_conflict")
+            repeated = self._record(existing["record"])
+            self._sources(db, repeated.draft)
+            if repeated.state == "confirmed" and repeated.confirmation_id is not None:
+                if self._confirmation(db, repeated.confirmation_id) != repeated.confirmation_version:
+                    raise MemoryFailure("profile_user_confirmation_required")
+            return repeated
+        previous = self._latest(db, request.tag_id)
+        revision = 0 if previous is None else previous.revision
+        if revision != request.expected_revision:
+            raise MemoryFailure("profile_revision_conflict")
+        if (request.action == "propose") != (previous is None):
+            raise MemoryFailure("invalid_profile_transition")
+        confirmation = None
+        if request.draft is not None:
+            draft = request.draft
+            self._sources(db, draft)
+            content_revision = 1 if previous is None else previous.content_revision + 1
+            state = "draft"
+        else:
+            assert previous is not None and request.draft is None
+            draft, content_revision = previous.draft, previous.content_revision
+            if request.action != "auto_confirm":
+                assert request.confirmation_id is not None
+                confirmation = self._confirmation(db, request.confirmation_id)
+                approval = db.execute("SELECT tag_id,reviewed_revision,action FROM profile_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
+                binding = (request.tag_id, request.expected_revision, request.action)
+                if approval is not None and tuple(approval) != binding:
+                    raise MemoryFailure("profile_confirmation_conflict")
+                received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
+                if _time(received) < _time(previous.recorded_at):
+                    raise MemoryFailure("profile_confirmation_predates_review")
+            if request.action == "confirm":
+                if previous.state not in {"draft", "suppressed"}:
+                    raise MemoryFailure("invalid_profile_transition")
                 self._sources(db, draft)
-                content_revision = 1 if previous is None else previous.content_revision + 1
-                state = "draft"
+                state = "confirmed"
+            elif request.action == "auto_confirm":
+                # Whitelist guard: only the low-risk interest category may skip user review,
+                # so direct calls can never auto-confirm preferences, goals or boundaries.
+                if previous.state != "draft":
+                    raise MemoryFailure("invalid_profile_transition")
+                if previous.draft.category != "interest":
+                    raise MemoryFailure("profile_auto_confirm_limited")
+                self._sources(db, draft)
+                state = "confirmed"
+            elif request.action == "reject":
+                if previous.state != "draft":
+                    raise MemoryFailure("invalid_profile_transition")
+                state = "rejected"
             else:
-                assert previous is not None and request.draft is None
-                draft, content_revision = previous.draft, previous.content_revision
-                if request.action != "auto_confirm":
-                    assert request.confirmation_id is not None
-                    confirmation = self._confirmation(db, request.confirmation_id)
-                    approval = db.execute("SELECT tag_id,reviewed_revision,action FROM profile_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
-                    binding = (request.tag_id, request.expected_revision, request.action)
-                    if approval is not None and tuple(approval) != binding:
-                        raise MemoryFailure("profile_confirmation_conflict")
-                    received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
-                    if _time(received) < _time(previous.recorded_at):
-                        raise MemoryFailure("profile_confirmation_predates_review")
-                if request.action == "confirm":
-                    if previous.state not in {"draft", "suppressed"}:
-                        raise MemoryFailure("invalid_profile_transition")
-                    self._sources(db, draft)
-                    state = "confirmed"
-                elif request.action == "auto_confirm":
-                    # Whitelist guard: only the low-risk interest category may skip user review,
-                    # so direct calls can never auto-confirm preferences, goals or boundaries.
-                    if previous.state != "draft":
-                        raise MemoryFailure("invalid_profile_transition")
-                    if previous.draft.category != "interest":
-                        raise MemoryFailure("profile_auto_confirm_limited")
-                    self._sources(db, draft)
-                    state = "confirmed"
-                elif request.action == "reject":
-                    if previous.state != "draft":
-                        raise MemoryFailure("invalid_profile_transition")
-                    state = "rejected"
-                else:
-                    if previous.state != "confirmed":
-                        raise MemoryFailure("invalid_profile_transition")
-                    state = "suppressed"
-                if request.action != "auto_confirm":
-                    assert request.confirmation_id is not None
-                    db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
-            record = ProfileRecord(request.tag_id, revision + 1, content_revision, state, PROFILE_TAXONOMY_VERSION,
-                draft, datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
-            db.execute("INSERT INTO profile_events_v1 VALUES (?,?,?,?,?)",
-                (request.request_id, request.tag_id, revision + 1, fingerprint, _json(asdict(record))))
-            db.execute("COMMIT")
-            return record
+                if previous.state != "confirmed":
+                    raise MemoryFailure("invalid_profile_transition")
+                state = "suppressed"
+            if request.action != "auto_confirm":
+                assert request.confirmation_id is not None
+                db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
+        record = ProfileRecord(request.tag_id, revision + 1, content_revision, state, PROFILE_TAXONOMY_VERSION,
+            draft, datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
+        db.execute("INSERT INTO profile_events_v1 VALUES (?,?,?,?,?)",
+            (request.request_id, request.tag_id, revision + 1, fingerprint, _json(asdict(record))))
+        return record
 
     def read(self, access: Access, tag_id: str) -> ProfileView:
         self.runtime._require_scope(access, "recall", "profile_read")

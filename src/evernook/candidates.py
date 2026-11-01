@@ -179,34 +179,46 @@ class CandidateWorkflow:
 
     def complete(self, access: Access, run_id: str, token: str, drafts: tuple[CandidateDraft, ...]) -> CandidateRun:
         identity = self.runtime._require_scope(access, "maintain", "candidate_complete")
-        if not isinstance(token, str) or not isinstance(drafts, tuple) or len(drafts) > 32:
+        if not isinstance(token, str):
             raise MemoryFailure("invalid_candidate_batch")
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = self._row(db, run_id)
-            self._lease(row, identity.client_id, token)
-            if row["state"] not in {"running", "succeeded"}:
-                raise MemoryFailure("invalid_candidate_lease")
-            source_ids = tuple(item[0] for item in json.loads(row["sources"]))
-            sources = self._sources(db, source_ids)
-            if self._versions(sources) != row["sources"]:
-                raise MemoryFailure("stale_source")
-            encoded: set[str] = set()
-            for draft in drafts:
-                self._validate(draft, sources)
-                encoded.add(_json(asdict(draft)))
-            result_hash = self._hash(_json(sorted(encoded)))
-            if row["state"] == "succeeded":
-                if not hmac.compare_digest(bytes(row["result_hash"]), result_hash):
-                    raise MemoryFailure("candidate_result_conflict")
-                return self._status(db, row)
-            for payload in sorted(encoded):
-                candidate_id = self._hash(_json([run_id, payload])).hex()
-                db.execute("INSERT INTO fact_candidates_v1 VALUES (?,?,?)", (candidate_id, run_id, payload))
-            self._lease(row, identity.client_id, token)
-            db.execute("UPDATE candidate_runs_v1 SET state='succeeded',result_hash=?,lease_until=NULL WHERE id=?", (result_hash, run_id))
-            result = self._status(db, self._row(db, run_id))
+            result = self._complete(db, identity.client_id, run_id, token, drafts)
             db.execute("COMMIT")
+        return result
+
+    def _complete(self, db: sqlite3.Connection, owner: str, run_id: str, token: str | None,
+                  drafts: tuple[CandidateDraft, ...]) -> CandidateRun:
+        if not isinstance(drafts, tuple) or len(drafts) > 32:
+            raise MemoryFailure("invalid_candidate_batch")
+        row = self._row(db, run_id)
+        if token is None:
+            if row["owner"] != owner or row["state"] != "succeeded":
+                raise MemoryFailure("invalid_candidate_lease")
+        else:
+            self._lease(row, owner, token)
+        if row["state"] not in {"running", "succeeded"}:
+            raise MemoryFailure("invalid_candidate_lease")
+        source_ids = tuple(item[0] for item in json.loads(row["sources"]))
+        sources = self._sources(db, source_ids)
+        if self._versions(sources) != row["sources"]:
+            raise MemoryFailure("stale_source")
+        encoded: set[str] = set()
+        for draft in drafts:
+            self._validate(draft, sources)
+            encoded.add(_json(asdict(draft)))
+        result_hash = self._hash(_json(sorted(encoded)))
+        if row["state"] == "succeeded":
+            if not hmac.compare_digest(bytes(row["result_hash"]), result_hash):
+                raise MemoryFailure("candidate_result_conflict")
+            return self._status(db, row)
+        for payload in sorted(encoded):
+            candidate_id = self._hash(_json([run_id, payload])).hex()
+            db.execute("INSERT INTO fact_candidates_v1 VALUES (?,?,?)", (candidate_id, run_id, payload))
+        assert token is not None
+        self._lease(row, owner, token)
+        db.execute("UPDATE candidate_runs_v1 SET state='succeeded',result_hash=?,lease_until=NULL WHERE id=?", (result_hash, run_id))
+        result = self._status(db, self._row(db, run_id))
         return result
 
     def fail(self, access: Access, run_id: str, token: str, *, error_code: str = "extractor_failed") -> CandidateRun:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from contextlib import closing
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -147,6 +149,80 @@ class ConsolidationTests(unittest.TestCase):
         ))
         self.assertEqual(len({row.candidate_id for row in result.drafts}), 2)
         self.assertEqual(len({row.proposal_id for row in result.drafts}), 2)
+
+    def test_completion_faults_roll_back_all_assets_and_restart_retry_finishes_every_draft(self) -> None:
+        seed = self.source("合成：建表用画像来源")
+        initial = self.workflow.begin(self.worker, (seed.message_id,))
+        assert initial.token is not None
+        self.workflow.complete(self.worker, initial.status.run_id, initial.token,
+            (self.draft("profile_tag", "合成初始化画像", seed),))
+        for stage in ("candidate", "profile", "queue", "result"):
+            with self.subTest(stage=stage):
+                span = self.source(f"合成：{stage}阶段中断来源")
+                lease = self.workflow.begin(self.worker, (span.message_id,))
+                assert lease.token is not None
+                drafts = (self.draft("profile_tag", f"合成兴趣一{stage}", span),
+                          self.draft("profile_tag", f"合成兴趣二{stage}", span),
+                          self.draft("topic", f"合成话题{stage}", span))
+                before = len(self.workflow.queue(self.worker).rows)
+                target = {
+                    "candidate": "AFTER UPDATE ON candidate_runs_v1 WHEN NEW.state='succeeded'",
+                    "profile": "AFTER INSERT ON profile_events_v1",
+                    "queue": "AFTER INSERT ON consolidation_drafts_v1",
+                    "result": "AFTER INSERT ON consolidation_results_v1",
+                }[stage]
+                with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+                    db.execute(f"CREATE TRIGGER synthetic_completion_fault {target} "
+                               "BEGIN SELECT RAISE(ABORT,'synthetic completion fault'); END")
+                with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+                    self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+                reopened = ConsolidationWorkflow(MemoryRuntime(self.config))
+                self.assertEqual(reopened.status(self.worker, lease.status.run_id).state, "running")
+                self.assertEqual(len(reopened.queue(self.worker).rows), before)
+                with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+                    db.execute("DROP TRIGGER synthetic_completion_fault")
+                result = reopened.complete(self.worker, lease.status.run_id, lease.token, drafts)
+                self.assertEqual(len(result.drafts), 3)
+                self.assertEqual(len(reopened.queue(self.worker).rows), before + 3)
+                self.assertEqual(reopened.result(self.worker, lease.status.run_id), result)
+                for row in result.drafts[:2]:
+                    assert row.proposal_id is not None
+                    self.assertEqual(ProfileRegistry(reopened.runtime).read(self.worker, row.proposal_id).state, "draft")
+                self.assertEqual(reopened.complete(self.worker, lease.status.run_id, lease.token, drafts), result)
+
+    def test_retry_fills_missing_legacy_queue_rows_instead_of_treating_one_as_complete(self) -> None:
+        span = self.source("合成：旧部分完成来源")
+        lease = self.workflow.begin(self.worker, (span.message_id,))
+        assert lease.token is not None
+        drafts = (self.draft("topic", "合成保留草案", span), self.draft("topic", "合成缺失草案", span))
+        first = self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            db.execute("DELETE FROM consolidation_results_v1 WHERE run_id=?", (lease.status.run_id,))
+            db.execute("DELETE FROM consolidation_drafts_v1 WHERE candidate_id=?", (first.drafts[1].candidate_id,))
+            db.commit()
+        with self.assertRaisesRegex(MemoryFailure, "incomplete_consolidation"):
+            self.workflow.result(self.worker, lease.status.run_id)
+        result = self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        self.assertEqual([row.candidate_id for row in result.drafts], [row.candidate_id for row in first.drafts])
+        self.assertEqual(result.drafts[0], first.drafts[0])
+        self.assertEqual(len(self.workflow.queue(self.worker).rows), 2)
+
+    def test_lease_expiry_before_asset_commit_rolls_back_the_entire_completion(self) -> None:
+        import time
+        from unittest.mock import patch
+
+        span = self.source("合成：完整沉淀提交前租约过期")
+        lease = self.workflow.begin(self.worker, (span.message_id,))
+        assert lease.token is not None
+        drafts = (self.draft("profile_tag", "合成租约兴趣", span),)
+        now = time.time()
+        with patch("evernook.candidates.time.time", side_effect=(now, now, now + 7200)):
+            with self.assertRaisesRegex(MemoryFailure, "candidate_lease_expired"):
+                self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        self.assertEqual(self.workflow.queue(self.worker).rows, ())
+        self.assertEqual(self.workflow.status(self.worker, lease.status.run_id).state, "running")
+        result = self.workflow.complete(self.worker, lease.status.run_id, lease.token, drafts)
+        self.assertEqual(len(result.drafts), 1)
 
     def test_replay_returns_first_completion_despite_tier_change(self) -> None:
         span = self.source("合成：重放档位来源")

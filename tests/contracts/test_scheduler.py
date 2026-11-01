@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Callable
 import json
 from pathlib import Path
 import subprocess
@@ -11,7 +12,7 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from evernook import (ConsolidationDraft, ConsolidationWorkflow, Event, EvidenceSpan, HARNESS_DEFAULT_SCOPES,
+from evernook import (CandidateDraft, CandidateLease, ConsolidationDraft, ConsolidationWorkflow, Event, EvidenceSpan, HARNESS_DEFAULT_SCOPES,
                       MemoryFailure, MemoryRuntime, Source, initialize, pair_client)
 from evernook.scheduler import ConsolidationScheduler
 
@@ -42,8 +43,8 @@ class SchedulerTests(unittest.TestCase):
                       "2026-10-30T10:00:00+08:00", "complete", text)
         return self.runtime.submit(self.worker, event).message_id
 
-    def topic_provider(self, labels: dict[str, str]):
-        def provider(lease) -> tuple[ConsolidationDraft, ...]:
+    def topic_provider(self, labels: dict[str, str]) -> Callable[[CandidateLease], tuple[ConsolidationDraft, ...]]:
+        def provider(lease: CandidateLease) -> tuple[ConsolidationDraft, ...]:
             drafts = []
             for source in lease.sources:
                 text = source.message.event.text
@@ -176,10 +177,12 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(self.scheduler.status(self.access).processed, 1)
         self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["崩溃补跑话题"])
 
-    def test_failure_after_successful_completion_reports_original_error_and_recovers(self) -> None:
+    def test_failure_during_completion_rolls_back_assets_and_recovers(self) -> None:
         text = "合成：成功后失败来源"
         source = self.submit(text)
+        run_ids: list[str] = []
         def provider(lease: Any) -> tuple[ConsolidationDraft, ...]:
+            run_ids.append(lease.status.run_id)
             item = lease.sources[0]
             span = EvidenceSpan(item.message.receipt.message_id, item.state_version, "original",
                                 item.message.receipt.content_version, 0, len(item.message.event.text), item.message.event.text)
@@ -187,11 +190,30 @@ class SchedulerTests(unittest.TestCase):
         with patch.object(ConsolidationWorkflow, "_candidate_id", side_effect=ValueError("synthetic post-completion bug")):
             with self.assertRaises(ValueError):
                 self.scheduler.trigger(self.access, reason="manual", provider=provider)
-        run = self.workflow.status(self.access, self.workflow.begin(self.access, (source,),
-            processor_version="consolidation-scheduler-v1").status.run_id)
-        self.assertEqual(run.state, "succeeded")
+        run = self.workflow.status(self.access, run_ids[0])
+        self.assertEqual(run.state, "failed")
+        self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
         tick = self.scheduler.trigger(self.access, reason="manual", provider=provider)
         self.assertEqual((tick.processed, self.scheduler.status(self.access).processed), (1, 1))
+        self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["成功后失败话题"])
+
+    def test_legacy_candidate_success_recovers_assets_only_with_matching_regenerated_drafts(self) -> None:
+        text = "合成：旧候选成功但草案未落地"
+        source = self.submit(text)
+        lease = self.workflow.begin(self.access, (source,), processor_version="consolidation-scheduler-v1")
+        assert lease.token is not None
+        span = EvidenceSpan(source, 1, "original", 1, 0, len(text), text)
+        self.workflow.candidates.complete(self.access, lease.status.run_id, lease.token,
+            (CandidateDraft("合成原草案", "quoted", (span,)),))
+        with self.assertRaisesRegex(MemoryFailure, "candidate_result_conflict"):
+            self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({source: "合成不同草案"}))
+        self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(self.workflow.queue(self.access).rows, ())
+        tick = self.scheduler.trigger(self.access, reason="manual", provider=self.topic_provider({source: "合成原草案"}))
+        self.assertEqual((tick.processed, tick.remaining), (1, 0))
+        self.assertEqual([row.label for row in self.workflow.queue(self.access).rows], ["合成原草案"])
+        self.assertEqual(self.scheduler.trigger(self.access, reason="manual").processed, 0)
 
     def test_cli_end_to_end_configure_trigger_status(self) -> None:
         self.submit("合成：CLI 调度来源")
