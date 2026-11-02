@@ -4,8 +4,13 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
+from typing import Any
+from unittest.mock import patch
 
 from evernook import MemoryFailure
 
@@ -47,6 +52,27 @@ class LocalTokenizerTests(unittest.TestCase):
         self.tokenizer.write_text('{}', encoding="utf-8")
         with self.assertRaises(MemoryFailure):
             counter.count("hello")
+
+    def test_cancellation_reaps_the_running_local_counter_child(self) -> None:
+        from evernook.tokenizer import LocalTokenCounter
+
+        counter = LocalTokenCounter.from_file(self.config)
+        counter.cancel = threading.Event()
+        children: list[subprocess.Popen[str]] = []
+        original = subprocess.Popen
+        cancel = counter.cancel
+        def spawn(_arguments: object, **options: Any) -> subprocess.Popen[str]:
+            child = original([sys.executable, "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"], **options)
+            children.append(child)
+            timer = threading.Timer(0.2, cancel.set)
+            self.addCleanup(timer.cancel)
+            timer.start()
+            return child
+        with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn):
+            with self.assertRaisesRegex(MemoryFailure, "context_canceled"):
+                counter.count("hello")
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
 
     def test_host_context_uses_saved_policy_model_binding_and_request_ceiling(self) -> None:
         from evernook import MemoryRuntime, initialize

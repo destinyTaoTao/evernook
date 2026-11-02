@@ -40,7 +40,7 @@ async function memoryExtension(pi) {
 
 ## 注入、重扫与关闭
 
-普通召回返回来源后，重新读当前版本，展开至多 2048 code point，保留坐标、版本和缺口；总片段字符预算默认 12000。证据作为临时 `role=user` 的不可信历史数据进入当前上下文，不修改系统人设，不授予工具权限。此字符上限不等于 T16 的模型 tokenizer 预算；完整事实/置顶/context-builder 仍待原生接线。
+兼容模式普通召回返回来源后，重新读当前版本，展开至多 2048 code point，保留坐标、版本和缺口；总片段字符预算默认 12000。证据作为临时 `role=user` 的不可信历史数据进入当前上下文，不修改系统人设，不授予工具权限。显式设置 `contextConfig` 与 `memoryBudget` 可启用[同一核心的目标 tokenizer 预算模式](host-token-budget-v1.md)，组合完整事实/置顶/人设/画像并核对最终目标请求；字符兼容模式仍单独标识，不能冒充 token 预算。
 
 `/evernook-rescan`、返回对象的 `rescan(ctx)` 可重扫当前原生会话；`capture(ctx)` 依来源去重。`session_shutdown` 取消本扩展的在途请求并关闭连接，新的会话可惰性重连；返回对象的 `close()` 释放 hooks、连接和 provider。未验证全部第三方扩展组合或无限历史扫描性能。
 

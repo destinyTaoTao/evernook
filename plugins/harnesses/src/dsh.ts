@@ -192,7 +192,7 @@ export async function installMemory(ctx: Context, config: Config) {
           || context.agent.options.provider !== budget.provider) throw new Error('evernook:tokenizer_model_mismatch');
       let allowance = budget.memoryTokens;
       for (let attempt = 0; attempt < 3; attempt++) {
-        const bundle = await client.context(input.text, budget.modelId, allowance, new Date().toISOString());
+        const bundle = await client.context(input.text, budget.modelId, allowance, new Date().toISOString(), context.signal);
         context.signal?.throwIfAborted();
         if (bundle.counter_id !== target.counterId || target.count(bundle.payload) !== bundle.used_tokens
             || bundle.used_tokens > bundle.token_limit || bundle.token_limit > allowance) throw new Error('evernook:invalid_token_counter');

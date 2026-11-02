@@ -1,6 +1,6 @@
 # T16 显式预算的证据上下文构造增量
 
-`evernook.context.ContextBuilder` 组合显式必读、时态事实/未完成计划/争议、显式选择并经用户审查的经验及相关原文。所有输出都标为 `untrusted_memory_context`，不修改人设、执行规则或工具权限。[dsh 目标 tokenizer 模式](host-token-budget-v1.md)已复用该核心，并通过受信设置配置的只读 MCP `context` 工具调用；pi 仍保留基本字符上限注入。
+`evernook.context.ContextBuilder` 组合显式必读、时态事实/未完成计划/争议、显式选择并经用户审查的经验及相关原文。所有输出都标为 `untrusted_memory_context`，不修改人设、执行规则或工具权限。[dsh/pi 目标 tokenizer 模式](host-token-budget-v1.md)复用该核心，并通过受信设置配置的只读 MCP `context` 工具调用；两个入口的字符兼容模式另行标识。
 
 ## 必填策略与真实计数
 
@@ -29,4 +29,4 @@
 
 嵌入后端接口增加可选 `cancel`；自定义backend须接受并正确处理这个参数。普通MCP/CLI不接收或持有Python Event，默认调用保持兼容的无取消行为。
 
-dsh 已有显式本地目标 tokenizer 接线和每轮构造注入；真实部署的 tokenizer/provider 模板、pi 接线、多轮主体解析、性能及系统断网验收仍需后续工作。当前构造器没有启用日常 profile。
+dsh/pi 已有显式本地目标 tokenizer 接线和每轮构造注入；真实部署的 tokenizer/provider 模板、多轮主体解析、性能及系统断网验收仍需后续工作。当前构造器没有启用日常 profile。

@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import threading
+import time
 
 from .models import MemoryFailure
 from .paths import external
@@ -24,6 +26,7 @@ class LocalTokenCounter:
         self.model_id = model_id
         self.tokenizer_file, self.config_file = external(tokenizer_file), external(config_file)
         self.tokenizer_sha256, self.config_sha256 = tokenizer_sha256, config_sha256
+        self.cancel: threading.Event | None = None
         self.counter_id = "local-tokenizer-v1-" + hashlib.sha256(
             _json([model_id, tokenizer_sha256, config_sha256, "tokenizers-js-0.2.0"]).encode()).hexdigest()
 
@@ -44,9 +47,31 @@ class LocalTokenCounter:
         payload = _json({"text": text, "package_dir": str(self.package_dir), "tokenizer_file": str(self.tokenizer_file),
             "config_file": str(self.config_file), "tokenizer_sha256": self.tokenizer_sha256, "config_sha256": self.config_sha256})
         try:
-            result = subprocess.run([str(self.node), str(Path(__file__).with_name("tokenizer_worker.mjs"))],
-                input=payload, encoding="utf-8", capture_output=True, timeout=10, check=True)
-            value = json.loads(result.stdout)
+            if self.cancel is not None and self.cancel.is_set():
+                raise MemoryFailure("context_canceled")
+            with subprocess.Popen([str(self.node), str(Path(__file__).with_name("tokenizer_worker.mjs"))],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8") as process:
+                deadline = time.monotonic() + 10
+                sent = False
+                try:
+                    while True:
+                        if self.cancel is not None and self.cancel.is_set():
+                            raise MemoryFailure("context_canceled")
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise MemoryFailure("tokenizer_unavailable")
+                        try:
+                            output, _ = process.communicate(None if sent else payload, timeout=min(0.1, remaining))
+                            break
+                        except subprocess.TimeoutExpired:
+                            sent = True
+                    if process.returncode != 0:
+                        raise MemoryFailure("tokenizer_unavailable")
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+            value = json.loads(output)
             if (not isinstance(value, dict) or set(value) != {"count"} or type(value["count"]) is not int
                     or value["count"] < 0 or (bool(text) and value["count"] == 0)):
                 raise MemoryFailure("invalid_token_counter")

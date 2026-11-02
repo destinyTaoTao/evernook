@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import threading
 from typing import Any
 
 import anyio
@@ -219,7 +220,17 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
                 raise MemoryFailure("unknown_tool")
             model, invoke, _ = operation
             arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
-            result = await anyio.to_thread.run_sync(invoke, arguments)
+            result: object
+            if params.name == "evernook_v1_context" and host_context is not None:
+                selected_context = host_context
+                cancel = threading.Event()
+                try:
+                    result = await anyio.to_thread.run_sync(
+                        lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                finally:
+                    cancel.set()
+            else:
+                result = await anyio.to_thread.run_sync(invoke, arguments)
             if is_dataclass(result) and not isinstance(result, type):
                 result = asdict(result)
             payload: dict[str, Any] = {"contract_version": 1, "ok": True, "result": result}

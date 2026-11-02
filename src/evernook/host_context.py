@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from pathlib import Path
+import threading
 from typing import Any
 
 from .context import ContextBuilder, ContextBundle, ContextPolicy
@@ -51,9 +52,10 @@ class HostContext:
                 "saved_policy": asdict(policy), "recommended_policy": recommended}
 
     def build(self, access: Access, query: str, *, model_id: str, max_tokens: int,
-              as_of: str, mode: str, timeout: float) -> ContextBundle:
+              as_of: str, mode: str, timeout: float, cancel: threading.Event | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "host_context_build")
         policy, counter = self._configured()
+        counter.cancel = cancel
         if model_id != counter.model_id:
             raise MemoryFailure("tokenizer_model_mismatch")
         if type(max_tokens) is not int or not 128 <= max_tokens <= 131072:
@@ -62,4 +64,4 @@ class HostContext:
             deep_tokens=min(policy.deep_tokens, max_tokens), pinned_tokens=min(policy.pinned_tokens, max_tokens))
         return ContextBuilder(self.runtime, self.recall, effective, counter).build(
             access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
-            query_omitted=len(query) > 256)
+            query_omitted=len(query) > 256, cancel=cancel)

@@ -87,9 +87,9 @@ export class MemoryClient {
     try { await this.client.connect(this.transport); }
     catch { await this.close(); throw new Error('evernook:connection_failed'); }
   }
-  async call<T>(name: string, args: Record<string, unknown>): Promise<T> {
+  async call<T>(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     try {
-      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args });
+      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args }, { signal });
       const payload = result.structuredContent as { ok?: boolean; result?: T; error?: { code?: string } } | undefined;
       if (!payload?.ok || result.isError) {
         const code = payload?.error?.code;
@@ -97,6 +97,7 @@ export class MemoryClient {
       }
       return payload.result as T;
     } catch (error) {
+      if (signal?.aborted) throw new Error('evernook:operation_canceled');
       if (error instanceof Error && /^evernook:[a-z_]+$/.test(error.message)) throw error;
       throw new Error('evernook:transport_failed');
     }
@@ -107,8 +108,8 @@ export class MemoryClient {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
   recall(query: string, limit = 8) { return this.call<RecallResult>('recall', { query, limit }); }
-  context(query: string, model_id: string, max_tokens: number, as_of: string) {
-    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal' });
+  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal) {
+    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal' }, signal);
   }
   read(message_id: string) { return this.call<{ event: Event; receipt: Receipt & { content_version: number } }>('read', { message_id }); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }
