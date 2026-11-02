@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { PassThrough } from 'node:stream';
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
@@ -18,6 +21,7 @@ import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools';
 import { installMemory } from '../src/dsh.ts';
 import type { Config } from '../src/dsh.ts';
 import { Tokenizer } from '@huggingface/tokenizers';
+import { MemoryClient } from '../src/client.ts';
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 if (!python) throw new Error('Set EVERNOOK_TEST_PYTHON to the external dev interpreter');
@@ -30,15 +34,19 @@ class Synthetic extends LlmAdapter {
   reply = '合成回复🙂\r\n37.50元。';
   inspect?: (options: GenerateOptions) => void;
   toolOnce = false;
+  toolName = 'synthetic-tool';
+  toolArguments = '{"amount":37.50}';
+  private toolUsed = false;
   interrupt = false;
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
     this.inspect?.(options);
-    if (this.toolOnce && this.requests.length === 1) {
+    if (this.toolOnce && !this.toolUsed) {
+      this.toolUsed = true;
       const id = ToolCallId('synthetic-call');
       yield { type: 'block-start', index: 0, blockType: 'tool-call' };
-      yield { type: 'tool-call-delta', index: 0, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' };
-      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } };
+      yield { type: 'tool-call-delta', index: 0, id, name: this.toolName, argumentsDelta: this.toolArguments };
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: this.toolName, arguments: this.toolArguments } };
       yield { type: 'finish', reason: { kind: 'tool-calls' } };
       return;
     }
@@ -238,6 +246,379 @@ test('request counting matches the actual SDK file and tool projection received 
     assert.equal(adapter.requests.length, 2);
     assert.ok(adapter.requests.every(request => !request.messages.flatMap(message => message.content).some(block => block.type === 'file')));
   } finally { await handle.dispose(); await host.close(); }
+});
+
+test('native user confirmation pins exact long words immediately and pages them through ordinary recall', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('confirmed-pin');
+  const ordinary = new MemoryClient(host.config);
+  await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const previews: unknown[] = [];
+  const receipts: unknown[] = [];
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, {
+    access, onReview: async review => { previews.push(review); }, onResult: async result => { receipts.push(result); } });
+  try {
+    const words = '合成37.50元🙂\r\ne\u0301'.repeat(400);
+    handle.agent.followup(user('long-words', words));
+    await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id;
+    assert.ok(id);
+    const review = await maintenance.propose(handle.agent, { kind: 'pin', message_id: id });
+    assert.equal(previews.length, 1);
+    const before = await ordinary.call<{ ledger: { important_items: number } }>('status', {});
+    assert.equal(before.ledger.important_items, 0);
+    adapter.reply = review.confirm_command;
+    handle.agent.followup(user('not-confirmed', '合成：先别执行。'));
+    await handle.agent.whenIdle();
+    assert.equal((await ordinary.call<{ ledger: { important_items: number } }>('status', {})).ledger.important_items, 0);
+    handle.agent.followup(user('confirm-pin', review.confirm_command));
+    await handle.agent.whenIdle();
+    const outcome = maintenance.status(review.proposal_id);
+    assert.equal(outcome?.state, 'completed');
+    const importantId = outcome?.result?.important_id;
+    assert.ok(typeof importantId === 'string');
+    let cursor = 0;
+    let restored = '';
+    for (;;) {
+      const page = await maintenance.readImportant(importantId, cursor, 512);
+      restored += page.text;
+      if (page.next_cursor === null) break;
+      cursor = page.next_cursor;
+    }
+    assert.equal(restored, words);
+    assert.equal(receipts.length, 1);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('native confirmation suppresses a source while the ordinary model identity remains unable to maintain it', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const host = await boot(new Synthetic(), true);
+  const handle = await host.create('confirmed-suppression');
+  const ordinary = new MemoryClient(host.config);
+  await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access,
+    onReview: async () => {}, onResult: async () => {} });
+  try {
+    handle.agent.followup(user('suppress-source', 'hello synthetic old'));
+    await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id;
+    assert.ok(id);
+    const review = await maintenance.propose(handle.agent, { kind: 'suppress', message_id: id });
+    assert.equal((await ordinary.read(id)).event.text, 'hello synthetic old');
+    handle.agent.followup(user('confirm-suppress', review.confirm_command));
+    await handle.agent.whenIdle();
+    assert.equal(maintenance.status(review.proposal_id)?.state, 'completed');
+    await assert.rejects(ordinary.read(id), /message_not_found/);
+    assert.equal((await ordinary.call<{ status: string }>('state', { message_id: id })).status, 'suppressed');
+    const confirmation = host.memory.status(handle.agent.session.id).latest_input?.message_id;
+    await assert.rejects(ordinary.call('change', { change: { request_id: 'model-cannot-maintain', target_id: id,
+      expected_version: 2, action: 'revoke', evidence_id: confirmation, reason: 'synthetic forbidden' } }), /permission_denied/);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('native purge needs an exact preview and later user confirmation and reports retained external copies', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const host = await boot(new Synthetic(), true);
+  const handle = await host.create('confirmed-purge');
+  const ordinary = new MemoryClient(host.config);
+  await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access,
+    onReview: async () => {}, onResult: async () => {} });
+  try {
+    handle.agent.followup(user('delete-source', 'hello synthetic delete'));
+    await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id;
+    assert.ok(id);
+    const original = await ordinary.read(id);
+    const review = await maintenance.propose(handle.agent, { kind: 'purge', source_ids: [id] });
+    assert.deepEqual(review.residuals, ['existing_archives_and_backups_retained', 'host_copies_not_controlled']);
+    assert.equal((await ordinary.read(id)).event.text, 'hello synthetic delete');
+    handle.agent.followup(user('confirm-purge', review.confirm_command));
+    await handle.agent.whenIdle();
+    const outcome = maintenance.status(review.proposal_id);
+    assert.equal(outcome?.state, 'completed');
+    assert.equal(outcome?.result?.state, 'completed');
+    assert.deepEqual(outcome?.result?.residuals, review.residuals);
+    await assert.rejects(ordinary.read(id), /message_not_found/);
+    await assert.rejects(ordinary.remember(original.event), /source_purged/);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('a reviewed operation remains bound to its original runtime when host configuration objects change', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const host = await boot(new Synthetic(), true);
+  const handle = await host.create('maintenance-route');
+  const ordinary = new MemoryClient(host.config);
+  await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const options = { access, onReview: async () => {}, onResult: async () => {} };
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, options);
+  try {
+    handle.agent.followup(user('route-source', 'synthetic route evidence'));
+    await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id;
+    assert.ok(id);
+    const review = await maintenance.propose(handle.agent, { kind: 'pin', message_id: id });
+    const clone = join(host.root, 'clone');
+    const cloneScript = [
+      'import json,shutil,sqlite3,sys', 'from pathlib import Path', 'from evernook import initialize',
+      'source=Path(sys.argv[1]).parent; target=Path(sys.argv[2])',
+      "initialize(target,client_id='seed',entry='seed')",
+      "a=sqlite3.connect(source/'memory.sqlite3'); b=sqlite3.connect(target/'memory.sqlite3'); a.backup(b); b.close(); a.close()",
+      "for name in ('idempotency.key','client.json','mcp-access-maintenance.json'): shutil.copyfile(source/name,target/name)",
+    ].join('\n');
+    execFileSync(python!, ['-c', cloneScript, host.config.config, clone], { cwd: checkout });
+    host.config.config = join(clone, 'runtime.json');
+    options.access = join(clone, 'mcp-access-maintenance.json');
+    handle.agent.followup(user('route-confirm', review.confirm_command));
+    await handle.agent.whenIdle();
+    assert.equal((await ordinary.call<{ ledger: { important_items: number } }>('status', {})).ledger.important_items, 1);
+    const clonedStatus = JSON.parse(execFileSync(python!, ['-m', 'evernook.cli', 'status', '--config', host.config.config,
+      '--access', options.access], { cwd: checkout, encoding: 'utf8' })) as { result: { ledger: { important_items: number } } };
+    assert.equal(clonedStatus.result.ledger.important_items, 0);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('native profile revision confirmation and suppression use current core versions in the next context', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('profile-maintenance');
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access, onReview: async () => {}, onResult: async () => {} });
+  const profile = () => JSON.parse(execFileSync(python!, ['-m', 'evernook.cli', 'profile-read', '--config', host.config.config,
+    '--access', access], { cwd: checkout, input: JSON.stringify({ tag_id: 'native-interest' }), encoding: 'utf8' })).result;
+  const labels = () => {
+    const memory = adapter.requests.at(-1)?.messages.flatMap(message => message.content).filter(block => block.type === 'text')
+      .find(block => block.text.includes('untrusted_memory_context'));
+    assert.ok(memory);
+    const payload: { items: { kind: string; data: { label?: string } }[] } = JSON.parse(memory.text.slice(memory.text.indexOf('{')));
+    return payload.items.filter(item => item.kind === 'profile').map(item => item.data.label);
+  };
+  try {
+    const policy = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+    policy.policy.normal_tokens = 2048; policy.policy.deep_tokens = 4096; policy.policy.profile_tokens = 1000;
+    await writeFile(host.config.contextConfig!, JSON.stringify(policy)); host.config.memoryBudget!.memoryTokens = 2048;
+    const seed = [
+      'import json,sys', 'from pathlib import Path', 'from evernook import Access,MemoryRuntime,Event,Source,EvidenceSpan',
+      'from evernook.profile import ProfileRegistry,ProfileDraft,ProfileDecision',
+      'r=MemoryRuntime(Path(sys.argv[1]))', "clients=json.loads((r.root/'client.json').read_text())['clients']",
+      "a=Access('synthetic-owner',next(c['token'] for c in clients if c['client_id']=='synthetic-owner'))",
+      "s=r.submit(a,Event(Source('owner','profile','main','1'),'user',1,None,'complete','hello old preference'))",
+      "p=ProfileRegistry(r); span=EvidenceSpan(s.message_id,1,'original',1,0,len('hello old preference'),'hello old preference')",
+      "p.decide(a,ProfileDecision('native-profile-propose','native-interest',0,'propose',ProfileDraft('interest','old preference',0.8,(span,))))",
+      "c=r.submit(a,Event(Source('owner','profile','main','2'),'user',2,None,'complete','synthetic confirm profile'))",
+      "p.decide(a,ProfileDecision('native-profile-confirm','native-interest',1,'confirm',confirmation_id=c.message_id))",
+    ].join('\n');
+    execFileSync(python!, ['-c', seed, host.config.config], { cwd: checkout });
+    handle.agent.followup(user('profile-new-source', 'hello new preference')); await handle.agent.whenIdle();
+    const source = host.memory.status(handle.agent.session.id).latest_input?.message_id; assert.ok(source);
+    const revised = await maintenance.propose(handle.agent, { kind: 'profile', tag_id: 'native-interest', action: 'revise',
+      draft: { category: 'interest', label: 'new preference', confidence: 0.9, sources: [{ message_id: source,
+        state_version: 1, representation: 'original', content_version: 1, start: 0, end: 20, expected_text: 'hello new preference' }] } });
+    handle.agent.followup(user('profile-revise-confirm', revised.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(profile().state, 'draft');
+    const confirmed = await maintenance.propose(handle.agent, { kind: 'profile', tag_id: 'native-interest', action: 'confirm' });
+    handle.agent.followup(user('profile-confirm', confirmed.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(profile().state, 'confirmed');
+    assert.ok(labels().includes('new preference'));
+    const suppressed = await maintenance.propose(handle.agent, { kind: 'profile', tag_id: 'native-interest', action: 'suppress' });
+    handle.agent.followup(user('profile-suppress-confirm', suppressed.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(profile().state, 'suppressed');
+    assert.ok(!labels().includes('new preference'));
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await handle.dispose(); await host.close(); }
+});
+
+test('native fact correction preserves time and later source suppression cannot revive its older value', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('fact-maintenance');
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access, onReview: async () => {}, onResult: async () => {} });
+  const fact = () => JSON.parse(execFileSync(python!, ['-m', 'evernook.cli', 'fact-query', '--config', host.config.config,
+    '--access', access], { cwd: checkout, input: JSON.stringify({ subject_id: 'synthetic-user', predicate: 'home' }), encoding: 'utf8' })).result;
+  try {
+    const seed = [
+      'import json,sys', 'from pathlib import Path', 'from evernook import Access,MemoryRuntime,Event,Source,EvidenceSpan,CandidateDraft,CandidateWorkflow',
+      'from evernook.facts import FactRegistry,FactDecision',
+      'r=MemoryRuntime(Path(sys.argv[1]))', "clients=json.loads((r.root/'client.json').read_text())['clients']",
+      "a=Access('synthetic-owner',next(c['token'] for c in clients if c['client_id']=='synthetic-owner'))",
+      "def save(n,text): return r.submit(a,Event(Source('owner','fact','main',str(n)),'user',n,None,'complete',text)).message_id",
+      'w=CandidateWorkflow(r)',
+      'def candidate(n,text):',
+      ' s=save(n,text); lease=w.begin(a,(s,),processor_version="native-fact-test")',
+      ' w.complete(a,lease.status.run_id,lease.token,(CandidateDraft(text,"user_statement",(EvidenceSpan(s,1,"original",1,0,len(text),text),)),))',
+      ' return s,w.candidates(a,lease.status.run_id)[0]',
+      "old_source,old=candidate(1,'hello old city')",
+      "FactRegistry(r).decide(a,FactDecision('old-fact','synthetic-user','home',old.candidate_id,save(2,'synthetic confirm old city'),0,'assert','2026-01-01T00:00:00+00:00'))",
+      "new_source,new=candidate(3,'hello new city')",
+      "print(json.dumps({'source_id':new_source,'candidate_id':new.candidate_id,'run_id':new.run_id}))",
+    ].join('\n');
+    const seeded = JSON.parse(execFileSync(python!, ['-c', seed, host.config.config], { cwd: checkout, encoding: 'utf8' }));
+    const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+    saved.policy.normal_tokens = 4096; saved.policy.deep_tokens = 8192; saved.policy.fact_keys = [['synthetic-user', 'home']];
+    await writeFile(host.config.contextConfig!, JSON.stringify(saved)); host.config.memoryBudget!.memoryTokens = 4096;
+    const review = await maintenance.propose(handle.agent, { kind: 'fact_correction', subject_id: 'synthetic-user', predicate: 'home',
+      candidate_id: seeded.candidate_id, run_id: seeded.run_id });
+    assert.equal(fact().fact.text, 'hello old city');
+    handle.agent.followup(user('fact-correct-confirm', review.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(maintenance.status(review.proposal_id)?.state, 'completed');
+    assert.equal(fact().fact.text, 'hello new city');
+    assert.equal(fact().fact.valid_from, '2026-01-01T00:00:00+00:00');
+    const suppress = await maintenance.propose(handle.agent, { kind: 'suppress', message_id: seeded.source_id });
+    handle.agent.followup(user('fact-source-suppress-confirm', suppress.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(fact().state, 'source_unavailable');
+    assert.equal(fact().fact, null);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await handle.dispose(); await host.close(); }
+});
+
+test('the actual native model tool can only propose and the next native user must confirm', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('model-proposal-only');
+  const ordinary = new MemoryClient(host.config); await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  let preview: { proposal_id: string; confirm_command: string } | undefined;
+  let executed = 0;
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access,
+    onReview: async review => { preview = review; }, onResult: async () => { executed++; } });
+  try {
+    handle.agent.followup(user('tool-source', 'hello user evidence')); await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id; assert.ok(id);
+    adapter.toolOnce = true; adapter.toolName = 'evernook_memory_propose';
+    adapter.toolArguments = JSON.stringify({ proposal: JSON.stringify({ kind: 'suppress', message_id: id }) });
+    handle.agent.followup(user('request-proposal', '合成：请提出抑制建议，等待我的确认。')); await handle.agent.whenIdle();
+    assert.ok(preview);
+    assert.equal(executed, 0);
+    assert.equal((await ordinary.read(id)).event.text, 'hello user evidence');
+    handle.agent.followup(user('tool-confirm', preview.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(executed, 1);
+    await assert.rejects(ordinary.read(id), /message_not_found/);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('native source correction uses the reviewed user replacement rather than the confirmation command as text', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const host = await boot(new Synthetic(), true);
+  const handle = await host.create('source-correction');
+  const ordinary = new MemoryClient(host.config); await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access, onReview: async () => {}, onResult: async () => {} });
+  try {
+    handle.agent.followup(user('old-source', 'hello old value')); await handle.agent.whenIdle();
+    const target = host.memory.status(handle.agent.session.id).latest_input?.message_id; assert.ok(target);
+    handle.agent.followup(user('replacement-source', 'hello corrected value')); await handle.agent.whenIdle();
+    const replacement = host.memory.status(handle.agent.session.id).latest_input?.message_id; assert.ok(replacement);
+    const review = await maintenance.propose(handle.agent, { kind: 'correct_source', message_id: target, replacement_id: replacement });
+    handle.agent.followup(user('source-correct-confirm', review.confirm_command)); await handle.agent.whenIdle();
+    assert.equal(maintenance.status(review.proposal_id)?.state, 'completed');
+    const state = await ordinary.call<{ status: string; replacement_id: string }>('state', { message_id: target });
+    assert.equal(state.status, 'corrected'); assert.equal(state.replacement_id, replacement);
+    assert.equal((await ordinary.read(replacement)).event.text, 'hello corrected value');
+    await assert.rejects(ordinary.read(target), /message_not_found/);
+    assert.deepEqual(host.errors, []);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('a failed trusted review cannot authorize maintenance or expose renderer diagnostics to the model', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const host = await boot(new Synthetic(), true);
+  const handle = await host.create('failed-review');
+  const ordinary = new MemoryClient(host.config); await ordinary.connect();
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  let reviewId = '';
+  const canceled = new AbortController();
+  let rejectReview = true;
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access,
+    onReview: async review => { reviewId = review.proposal_id;
+      if (rejectReview) throw new Error('synthetic private renderer diagnostic');
+      canceled.abort();
+    }, onResult: async () => {} });
+  try {
+    handle.agent.followup(user('failed-review-source', 'hello exact words')); await handle.agent.whenIdle();
+    const id = host.memory.status(handle.agent.session.id).latest_input?.message_id; assert.ok(id);
+    await assert.rejects(maintenance.propose(handle.agent, { kind: 'pin', message_id: id }), /evernook:maintenance_review_unavailable/);
+    handle.agent.followup(user('failed-review-confirm', '/memory confirm ' + reviewId)); await handle.agent.whenIdle();
+    assert.equal((await ordinary.call<{ ledger: { important_items: number } }>('status', {})).ledger.important_items, 0);
+    assert.equal(maintenance.status(reviewId), undefined);
+    rejectReview = false;
+    await assert.rejects(maintenance.propose(handle.agent, { kind: 'pin', message_id: id }, canceled.signal));
+    handle.agent.followup(user('canceled-review-confirm', '/memory confirm ' + reviewId)); await handle.agent.whenIdle();
+    assert.equal(maintenance.status(reviewId), undefined);
+    assert.equal((await ordinary.call<{ ledger: { important_items: number } }>('status', {})).ledger.important_items, 0);
+  } finally { await maintenance.close(); await ordinary.close(); await handle.dispose(); await host.close(); }
+});
+
+test('a lost CLI receipt retries the same committed change only after another actual user confirmation', async () => {
+  const { installDshMaintenance } = await import('../src/dsh-maintenance.ts');
+  const adapter = new Synthetic();
+  const host = await boot(adapter);
+  const handle = await host.create('maintenance-lost-receipt');
+  const access = join(host.root, 'memory/mcp-access-maintenance.json');
+  execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='dsh-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", host.config.config, access], { cwd: checkout });
+  const maintenance = await installDshMaintenance(host.ctx, host.config, host.memory, { access,
+    onReview: async () => {}, onResult: async () => {} });
+  const spawn = childProcess.spawn;
+  let dropReceipt = true;
+  try {
+    handle.agent.followup(user('lost-receipt-source', '合成：原文需要抑制'));
+    await handle.agent.whenIdle();
+    const id = host.rows().find(row => row.event.text === '合成：原文需要抑制')!.receipt.message_id;
+    const review = await maintenance.propose(handle.agent, { kind: 'suppress', message_id: id });
+    // Keep the real child and committed database; lose only the first CLI response bytes.
+    childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
+      const child = spawn(...args);
+      if (dropReceipt && Array.isArray(args[1]) && args[1].includes('change')) {
+        dropReceipt = false;
+        child.stdout?.resume();
+        child.stdout = new PassThrough();
+      }
+      return child;
+    }) as typeof spawn;
+    syncBuiltinESMExports();
+    handle.agent.followup(user('lost-receipt-confirm-1', review.confirm_command));
+    await handle.agent.whenIdle();
+    assert.equal(dropReceipt, false);
+    assert.equal(maintenance.status(review.proposal_id)?.state, 'failed');
+    const confirmation = maintenance.status(review.proposal_id)?.confirmation_id;
+    const db = new DatabaseSync(join(host.root, 'memory/memory.sqlite3'), { readOnly: true });
+    try {
+      assert.equal(db.prepare('SELECT count(*) AS n FROM changes WHERE target_id=?').get(id)?.n, 1);
+      handle.agent.followup(user('lost-receipt-confirm-2', review.confirm_command));
+      await handle.agent.whenIdle();
+      assert.equal(maintenance.status(review.proposal_id)?.state, 'completed');
+      assert.equal(maintenance.status(review.proposal_id)?.confirmation_id, confirmation);
+      assert.equal(db.prepare('SELECT count(*) AS n FROM changes WHERE target_id=?').get(id)?.n, 1);
+      const result = maintenance.status(review.proposal_id)?.result;
+      assert.equal(result?.status, 'suppressed');
+      assert.equal(result?.version, 2);
+    } finally { db.close(); }
+  } finally {
+    childProcess.spawn = spawn; syncBuiltinESMExports();
+    await maintenance.close(); await handle.dispose(); await host.close();
+  }
 });
 
 test('real native host saves user input before provider and injects sourced evidence as user context in another session', async () => {

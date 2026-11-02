@@ -111,6 +111,6 @@ export class MemoryClient {
   context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal) {
     return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal' }, signal);
   }
-  read(message_id: string) { return this.call<{ event: Event; receipt: Receipt & { content_version: number } }>('read', { message_id }); }
+  read(message_id: string, signal?: AbortSignal) { return this.call<{ event: Event; receipt: Receipt & { content_version: number; received_at: string } }>('read', { message_id }, signal); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }
 }

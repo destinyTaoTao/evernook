@@ -467,7 +467,8 @@ class MemoryRuntime:
 
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
-        return {"contract_version": 1, "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
+        return {"contract_version": 1, "client_id": identity.client_id, "entry": identity.entry,
+                "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
                 "lexical": True, "lexical_normalization_version": NORMALIZATION_IDENTITY,
                 "archive_review": identity.archive_review, "scopes": sorted(identity.scopes),
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}

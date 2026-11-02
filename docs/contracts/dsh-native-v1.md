@@ -41,6 +41,8 @@ await ctx.plugin(memory, {
 
 ## 重扫与边界
 
+显式 `installDshMaintenance` 可接入[确认式维护](host-maintenance-v1.md)：模型只能提议，可信宿主展示预览，后续同会话真实用户输入确认后由独立维护身份执行。重要原话分页、来源更正/抑制、画像修订/确认和既有事实候选更正复用核心；普通采集身份不提升权限。
+
 `installMemory(ctx, config)` 返回 `capture(session)`、`rescan(sessionId)` 和 `close()`。重扫通过真实只读 persistence handle 读取，来源冲突不会被覆盖；重连新适配器和重复重扫必须保持消息唯一。
 
 dsh 会先留存用户输入及运行记录，插件无法撤回宿主已保存的明文，也不能覆盖其历史 UI、日志或其他插件的显示通道。凭证检测仍是有限规则；保险库未启用时，检测到的原件不保存、不注入，敏感输入/输出会明确阻断。宿主收到普通记忆后的模型出机策略由宿主负责。

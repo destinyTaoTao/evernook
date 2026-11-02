@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 from typing import Any, NoReturn
 
-from .models import Event, MemoryFailure, Source
+from .models import Change, Event, ImportantMark, MemoryFailure, Source
 from .runtime import MemoryRuntime, initialize, pair_client
 from .embedding import LocalMiniLM
 from .semantic import SemanticRecall
@@ -96,6 +96,8 @@ def _parser() -> Parser:
     backup_retain.add_argument("--apply", action="store_true")
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
+        ("mark-important", "Trusted exact important-word mark using JSON stdin"),
+        ("change", "Trusted source correction, suppression or revocation using JSON stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
         ("read", "Read ordinary evidence by ID"),
         ("state", "Read evidence visibility and version"),
@@ -107,6 +109,7 @@ def _parser() -> Parser:
         ("semantic-status", "Report semantic coverage for the configured model space"),
         ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
         ("fact-query", "Read current/historical/planned facts using JSON stdin"),
+        ("candidate-list", "Read a completed candidate run for trusted review using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
         ("maintenance-configure", "Configure explicit fixed-offset extractive navigation; no OS scheduler"),
         ("maintenance-pause", "Pause/resume navigation without pausing raw collection"),
@@ -222,6 +225,13 @@ def _execute(args: argparse.Namespace) -> object:
         return configure_audit(args.config, retention_days=args.retention_days)
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command == "mark-important":
+        return runtime.mark_important(access, ImportantMark(**_input()))
+    if args.command == "change":
+        return runtime.change(access, Change(**_input()))
+    if args.command == "candidate-list":
+        from .candidates import CandidateWorkflow
+        return {"candidates": [asdict(candidate) for candidate in CandidateWorkflow(runtime).candidates(access, **_input())]}
     if args.command in ("purge-preview", "purge"):
         from .purge import PurgeDecision, PurgeWorkflow
         purge_workflow = PurgeWorkflow(runtime)

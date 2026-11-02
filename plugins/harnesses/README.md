@@ -6,6 +6,8 @@ Explicit `contextConfig` and `memoryBudget` enable the [local target tokenizer m
 
 The opt-in pi SDK adapter targets `@earendil-works/pi-coding-agent` / `pi-ai` `1.4.0`. Its dedicated provider and explicitly wrapped tools save before publication; see the [pi contract](../../docs/contracts/pi-native-v1.md) for model selection, the required built-in tool mask, text-only support and acceptance limits. Both entries share the same authoritative ledger.
 
+The explicit `./dsh-maintenance` export adds reviewed pin, correction, suppression and purge proposals. It requires separate maintenance credentials and trusted preview/result callbacks; only a later actual native user confirmation can apply a proposal. See the [maintenance contract](../../docs/contracts/host-maintenance-v1.md). Installing it does not change a desktop profile or grant the model maintenance scopes.
+
 ```powershell
 npm ci --ignore-scripts
 npm run typecheck
