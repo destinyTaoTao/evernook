@@ -132,7 +132,9 @@ class PersonaTests(unittest.TestCase):
         self.assertEqual(rolled.blocks["address"].revision, 2)  # type: ignore[union-attr]
         self.assertEqual(rolled.blocks["address"].restored_from, tone.seq)  # type: ignore[union-attr]
         as_of = self.personas.view(self.access, as_of_seq=tone.seq)
-        self.assertEqual(as_of.blocks["identity"].text, "合成身份")
+        historical_identity = as_of.blocks["identity"]
+        assert historical_identity is not None
+        self.assertEqual(historical_identity.text, "合成身份")
         self.assertEqual(as_of.blocks["address"], None)
         second = self.personas.rollback(self.access, PersonaRollback("synthetic-rollback-2", tone.seq,
             rolled.head_seq, self.evidence("合成：再次回滚"), "合成"))

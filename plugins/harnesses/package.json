@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test --test-timeout=120000 test/*.test.ts"
   },
-  "dependencies": { "@modelcontextprotocol/client": "2.4.0" },
+  "dependencies": { "@huggingface/tokenizers": "0.2.0", "@modelcontextprotocol/client": "2.4.0" },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",

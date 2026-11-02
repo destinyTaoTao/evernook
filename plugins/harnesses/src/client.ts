@@ -8,6 +8,7 @@ export interface MemoryConfig {
   access: string;
   entry: string;
   embeddingConfig?: string;
+  contextConfig?: string;
   cwd?: string;
 }
 
@@ -33,6 +34,12 @@ export interface RecallResult {
   hits: { evidence: { message_id: string; source: Source; role: Event['role']; content_version: number; state_version: number; spans: { start: number; end: number; text: string }[] } }[];
   degraded: string[];
   evidence_state: string;
+}
+
+export interface ContextBundle {
+  payload: string; used_tokens: number; token_limit: number; counter_id: string;
+  mode: string; as_of: string; omitted: { evidence_id: string; reason: string }[];
+  degraded: string[]; complete: boolean; evidence_count: number;
 }
 
 /** After a protected native record, keep only the current safe turn and fixed system context.
@@ -66,10 +73,12 @@ export class MemoryClient {
   private client: Client;
   private transport: StdioClientTransport;
   constructor(config: MemoryConfig) {
-    if (![config.python, config.config, config.access, ...(config.embeddingConfig ? [config.embeddingConfig] : [])].every(isAbsolute)
+    if (![config.python, config.config, config.access, ...(config.embeddingConfig ? [config.embeddingConfig] : []),
+        ...(config.contextConfig ? [config.contextConfig] : [])].every(isAbsolute)
         || !config.entry || config.entry.length > 256) throw new Error('evernook:invalid_host_config');
     const args = ['-m', 'evernook.mcp_server', '--config', config.config, '--access', config.access, '--profile', 'trusted-host'];
     if (config.embeddingConfig) args.push('--embedding-config', config.embeddingConfig);
+    if (config.contextConfig) args.push('--context-config', config.contextConfig);
     this.client = new Client({ name: 'evernook-trusted-native', version: '1.0.0' });
     this.transport = new StdioClientTransport({ command: config.python, args, cwd: config.cwd,
       stderr: 'ignore', maxBufferSize: 8 * 1024 * 1024 });
@@ -98,6 +107,9 @@ export class MemoryClient {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
   recall(query: string, limit = 8) { return this.call<RecallResult>('recall', { query, limit }); }
+  context(query: string, model_id: string, max_tokens: number, as_of: string) {
+    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal' });
+  }
   read(message_id: string) { return this.call<{ event: Event; receipt: Receipt & { content_version: number } }>('read', { message_id }); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }
 }

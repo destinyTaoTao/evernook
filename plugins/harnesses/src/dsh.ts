@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
-import { isAgentLoopRequest, type ContentBlock, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import { isAgentLoopRequest, projectImagesForTextModel, projectToolUpdates, contentHasImage,
+  type RequestMessage, type ContentBlock, type StreamChunk, type GenerateOptions } from '@deepseek-ai/dsh-llm';
+import { joinContextSections } from '@deepseek-ai/dsh-system-prompt';
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session-persistence';
 import type {} from '@deepseek-ai/dsh-system-prompt';
-import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt } from './client.ts';
+import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle } from './client.ts';
+import { loadTargetCounter } from './tokenizer.ts';
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
@@ -14,6 +17,9 @@ export interface Config extends MemoryConfig {
   maxStreamBytes?: number;
   /** Bound only the optional evidence contribution; full token budgeting belongs to context construction. */
   maxEvidenceChars?: number;
+  /** Trusted host framing counter must match the selected provider and model. */
+  memoryBudget?: { provider: string; modelId: string; memoryTokens: number; contextWindow: number;
+    outputReserveTokens: number; countRequest: (request: GenerateOptions) => number };
 }
 
 function stable(value: unknown): string {
@@ -27,6 +33,23 @@ function stable(value: unknown): string {
 function textOf(message: { content: readonly { type: string; text?: string }[] }) {
   return message.content.filter(block => block.type === 'text').map(block => block.text ?? '').join('');
 }
+
+function currentMemoryOnly(messages: RequestMessage[], currentPayload: string): RequestMessage[] {
+  let retained = false;
+  const result: RequestMessage[] = [];
+  for (const message of [...messages].reverse()) {
+    const source = message.source;
+    if (message.role === 'user' && source && 'form' in source && source.form === 'snapshot'
+        && source.sections.some(section => section.name === 'evernook-evidence')) {
+      if (!retained && currentPayload && source.sections.some(section => section.name === 'evernook-evidence'
+          && section.text === currentPayload)) { retained = true; result.push(message); continue; }
+      const sections = source.sections.filter(section => section.name !== 'evernook-evidence');
+      if (sections.length) result.push({ ...message, source: { ...source, sections },
+        content: [{ type: 'text', text: joinContextSections(sections) }] });
+    } else result.push(message);
+  }
+  return result.reverse();
+}
 function event(config: Config, session: string, id: string, role: Event['role'], text: string,
                sequence: number, occurred: number, completion: Event['completion'] = 'complete'): Event {
   return { source: { entry: config.entry, session, branch: session, event: id }, role, text, sequence,
@@ -37,6 +60,12 @@ function event(config: Config, session: string, id: string, role: Event['role'],
 export async function installMemory(ctx: Context, config: Config) {
   const maxStreamBytes = config.maxStreamBytes ?? 768 * 1024;
   const maxEvidenceChars = config.maxEvidenceChars ?? 12000;
+  const budget = config.memoryBudget;
+  if (Boolean(config.contextConfig) !== Boolean(budget)
+      || (budget && (!budget.provider || !budget.modelId || typeof budget.countRequest !== 'function'
+        || ![budget.memoryTokens, budget.contextWindow, budget.outputReserveTokens].every(Number.isSafeInteger)
+        || budget.memoryTokens < 256 || budget.memoryTokens > 131072 || budget.outputReserveTokens < 1
+        || budget.memoryTokens + budget.outputReserveTokens >= budget.contextWindow))) throw new Error('evernook:invalid_host_config');
   if (!Number.isSafeInteger(maxStreamBytes) || maxStreamBytes < 1024 || maxStreamBytes > 1024 * 1024
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
   const client = new MemoryClient(config);
@@ -47,6 +76,8 @@ export async function installMemory(ctx: Context, config: Config) {
   const captureGaps = new Map<string, string[]>();
   const protectedTexts = new Map<string, Set<string>>();
   const excludedHistory = new Map<string, number>();
+  const contextStatus = new Map<string, Omit<ContextBundle, 'payload'> & { provider_payload_tokens: number }>();
+  const currentPayloads = new Map<string, string>();
 
   async function attachmentsOf(content: readonly ContentBlock[]): Promise<Attachment[]> {
     const result: Attachment[] = [];
@@ -147,8 +178,37 @@ export async function installMemory(ctx: Context, config: Config) {
     context.signal?.throwIfAborted();
     await capture(context.agent.session);
     const input = latest.get(String(context.agent.session.id));
-    if (!input || !input.text.trim()) return result;
+    if (!input || (!input.text.trim() && !budget)) {
+      if (budget) {
+        currentPayloads.set(String(context.agent.session.id), '');
+        contextStatus.delete(String(context.agent.session.id));
+      }
+      return result;
+    }
     if (!input.receipt.original_saved) throw new Error('evernook:protected_input_not_saved');
+    if (budget && config.contextConfig) {
+      const target = loadTargetCounter(config.contextConfig);
+      if (target.modelId !== budget.modelId || context.agent.options.model !== budget.modelId
+          || context.agent.options.provider !== budget.provider) throw new Error('evernook:tokenizer_model_mismatch');
+      let allowance = budget.memoryTokens;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const bundle = await client.context(input.text, budget.modelId, allowance, new Date().toISOString());
+        context.signal?.throwIfAborted();
+        if (bundle.counter_id !== target.counterId || target.count(bundle.payload) !== bundle.used_tokens
+            || bundle.used_tokens > bundle.token_limit || bundle.token_limit > allowance) throw new Error('evernook:invalid_token_counter');
+        const section = { name: 'evernook-evidence', text: bundle.payload, interpolate: false };
+        const framed = target.count(joinContextSections([section]));
+        if (framed <= budget.memoryTokens) {
+          const { payload: _, ...metadata } = bundle;
+          contextStatus.set(String(context.agent.session.id), { ...metadata, provider_payload_tokens: framed });
+          currentPayloads.set(String(context.agent.session.id), bundle.payload);
+          return bundle.payload ? { ...result, contexts: [...result.contexts, section] } : result;
+        }
+        allowance -= framed - budget.memoryTokens + 16;
+        if (allowance < 128) break;
+      }
+      throw new Error('evernook:memory_payload_over_budget');
+    }
     const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32);
     context.signal?.throwIfAborted();
     const kept = [];
@@ -197,7 +257,31 @@ export async function installMemory(ctx: Context, config: Config) {
     excludedHistory.set(sessionId, safe.omitted);
     // The SDK freezes loop requests. A screened request uses its public one-shot path;
     // this outer barrier still retains every frame until the same durable save succeeds.
-    const incoming = safe.omitted ? ctx.llm.stream({ ...options, messages: safe.messages, toolHistory: undefined }) : next();
+    let prepared: GenerateOptions = { ...options, messages: budget ? currentMemoryOnly(safe.messages, currentPayloads.get(sessionId) ?? '') : safe.messages,
+      ...(safe.omitted ? { toolHistory: undefined } : {}),
+      ...(budget ? { maxTokens: Math.min(options.maxTokens ?? budget.outputReserveTokens, budget.outputReserveTokens) } : {}) };
+    let incoming: AsyncIterable<StreamChunk>;
+    if (budget) {
+      if (options.provider !== budget.provider || options.model !== budget.modelId) throw new Error('evernook:tokenizer_model_mismatch');
+      if (!Number.isSafeInteger(prepared.maxTokens) || prepared.maxTokens! < 1) throw new Error('evernook:invalid_host_config');
+      const call = await ctx.llm.prepareCall(prepared, options.signal);
+      let messages: RequestMessage[] = prepared.messages.map(message => ({ ...message,
+        content: message.content.map((block): ContentBlock => block.type === 'file'
+          ? { type: 'text', text: ctx.llm.fileRequestText(block.attachment) } : block) }));
+      if (messages.some(message => contentHasImage(message.content))) {
+        if (call.inputModalities === undefined || call.inputModalities.includes('image')) throw new Error('evernook:budgeted_image_request_unsupported');
+        messages = [...projectImagesForTextModel(messages)];
+      }
+      // Full current declarations avoid model-specific historical tool-update expansion.
+      const projected = projectToolUpdates(messages, prepared.tools, undefined);
+      prepared = { ...prepared, ...call.config, messages: [...projected.messages],
+        tools: projected.tools ? [...projected.tools] : undefined, toolHistory: undefined };
+      const used = budget.countRequest(prepared);
+      if (!Number.isSafeInteger(used) || used < 1) throw new Error('evernook:invalid_token_counter');
+      const window = Math.min(budget.contextWindow, call.context?.contextWindow ?? budget.contextWindow);
+      if (used + budget.outputReserveTokens > window) throw new Error('evernook:host_context_window_exceeded');
+      incoming = call.stream(prepared);
+    } else incoming = safe.omitted ? ctx.llm.stream(prepared) : next();
     const attempt = randomUUID();
     const timestamp = Date.now();
     const source = String(options.sessionId);
@@ -234,9 +318,16 @@ export async function installMemory(ctx: Context, config: Config) {
   let closed = false;
   return {
     capture,
+    async settings() {
+      const state = await client.call<{ context: { configured: boolean; saved_policy?: Record<string, unknown>;
+        recommended_policy?: Record<string, unknown>; model_id?: string; counter_id?: string } }>('status', {});
+      return { core: state.context, host: budget ? { memory_tokens: budget.memoryTokens,
+        context_window: budget.contextWindow, output_reserve_tokens: budget.outputReserveTokens } : null };
+    },
     status(sessionId: SessionId) {
       const key = String(sessionId);
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
+        context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
         protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
         provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };
     },

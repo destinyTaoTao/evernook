@@ -37,7 +37,7 @@ await ctx.plugin(memory, {
 
 召回得到候选后，重新读取仍可见的来源，展开至多 2048 个 Unicode code point 的片段，附绝对来源坐标、总长和版本，并遵守可配置字符上限。系统/开发者审计项不作为对话片段注入。跨会话例子验证“预算”可取到“预算37元”。普通证据放入原生 `contexts`，实际由 dsh 投影为 `role=user, source.kind=runtime-context`，不修改高优先级系统人设。降级、附件缺口和省略数量随证据可见；历史文字始终是不可信数据。
 
-字符上限不是 token 预算，也没有实现 T16 的置顶、人设确认和多层上下文构造。当前查询取用户文本前 256 code point；只验证基本链路，不代表长问题的召回质量已验收。
+以上字符路径保留为 `legacy_character_cap` 兼容模式。显式提供 `contextConfig` 与 `memoryBudget` 可使用[完整核心与真实目标 token 预算](host-token-budget-v1.md)，包括置顶、人设、画像、指定事实与证据，以及长查询省略披露。兼容路径仍只验证基本链路，不代表长问题的召回质量已验收。
 
 ## 重扫与边界
 

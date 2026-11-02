@@ -101,7 +101,8 @@ class ContextBuilder:
         return result
 
     def build(self, access: Access, query: str, *, as_of: str, mode: str, timeout: float,
-              known_at: str | None = None, cancel: threading.Event | None = None) -> ContextBundle:
+              known_at: str | None = None, cancel: threading.Event | None = None,
+              query_omitted: bool = False) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "context_build")
         _time(as_of)
         if known_at is not None:
@@ -119,8 +120,10 @@ class ContextBuilder:
         limit = self.policy.normal_tokens if mode == "normal" else self.policy.deep_tokens
         items: list[_Item] = []
         omitted: list[OmittedEvidence] = []
-        degraded: list[str] = []
-        coverage: dict[str, Any] = {}
+        if type(query_omitted) is not bool or (query_omitted and query):
+            raise MemoryFailure("invalid_context_request")
+        degraded: list[str] = ["query_too_long"] if query_omitted else []
+        coverage: dict[str, Any] = {"query_omitted": "query_too_long"} if query_omitted else {}
         def budget() -> float:
             if cancel is not None and cancel.is_set():
                 raise MemoryFailure("context_canceled")

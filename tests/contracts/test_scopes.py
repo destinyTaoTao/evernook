@@ -42,7 +42,9 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(owner.scopes, frozenset(SCOPES))
         harness = self.runtime._authorize(self.harness)
         self.assertEqual(harness.scopes, frozenset(HARNESS_DEFAULT_SCOPES))
-        self.assertEqual(sorted(self.runtime.handshake(self.harness)["scopes"]), sorted(HARNESS_DEFAULT_SCOPES))
+        scopes = self.runtime.handshake(self.harness)["scopes"]
+        assert isinstance(scopes, list)
+        self.assertEqual(sorted(scopes), sorted(HARNESS_DEFAULT_SCOPES))
         self.assertNotEqual(owner.scopes, harness.scopes)
 
     def test_harness_default_pack_is_exactly_recall_and_capture(self) -> None:

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
@@ -15,6 +16,8 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools';
 import { installMemory } from '../src/dsh.ts';
+import type { Config } from '../src/dsh.ts';
+import { Tokenizer } from '@huggingface/tokenizers';
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 if (!python) throw new Error('Set EVERNOOK_TEST_PYTHON to the external dev interpreter');
@@ -48,10 +51,10 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic) {
+async function boot(adapter: Synthetic, budgeted = false) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
-  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-dsh',entry='dsh'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id=access.client_id,entry='dsh',access_path=path); print(json.dumps({'config':str(config),'access':str(path)}))";
+  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
   const paths = JSON.parse(execFileSync(python!, ['-c', script, join(root, 'memory')], { cwd: checkout, encoding: 'utf8' })) as { config: string; access: string };
   const ctx = new Context();
   await ctx.plugin(SessionStore).await();
@@ -64,7 +67,31 @@ async function boot(adapter: Synthetic) {
   await ctx.plugin(persistence, { root: join(root, 'sessions'), compression: 'none' }).await();
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
   ctx.llm.registerAdapter(['synthetic'], adapter);
-  const config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  let target: Tokenizer | undefined;
+  if (budgeted) {
+    const tokenizer = { model: { type: 'WordLevel', vocab: { '[UNK]': 0, hello: 1, world: 2 }, unk_token: '[UNK]' },
+      pre_tokenizer: { type: 'Whitespace' }, decoder: null, normalizer: null, post_processor: null, added_tokens: [] };
+    const tokenizerText = JSON.stringify(tokenizer);
+    const tokenizerFile = join(root, 'tokenizer.json');
+    const tokenizerConfigFile = join(root, 'tokenizer_config.json');
+    await writeFile(tokenizerFile, tokenizerText);
+    await writeFile(tokenizerConfigFile, '{}');
+    target = new Tokenizer(tokenizer, {});
+    const counterFile = join(root, 'counter.json');
+    await writeFile(counterFile, JSON.stringify({ schema_version: 1, node: process.execPath,
+      package_dir: resolve(import.meta.dirname, '../node_modules/@huggingface/tokenizers'), model_id: 'local-test',
+      tokenizer_file: tokenizerFile, config_file: tokenizerConfigFile,
+      tokenizer_sha256: createHash('sha256').update(tokenizerText).digest('hex'),
+      config_sha256: createHash('sha256').update('{}').digest('hex') }));
+    config.contextConfig = join(root, 'context.json');
+    await writeFile(config.contextConfig, JSON.stringify({ schema_version: 1, tokenizer_config: counterFile,
+      policy: { normal_tokens: 512, deep_tokens: 1024, pinned_tokens: 128, recent_days: 7, recent_target_chars: 8192 } }));
+    const counter = target;
+    config.memoryBudget = { provider: 'synthetic', modelId: 'local-test', memoryTokens: 512,
+      contextWindow: 20000, outputReserveTokens: 1000,
+      countRequest: request => counter.encode(JSON.stringify({ messages: request.messages, system: request.system, tools: request.tools }), { add_special_tokens: false }).ids.length };
+  }
   const memory = await installMemory(ctx, config);
   const errors: unknown[] = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error); });
@@ -73,12 +100,145 @@ async function boot(adapter: Synthetic) {
     try { return db.prepare('SELECT event,receipt FROM messages').all().map(row => ({ event: JSON.parse(String(row.event)), receipt: JSON.parse(String(row.receipt)) })); }
     finally { db.close(); }
   }
-  return { root, ctx, memory, config, errors, rows,
+  return { root, ctx, memory, config, errors, rows, target,
     create: (session: string) => ctx.agents.create({ sessionId: SessionId(session), meta: { cwd: root, delegationDepth: 0 }, agentOptions: { provider: 'synthetic', model: 'local-test' } }),
     async close() { await memory.close(); await ctx.fiber.dispose(); },
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('target tokenizer budgets the real core payload and provider request with a least-privilege identity', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('token-budget');
+  try {
+    handle.agent.followup(user('budget-one', 'hello world'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    assert.equal(adapter.requests.length, 1);
+    const request = adapter.requests[0];
+    assert.equal(request.maxTokens, 1000);
+    const blocks = request.messages.flatMap(message => message.content).filter(block => block.type === 'text');
+    const memory = blocks.find(block => block.text.includes('untrusted_memory_context'));
+    assert.ok(memory);
+    assert.ok(host.target!.encode(memory.text, { add_special_tokens: false }).ids.length <= 512);
+    assert.ok(host.config.memoryBudget!.countRequest(request) + 1000 <= 20000);
+    assert.doesNotMatch(JSON.stringify(request.messages.filter(message => message.role === 'system')), /untrusted_memory_context/);
+    assert.equal(host.memory.status(handle.agent.session.id).context_mode, 'target_tokenizer');
+    assert.equal((await host.memory.settings()).core.saved_policy?.normal_tokens, 512);
+    assert.equal((await host.memory.settings()).core.recommended_policy?.normal_tokens, 16000);
+    const clients = JSON.parse(await readFile(join(host.root, 'memory/client.json'), 'utf8')) as { clients: { client_id: string; scopes: string[] }[] };
+    assert.deepEqual(clients.clients.find(client => client.client_id === 'synthetic-dsh')?.scopes, ['capture', 'recall']);
+    const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+    saved.policy.normal_tokens = 256;
+    saved.policy.recent_days = 1;
+    await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+    handle.agent.followup(user('budget-two', 'x'.repeat(257)));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    const state = host.memory.status(handle.agent.session.id).context;
+    assert.equal(state?.token_limit, 256);
+    assert.equal((await host.memory.settings()).core.saved_policy?.recent_days, 1);
+    assert.ok(state?.degraded.includes('query_too_long'));
+    assert.equal(state?.complete, false);
+    const latest = adapter.requests.at(-1)!;
+    const memories = latest.messages.flatMap(message => message.content).filter(block => block.type === 'text')
+      .filter(block => block.text.includes('untrusted_memory_context'));
+    assert.equal(memories.length, 1);
+    assert.ok(memories.reduce((sum, block) => sum + host.target!.encode(block.text, { add_special_tokens: false }).ids.length, 0) <= 512);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('budgeted native provider receives core persona profile facts and important words as data', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('core-components');
+  try {
+    const seed = [
+      'import json,sys',
+      'from pathlib import Path',
+      'from evernook import Access,Event,Source,MemoryRuntime,EvidenceSpan,ImportantMark,CandidateDraft,CandidateWorkflow',
+      'from evernook.persona import PersonaRegistry,PersonaSet',
+      'from evernook.profile import ProfileRegistry,ProfileDecision,ProfileDraft',
+      'from evernook.facts import FactRegistry,FactDecision',
+      'runtime=MemoryRuntime(Path(sys.argv[1]))',
+      "clients=json.loads((runtime.root/'client.json').read_text())['clients']",
+      "owner=Access('synthetic-owner',next(c['token'] for c in clients if c['client_id']=='synthetic-owner'))",
+      "def save(n,text): return runtime.submit(owner,Event(Source('owner','seed','main',str(n)),'user',n,None,'complete',text)).message_id",
+      "confirmation=save(1,'synthetic persona confirmation')",
+      "PersonaRegistry(runtime).set(owner,PersonaSet('persona-seed','tone','synthetic persona',confirmation,'synthetic',0))",
+      "source=save(2,'hello synthetic interest')",
+      "span=EvidenceSpan(source,1,'original',1,0,len('hello synthetic interest'),'hello synthetic interest')",
+      "profiles=ProfileRegistry(runtime)",
+      "profiles.decide(owner,ProfileDecision('profile-seed','interest',0,'propose',ProfileDraft('interest','synthetic interest',0.9,(span,))))",
+      "profiles.decide(owner,ProfileDecision('profile-confirm','interest',1,'confirm',confirmation_id=save(3,'synthetic confirm interest')))",
+      "important=runtime.mark_important(owner,ImportantMark(source,'original',1,'shared',None,None,'hello synthetic interest'))",
+      "candidates=CandidateWorkflow(runtime)",
+      "lease=candidates.begin(owner,(source,),processor_version='synthetic-native')",
+      "candidates.complete(owner,lease.status.run_id,lease.token,(CandidateDraft('synthetic fact','user_statement',(span,)),))",
+      "candidate=candidates.candidates(owner,lease.status.run_id)[0]",
+      "FactRegistry(runtime).decide(owner,FactDecision('fact-seed','synthetic','preference',candidate.candidate_id,save(4,'synthetic confirm fact'),0,'assert','2026-01-01T00:00:00+00:00'))",
+      "print(json.dumps({'important_id':important.important_id}))",
+    ].join('\n');
+    const seeded = JSON.parse(execFileSync(python!, ['-c', seed, host.config.config], { cwd: checkout, encoding: 'utf8' })) as { important_id: string };
+    const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+    saved.policy = { normal_tokens: 4096, deep_tokens: 8192, pinned_tokens: 1000, recent_days: 7,
+      recent_target_chars: 8192, persona_tokens: 1000, profile_tokens: 1000, pinned_ids: [seeded.important_id], fact_keys: [['synthetic', 'preference']] };
+    await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+    host.config.memoryBudget!.memoryTokens = 4096;
+    handle.agent.followup(user('components-input', 'hello'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    const request = adapter.requests[0];
+    const memory = request.messages.flatMap(message => message.content).filter(block => block.type === 'text')
+      .find(block => block.text.includes('untrusted_memory_context'));
+    assert.ok(memory);
+    for (const kind of ['persona', 'profile', 'facts', 'important']) assert.match(memory.text, new RegExp(`"kind":"${kind}"`));
+    assert.ok(host.target!.encode(memory.text, { add_special_tokens: false }).ids.length <= 4096);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('invalid saved budget and exhausted host window block dispatch before the provider', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true);
+  const handle = await host.create('window-full');
+  try {
+    host.config.memoryBudget!.countRequest = () => 20000;
+    handle.agent.followup(user('window-input', 'hello'));
+    await handle.agent.whenIdle();
+    assert.equal(adapter.requests.length, 0);
+    assert.ok(host.errors.some(error => String(error).includes('host_context_window_exceeded')));
+    const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+    saved.policy.normal_tokens = true;
+    await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+    handle.agent.followup(user('invalid-budget-input', 'hello world'));
+    await handle.agent.whenIdle();
+    assert.equal(adapter.requests.length, 0);
+    assert.ok(host.errors.some(error => String(error).includes('invalid_context_policy')));
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('request counting matches the actual SDK file and tool projection received by the provider', async () => {
+  const adapter = new Synthetic();
+  adapter.toolOnce = true;
+  const host = await boot(adapter, true);
+  host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic local fixture',
+    parameters: { amount: { type: 'number' } }, execute: async () => [{ type: 'text', text: 'synthetic result' }] }));
+  const handle = await host.create('budget-files-tools');
+  try {
+    const actual = host.config.memoryBudget!.countRequest;
+    let checked = 0;
+    host.config.memoryBudget!.countRequest = request => { checked = actual(request); return checked; };
+    adapter.inspect = request => assert.equal(actual(request), checked);
+    const file = await host.ctx.attachments.saveFile({ data: Buffer.from('hello world'), name: 'synthetic.txt' });
+    handle.agent.followup(freezeMessage({ id: MessageId('budget-file'), role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: 'hello' }, { type: 'file', attachment: file }] }));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    assert.equal(adapter.requests.length, 2);
+    assert.ok(adapter.requests.every(request => !request.messages.flatMap(message => message.content).some(block => block.type === 'file')));
+  } finally { await handle.dispose(); await host.close(); }
+});
 
 test('real native host saves user input before provider and injects sourced evidence as user context in another session', async () => {
   const adapter = new Synthetic();

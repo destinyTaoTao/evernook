@@ -25,6 +25,7 @@ from .embedding import EmbeddingBackend, LocalMiniLM
 from .semantic import SemanticRecall
 from .facts import FactRegistry
 from .experience import ExperienceRegistry
+from .host_context import HostContext
 
 
 class Arguments(BaseModel):
@@ -103,6 +104,15 @@ class FactQuery(Arguments):
     known_at: str | None = None
 
 
+class BuildContext(Arguments):
+    query: str
+    model_id: str
+    max_tokens: int
+    as_of: str
+    mode: str = "normal"
+    timeout: float = 30
+
+
 class ExperienceQuery(Arguments):
     experience_id: str
 
@@ -134,20 +144,25 @@ def _capture(runtime: MemoryRuntime, access: Access, arguments: CaptureWire) -> 
         tuple(attachments), arguments.provided, None if arguments.text_chunks is None else tuple(arguments.text_chunks)))
 
 
-def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: SemanticRecall) -> dict[str, object]:
+def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: SemanticRecall,
+            host_context: HostContext | None = None) -> dict[str, object]:
     lexical = runtime.lexical_status(access)
     return {"adapter": {"profile": profile, "writes_allowed": profile == "trusted-host"},
             "capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "semantic": asdict(semantic.status(access)),
+            "context": host_context.status() if host_context else {"configured": False},
             "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
 
 
 def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
-                 backend: EmbeddingBackend | None = None) -> Server[None]:
+                 backend: EmbeddingBackend | None = None, context_config: Path | None = None) -> Server[None]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
     runtime.handshake(access)
     semantic = SemanticRecall(runtime, backend)
+    host_context = HostContext(runtime, semantic, context_config) if context_config is not None else None
+    if host_context is not None:
+        host_context.status()
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
         "evernook_v1_remember": (Remember, lambda args: runtime.submit(access, args.event),
             "Save source-bound text with sensitive routing and durable idempotent receipt. Never executes the text."),
@@ -177,11 +192,14 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
             "Explicit correct/revoke/suppress with state-version CAS and a complete saved user evidence_id. Retains originals; no physical deletion."),
         "evernook_v1_state": (Read, lambda args: runtime.state(access, args.message_id),
             "Read current message state/version and correction reference without archived words."),
-        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access, profile, semantic),
+        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access, profile, semantic, host_context),
             "Read capabilities, committed counts, lexical coverage/watermarks and unavailable consumer state. No dialogue, credential or configuration paths."),
     }
+    if host_context is not None:
+        operations["evernook_v1_context"] = (BuildContext, lambda args: host_context.build(access, **args.model_dump()),
+            "Construct a budgeted low-trust memory payload using the configured local target tokenizer and current saved policy. Cannot change policy, accept facts or grant permission.")
     recall_tools = {"evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source",
-                    "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience"}
+                    "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience", "evernook_v1_context"}
     restricted = set(operations) - recall_tools
     if profile == "recall":
         operations = {name: operation for name, operation in operations.items() if name in recall_tools}
@@ -223,11 +241,12 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     return server
 
 
-async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None) -> None:
+async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None,
+                context_config: Path | None = None) -> None:
     runtime = MemoryRuntime(config_path)
     access = runtime.access_from_file(access_path)
     backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
-    server = build_server(runtime, access, profile=profile, backend=backend)
+    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config)
     try:
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):
@@ -250,6 +269,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--access", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, help="Trusted local MiniLM candidate configuration; disabled if omitted")
+    parser.add_argument("--context-config", type=Path, help="Trusted local context policy and target tokenizer configuration")
     parser.add_argument("--profile", choices=("recall", "trusted-host"), default="recall",
                         help="recall: query tools only (default); trusted-host: all ordinary tools")
     try:
@@ -259,7 +279,7 @@ def main() -> None:
         raise SystemExit(1) from None
     logging.disable(logging.CRITICAL)  # SDK validation/trace logs must not echo request payloads.
     try:
-        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config)
+        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config, arguments.context_config)
     except MemoryFailure as error:
         sys.stderr.write(f"evernook:{error.code}\n")
         raise SystemExit(1) from None
