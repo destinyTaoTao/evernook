@@ -20,6 +20,28 @@ class RuntimeRestoreTests(unittest.TestCase):
         self.config, self.access = initialize(self.root / "source", client_id="source", entry="test", allow_archive_review=True)
         self.runtime = MemoryRuntime(self.config)
 
+    def test_stream_chunks_survive_verified_publication_and_newer_chunk_blocks_stale_snapshot(self) -> None:
+        from evernook.runtime_restore import publish_replayed_runtime
+        request = self.runtime.submit(self.access, Event(Source("test", "stream", "main", "input"), "user", 0, None, "complete", "合成请求"))
+        event = Event(Source("test", "stream", "main", "answer"), "assistant", 1, None, "partial", "合成首块。")
+        self.runtime.append_stream(self.access, event, index=0, carry="", input_id=request.message_id)
+        self.runtime.export_archive(self.access, self.root / "old-stream")
+        self.runtime.append_stream(self.access, replace(event, text="第二块。"), index=1, carry="", input_id=request.message_id)
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        replay_archive_controls(self.runtime, self.access, self.root / "old-stream", self.root / "stale-review", checkpoint=checkpoint)
+        with self.assertRaisesRegex(MemoryFailure, "archive_evidence_incomplete"):
+            publish_replayed_runtime(self.runtime, self.access, self.root / "stale-review", self.root / "bad-runtime",
+                checkpoint=checkpoint, client_id="bad", entry="test")
+        self.runtime.export_archive(self.access, self.root / "current-stream")
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        replay_archive_controls(self.runtime, self.access, self.root / "current-stream", self.root / "stream-review", checkpoint=checkpoint)
+        config, access = publish_replayed_runtime(self.runtime, self.access, self.root / "stream-review", self.root / "stream-runtime",
+            checkpoint=checkpoint, client_id="stream-recovered", entry="test")
+        page = MemoryRuntime(config).read_stream(access, event.source)
+        self.assertEqual(page.text, "合成首块。第二块。")
+        self.assertEqual(page.next_index, 2)
+        self.assertFalse(page.complete)
+
     def test_publish_replayed_runtime_preserves_evidence_controls_and_new_identity(self) -> None:
         from evernook.runtime_restore import publish_replayed_runtime
 

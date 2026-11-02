@@ -129,7 +129,7 @@ def _verify(root: Path) -> ArchiveStatus:
         expected_fields.add("source_auth")
     if (set(manifest) != expected_fields
             or manifest["format"] != "evernook-ordinary-archive" or type(manifest["version"]) is not int
-            or manifest["version"] not in (1, 2) or type(manifest["storage_version"]) is not int or manifest["storage_version"] != 4):
+            or manifest["version"] not in (1, 2) or type(manifest["storage_version"]) is not int or manifest["storage_version"] not in (4, 5)):
         raise MemoryFailure("unsupported_archive")
     if version == 2 and (not isinstance(manifest["source_auth"], str) or len(manifest["source_auth"]) != 64
                          or any(char not in "0123456789abcdef" for char in manifest["source_auth"])):
@@ -148,7 +148,7 @@ def _verify(root: Path) -> ArchiveStatus:
     if _digest(root / "evidence.sqlite3") != value["sha256"]:
         raise MemoryFailure("archive_integrity_mismatch")
     with _database(root / "evidence.sqlite3") as db:
-        if db.execute("PRAGMA user_version").fetchone()[0] != 4:
+        if db.execute("PRAGMA user_version").fetchone()[0] != manifest["storage_version"]:
             raise MemoryFailure("unsupported_archive")
         if (db.execute("SELECT 1 FROM sqlite_master WHERE type IN ('view','trigger') LIMIT 1").fetchone()
                 or db.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
@@ -226,8 +226,9 @@ def export_archive(runtime: MemoryRuntime, access: Access, destination: Path) ->
             os.fsync(output.fileno())
         with _database(snapshot) as db:
             counts = [int(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]) for table in ("messages", "important", "attachments")]
+            storage_version = int(db.execute("PRAGMA user_version").fetchone()[0])
         status = ArchiveStatus(str(uuid4()), _digest(snapshot), counts[0], counts[1], counts[2])
-        manifest = {"format": "evernook-ordinary-archive", "version": 2, "storage_version": 4,
+        manifest = {"format": "evernook-ordinary-archive", "version": 2, "storage_version": storage_version,
                     "created_at": datetime.now(timezone.utc).isoformat(), "status": asdict(status)}
         manifest["source_auth"] = _archive_auth(runtime._fingerprint_key, manifest)
         with (staging / "manifest.json").open("x", encoding="utf-8") as output_manifest:
@@ -271,6 +272,7 @@ def restore_archive(source: Path, destination: Path) -> EvidenceArchive:
 def _control_head(db: sqlite3.Connection, key: bytes) -> str:
     digest = hmac.new(key, b"evernook-control-head-v1\0", hashlib.sha256)
     for table in ("ledger_identity_v1", "messages", "captures", "attachments", "changes", "visibility", "purge_requests_v1", "purge_targets_v1",
+                  "text_streams_v1", "text_stream_chunks_v1",
                   "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1", "profile_events_v1",
                   "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1"):
         digest.update(table.encode() + b"\0")
@@ -469,6 +471,8 @@ def replay_archive_controls(runtime: MemoryRuntime, access: Access, source: Path
                             raise MemoryFailure("archive_control_incomplete")
                     PurgeWorkflow._check_scope(copy, missing)
                     PurgeWorkflow._clean_derived(copy, missing)
+                    from .durable_stream import remove_sources
+                    remove_sources(copy, missing)
                     placeholders = ",".join("?" for _ in missing)
                     for table, column in (("important", "message_id"), ("attachments", "message_id"),
                                           ("source_context", "source_id"), ("lexical_docs", "message_id"),
@@ -581,8 +585,9 @@ def replay_archive_controls(runtime: MemoryRuntime, access: Access, source: Path
             live.execute("COMMIT")
         with _database(staging / "evidence.sqlite3") as db:
             counts = [int(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]) for table in ("messages", "important", "attachments")]
+            storage_version = int(db.execute("PRAGMA user_version").fetchone()[0])
         status = ArchiveStatus(str(uuid4()), _digest(staging / "evidence.sqlite3"), counts[0], counts[1], counts[2])
-        result_manifest = {"format": "evernook-ordinary-archive", "version": 2, "storage_version": 4,
+        result_manifest = {"format": "evernook-ordinary-archive", "version": 2, "storage_version": storage_version,
                            "created_at": datetime.now(timezone.utc).isoformat(), "status": asdict(status)}
         result_manifest["source_auth"] = _archive_auth(runtime._fingerprint_key, result_manifest)
         with (staging / "manifest.json").open("x", encoding="utf-8") as output:

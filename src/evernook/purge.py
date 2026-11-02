@@ -249,6 +249,8 @@ class PurgeWorkflow:
             ids = tuple(str(item["message_id"]) for item in targets)
             placeholders = ",".join("?" for _ in ids)
             self._clean_derived(db, ids)
+            from .durable_stream import remove_sources
+            remove_sources(db, ids)
             for table, column in (("important", "message_id"), ("attachments", "message_id"),
                                   ("source_context", "source_id"), ("lexical_docs", "message_id"),
                                   ("semantic_chunks_v1", "message_id"), ("semantic_documents_v1", "message_id"),

@@ -24,6 +24,7 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `remember` | `--config --access`；stdin 为完整 Event JSON | 持久化 Receipt，包括 `original_saved` |
 | `search` | `--config --access`；stdin 为搜索参数 JSON | 带来源/坐标与覆盖状态的 SearchPage |
 | `read` / `state` | `--config --access --message-id` | 当前允许的原文/投影或状态版本 |
+| `capture-chunk` / `read-stream` | `--config --access`；stdin 为分块或来源分页参数 | [提交后可发布片段与明确未完成状态](durable-stream-v1.md) |
 | `status` | `--config --access` | 核心能力、账本数量、词法水位、消费者未运行状态 |
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
 | `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |

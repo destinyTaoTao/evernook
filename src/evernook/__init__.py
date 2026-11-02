@@ -17,6 +17,7 @@ from .scheduler import SCHEDULER_REASONS, ConsolidationScheduler, SchedulerStatu
 from .preset import COMPANION_PRESET, COMPANION_PRESET_VERSION, PresetView, apply_preset, show_preset
 from .persona import PERSONA_BLOCKS, PersonaBlockRecord, PersonaHistoryPage, PersonaRegistry, PersonaRollback, PersonaRollbackResult, PersonaSet, PersonaView
 from .profile import PROFILE_CATEGORIES, PROFILE_TAXONOMY_VERSION, ProfileDecision, ProfileDraft, ProfileHistoryPage, ProfileRecord, ProfileRegistry, ProfileSummary, ProfileView
+from .durable_stream import StreamPage, StreamReceipt
 
 __all__ = [
     "Access", "ArchiveView", "Change", "ChangeRecord", "ContextReceipt", "DerivedContext",
@@ -35,4 +36,5 @@ __all__ = [
     "COMPANION_PRESET", "COMPANION_PRESET_VERSION", "PresetView", "apply_preset", "show_preset",
     "PERSONA_BLOCKS", "PersonaBlockRecord", "PersonaHistoryPage", "PersonaRegistry", "PersonaRollback", "PersonaRollbackResult", "PersonaSet", "PersonaView",
     "PROFILE_CATEGORIES", "PROFILE_TAXONOMY_VERSION", "ProfileDecision", "ProfileDraft", "ProfileHistoryPage", "ProfileRecord", "ProfileRegistry", "ProfileSummary", "ProfileView",
+    "StreamPage", "StreamReceipt",
 ]

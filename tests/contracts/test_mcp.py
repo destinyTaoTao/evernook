@@ -42,12 +42,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         async with Client(recall, read_timeout_seconds=20) as client:
             listed = await client.list_tools()
             self.assertEqual({tool.name for tool in listed.tools}, {
-                "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source",
+                "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
                 "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience"})
             blocked: dict[str, dict[str, Any]] = {
                 "remember": {"event": asdict(event)}, "mark_important": {"mark": {}},
                 "change": {"change": {}}, "list": {},
-                "capture": {}, "capture_stream": {},
+                "capture": {}, "capture_stream": {}, "capture_chunk": {},
             }
             for name, arguments in blocked.items():
                 result = await client.call_tool("evernook_v1_" + name, arguments)
@@ -72,6 +72,30 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status.structured_content["result"]["adapter"], {"profile": "recall", "writes_allowed": False})
         self.assertEqual(runtime.status(self.access).messages, 1)
         self.assertEqual(runtime.state(self.access, receipt.message_id).status, "active")
+
+    async def test_durable_chunks_commit_before_ack_and_replay_through_a_new_stdio_process(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        request = runtime.submit(self.access, Event(Source("test", "stream-session", "main", "input"), "user", 0, None, "complete", "合成流请求"))
+        event = Event(Source("test", "stream-session", "main", "answer"), "assistant", 1, None, "partial", "合成首块。pass")
+        async with Client(self.parameters, read_timeout_seconds=20) as client:
+            result = await client.call_tool("evernook_v1_capture_chunk", {"event": asdict(event), "index": 0, "carry": "", "input_id": request.message_id})
+            assert result.structured_content is not None
+            self.assertFalse(result.is_error)
+            receipt = result.structured_content["result"]
+            self.assertEqual(receipt["released_chars"], len("合成首块。"))
+            self.assertEqual(runtime.read_stream(self.access, event.source).text, "合成首块。")
+        async with Client(self.parameters, read_timeout_seconds=20) as client:
+            replay = await client.call_tool("evernook_v1_read_stream", {"source": asdict(event.source)})
+            assert replay.structured_content is not None
+            self.assertEqual(replay.structured_content["result"]["text"], "合成首块。")
+            last = replace(event, text="，属于普通词。", completion="complete")
+            result = await client.call_tool("evernook_v1_capture_chunk", {"event": asdict(last), "index": 1, "carry": "pass", "input_id": request.message_id})
+            assert result.structured_content is not None
+            self.assertFalse(result.is_error)
+            final = result.structured_content["result"]
+            original = await client.call_tool("evernook_v1_read", {"message_id": final["final_message_id"]})
+            assert original.structured_content is not None
+            self.assertEqual(original.structured_content["result"]["event"]["text"], event.text + last.text)
 
     async def test_real_stdio_protocol_saves_exact_original_and_reads_same_core_record(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",

@@ -116,7 +116,7 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
                     if current_important != archived_important:
                         raise MemoryFailure("archive_evidence_incomplete")
                     # Do not silently discard newer durable decisions or maintenance state.
-                    for table in ("source_context", "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1",
+                    for table in ("source_context", "text_streams_v1", "text_stream_chunks_v1", "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1",
                                   "profile_events_v1", "profile_approvals_v1", "experience_events_v1",
                                   "experience_approvals_v1", "persona_requests_v1", "persona_versions_v1",
                                   "candidate_runs_v1", "fact_candidates_v1", "consolidation_drafts_v1",

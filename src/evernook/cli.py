@@ -100,6 +100,8 @@ def _parser() -> Parser:
         ("change", "Trusted source correction, suppression or revocation using JSON stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
         ("read", "Read ordinary evidence by ID"),
+        ("capture-chunk", "Trusted ordered durable text chunk using JSON stdin"),
+        ("read-stream", "Page committed stream text and completion using JSON stdin"),
         ("state", "Read evidence visibility and version"),
         ("status", "Report core and lexical processing status"),
         ("refresh-index", "Refresh the rebuildable lexical index"),
@@ -225,6 +227,14 @@ def _execute(args: argparse.Namespace) -> object:
         return configure_audit(args.config, retention_days=args.retention_days)
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command == "capture-chunk":
+        value = _input()
+        event = value.pop("event")
+        source = Source(**event.pop("source"))
+        return runtime.append_stream(access, Event(source=source, **event), **value)
+    if args.command == "read-stream":
+        value = _input()
+        return runtime.read_stream(access, Source(**value.pop("source")), **value)
     if args.command == "mark-important":
         return runtime.mark_important(access, ImportantMark(**_input()))
     if args.command == "change":

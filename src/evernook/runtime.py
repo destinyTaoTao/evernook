@@ -28,6 +28,7 @@ from .lexical import NORMALIZATION_IDENTITY, index_terms, matching_spans, normal
 
 if TYPE_CHECKING:
     from .archive import ArchiveStatus
+    from .durable_stream import StreamPage, StreamReceipt
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
@@ -40,6 +41,10 @@ _LEXICAL_INDEXED = f"""SELECT d.message_id FROM lexical_docs d
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _stream_marker_source(source: Source) -> Source:
+    return replace(source, event="stream:" + hashlib.sha256(_json(asdict(source)).encode()).hexdigest())
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -362,7 +367,7 @@ class MemoryRuntime:
             raise MemoryFailure("idempotency_material_unavailable")
         with self._connection() as db:
             version = int(db.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise MemoryFailure("unsupported_storage_version")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""BEGIN IMMEDIATE;
@@ -389,7 +394,7 @@ class MemoryRuntime:
                 CREATE TABLE IF NOT EXISTS attachments (
                   message_id TEXT NOT NULL REFERENCES captures(message_id), attachment_id TEXT NOT NULL,
                   content BLOB NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(message_id,attachment_id));
-                PRAGMA user_version=4;
+                PRAGMA user_version=5;
                 COMMIT;""")
             # A non-secret, key-bound ledger identity travels with ordinary snapshots; the
             # idempotency key itself remains outside archives and is never copied into them.
@@ -401,6 +406,8 @@ class MemoryRuntime:
             if stored_id is None or not hmac.compare_digest(str(stored_id[0]), ledger_id):
                 raise MemoryFailure("ledger_identity_mismatch")
             db.execute("COMMIT")
+            from .durable_stream import install as install_streams
+            install_streams(db)
 
     def _authorize(self, access: Access) -> _Identity:
         if not isinstance(access, Access):
@@ -468,7 +475,8 @@ class MemoryRuntime:
     def handshake(self, access: Access) -> dict[str, object]:
         identity = self._authorize(access)
         return {"contract_version": 1, "client_id": identity.client_id, "entry": identity.entry,
-                "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 4,
+                "durable_text_streams": 1,
+                "ordinary_text": True, "important": True, "changes": True, "captures": True, "storage_version": 5,
                 "lexical": True, "lexical_normalization_version": NORMALIZATION_IDENTITY,
                 "archive_review": identity.archive_review, "scopes": sorted(identity.scopes),
                 "vault": False, "backup": "deferred", "sqlite_version": sqlite3.sqlite_version}
@@ -518,17 +526,23 @@ class MemoryRuntime:
         return receipt
 
     @staticmethod
-    def _persist_event(db: sqlite3.Connection, event: Event, retained: Event, fingerprint: bytes) -> Receipt:
+    def _persist_event(db: sqlite3.Connection, event: Event, retained: Event, fingerprint: bytes,
+                       *, stream_id: str | None = None) -> Receipt:
         source = _json(asdict(event.source))
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='purge_targets_v1'").fetchone():
+            marker_source = _json(asdict(_stream_marker_source(event.source)))
             if db.execute("""SELECT 1 FROM purge_targets_v1 t JOIN purge_requests_v1 r ON r.request_id=t.request_id
-                WHERE t.source=? AND r.state IN ('blocked','completed')""", (source,)).fetchone():
+                WHERE t.source IN (?,?) AND r.state IN ('blocked','completed')""", (source, marker_source)).fetchone():
                 raise MemoryFailure("source_purged")
         existing = db.execute("SELECT fingerprint, receipt FROM messages WHERE source=?", (source,)).fetchone()
         if existing is not None:
             if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
                 raise MemoryFailure("source_conflict")
             return Receipt(**json.loads(existing["receipt"]))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='text_streams_v1'").fetchone():
+            reserved = db.execute("SELECT message_id FROM text_streams_v1 WHERE source=?", (source,)).fetchone()
+            if reserved is not None and reserved[0] != stream_id:
+                raise MemoryFailure("source_reserved_for_stream")
         projected = retained is not event
         receipt = Receipt(str(uuid4()), datetime.now(timezone.utc).isoformat(), "projection_only" if projected else "committed", "projection" if projected else "original", not projected)
         db.execute("INSERT INTO messages VALUES (?,?,?,?,?,?,?)", (receipt.message_id, source, fingerprint, _json(asdict(retained)), _json(asdict(receipt)), _time(event.occurred_at) if event.occurred_at is not None else None, receipt.received_at))
@@ -552,6 +566,14 @@ class MemoryRuntime:
             raise MemoryFailure("invalid_encoding") from None
         if len(encoded) > 1048576:
             raise MemoryFailure("message_too_large")
+
+    def append_stream(self, access: Access, event: Event, *, index: int, carry: str, input_id: str) -> "StreamReceipt":
+        from .durable_stream import append
+        return append(self, access, event, index=index, carry=carry, input_id=input_id)
+
+    def read_stream(self, access: Access, source: Source, *, cursor: int = 0, limit: int = 2048) -> "StreamPage":
+        from .durable_stream import read
+        return read(self, access, source, cursor=cursor, limit=limit)
 
     def submit_stream(self, access: Access, event: Event, frames: tuple[dict[str, Any], ...]) -> CaptureReceipt:
         """Commit one buffered assistant stream before a trusted host publishes its frames."""

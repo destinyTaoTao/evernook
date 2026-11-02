@@ -34,6 +34,24 @@ class CLITests(unittest.TestCase):
         self.assertEqual(process.returncode, 0 if result["ok"] else 1)
         return process, result
 
+    def test_ordered_stream_lifecycle_uses_real_cli_capture_and_read(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        request = runtime.submit(self.access, Event(Source("test", "stream", "main", "input"), "user", 0, None, "complete", "合成请求"))
+        event = Event(Source("test", "stream", "main", "answer"), "assistant", 1, None, "partial", "合成一块。")
+        wire = {"event": asdict(event), "index": 0, "carry": "", "input_id": request.message_id}
+        _, first = self.invoke("capture-chunk", wire)
+        self.assertTrue(first["ok"])
+        _, retry = self.invoke("capture-chunk", wire)
+        self.assertEqual(first, retry)
+        _, opened = self.invoke("read-stream", {"source": asdict(event.source)})
+        self.assertEqual(opened["result"]["text"], event.text)
+        self.assertFalse(opened["result"]["complete"])
+        _, final = self.invoke("capture-chunk", {**wire, "index": 1, "event": asdict(replace(event, text="合成二块。", completion="complete"))})
+        self.assertEqual(final["result"]["state"], "complete")
+        _, restored = self.invoke("read-stream", {"source": asdict(event.source)})
+        self.assertEqual(restored["result"]["text"], "合成一块。合成二块。")
+        self.assertTrue(restored["result"]["complete"])
+
     def test_subprocess_roundtrip_retry_source_conflict_and_index_maintenance(self) -> None:
         event = Event(Source("test", "session", "main", "1"), "user", 1, "2021-02-03T10:20:30+08:00",
                       "complete", "合成：37.50元。\r\n甲🙂e\u0301乙")

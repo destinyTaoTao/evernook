@@ -4,7 +4,7 @@
 
 ## 系统结构
 
-当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；没有已部署的守护服务、HTTP 监听或日常宿主启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认九个只读工具，可信启动端选择 trusted-host 才增加六个普通写入/批量工具，事实/经验接纳和保险库解锁均不作为模型工具开放。
+当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；没有已部署的守护服务、HTTP 监听或日常宿主启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认十个只读工具，可信启动端选择 trusted-host 才增加七个普通写入/批量工具，事实/经验接纳和保险库解锁均不作为模型工具开放。
 
 ```mermaid
 flowchart TB
@@ -41,7 +41,7 @@ flowchart TB
 | [safety.py](../src/evernook/safety.py)、[paths.py](../src/evernook/paths.py) | 有限凭证信号检测，以及受支持文件系统与运行目录权限检查 |
 | [lexical.py](../src/evernook/lexical.py) | Unicode 归一化、中文 1/2/3 字 gram、安全词项与原文坐标映射 |
 | [cli.py](../src/evernook/cli.py) | 可信本地初始化/配对、stdin JSON 保存与检索、指定回取、状态及词法维护，以及人设/画像/沉淀/调度/预设/事实/审计/删除/备份/保险库等维护子命令；无 MCP 依赖 |
-| [mcp_server.py](../src/evernook/mcp_server.py) | 默认九个查询工具，可信宿主模式十五项；固定权限与失败回执，复用核心检查 |
+| [mcp_server.py](../src/evernook/mcp_server.py) | 默认十个查询工具，可信宿主模式十七项；固定权限与失败回执，复用核心检查 |
 | [semantic.py](../src/evernook/semantic.py)、[embedding.py](../src/evernook/embedding.py) | 显式本地模型空间与可重建向量、RRF 融合、自适应近期范围、来源过滤与降级；不自动启用模型 |
 | [archive.py](../src/evernook/archive.py) | 一致性普通快照、清单/哈希校验、恢复发布与只读归档审查 |
 | [candidates.py](../src/evernook/candidates.py) | 显式任务租约/重试、来源绑定的候选批次提交与失效过滤；不运行模型或接纳事实 |
@@ -175,7 +175,9 @@ flowchart TD
 | R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消回归 | 日常安装、多插件/分支/压缩全验收、桌宠目标、升级/系统离线与长期运行 |
 | 独立安全与质量 | 有限分流/ACL；加密Event收件、本地主口令单次显示；普通来源确认删除与派生清理 | 自动分流/附件、IPC逐次授权、WTS锁定、轮换/恢复/泄露治理、受保护/备份删除与正式质量集 |
 
-MCP 默认九个查询工具，可信宿主模式十五项，包含有限 capture/capture_stream；候选/事实/经验接纳、彻底删除、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
+MCP 默认十个查询工具，可信宿主模式十七项，包含有限 capture/capture_stream 及可靠文本 capture_chunk/read_stream（显式 contextConfig 另加 context）；候选/事实/经验接纳、彻底删除、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
+
+核心支持[可靠文本分块](contracts/durable-stream-v1.md)：逐块事务回执、幂等顺序、未完成终态和重启分页回放；待消歧敏感尾部由宿主持有，库内仅保存校验及长度。完整结束同事务生成普通助手原文，删除/抑制和恢复核验包含流状态。dsh/pi 逐块发布钩子尚待后续接线，当前原生模式仍整段缓冲。
 
 dsh/pi 可显式接线同一[确认式维护](contracts/host-maintenance-v1.md)：模型仅提议，可信宿主展示来源与精确范围，后续真实用户确认才由独立维护身份执行。重要原话、来源更正/抑制、画像修订/确认、既有候选事实更正和普通来源删除复用核心；重启后的已提交控制继续有效，待确认预览失效。真实桌面 UI 验收仍另行推进。
 

@@ -25,6 +25,16 @@ export interface Event {
 }
 export interface Receipt { message_id: string; original_saved: boolean; representation: string; status: string }
 export interface CaptureReceipt { message: Receipt; complete: boolean; gaps: string[] }
+export interface StreamReceipt {
+  stream_id: string; index: number; state: 'open' | 'complete' | 'canceled' | 'failed' | 'protected';
+  released_chars: number; committed_chars: number; pending_chars: number;
+  final_message_id: string | null; gaps: string[];
+}
+export interface StreamPage {
+  stream_id: string; source: Source; state: StreamReceipt['state']; text: string;
+  start: number; end: number; next_cursor: number | null; committed_chars: number; pending_chars: number;
+  next_index: number; complete: boolean; final_message_id: string | null;
+}
 export interface Attachment {
   attachment_id: string; label: string; media_type: string;
   chunks_base64: string[] | null; expected_size: number; expected_sha256?: string;
@@ -104,6 +114,12 @@ export class MemoryClient {
   }
   remember(event: Event) { return this.call<Receipt>('remember', { event }); }
   stream(event: Event, frames: object[]) { return this.call<CaptureReceipt>('capture_stream', { event, frames }); }
+  appendChunk(event: Event, index: number, carry: string, input_id: string, signal?: AbortSignal) {
+    return this.call<StreamReceipt>('capture_chunk', { event, index, carry, input_id }, signal);
+  }
+  readStream(source: Source, cursor = 0, limit = 2048, signal?: AbortSignal) {
+    return this.call<StreamPage>('read_stream', { source, cursor, limit }, signal);
+  }
   capture(event: Event, kind: 'message' | 'tool_call' | 'tool_result', attachments: Attachment[] = [], input_id?: string, tool_name?: string) {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }

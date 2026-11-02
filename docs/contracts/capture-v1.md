@@ -2,6 +2,8 @@
 
 对应 [#9](https://github.com/destinyTaoTao/evernook/issues/9)。统一本地 Python 边界新增 `submit_capture/read_capture/read_attachment`，所有操作沿用身份/版本检查；握手 `captures=true,storage_version=4`，事务补表兼容 v1–v3，不重写既有记录。没有安装真实 dsh 插件或提供网络上传端点。
 
+#71 另增[可靠文本分块](durable-stream-v1.md)：逐块提交后回执、可恢复有序回放及敏感待消歧尾部。原 `submit_stream` 整段缓冲语义保留，不能把它算作分块发布。
+
 ## 采集信封与可靠保存
 
 ```python

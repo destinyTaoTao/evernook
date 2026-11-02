@@ -23,7 +23,7 @@ class ImportantTests(unittest.TestCase):
     def test_handshake_exposes_important_capability_and_actual_storage_version(self) -> None:
         capabilities = self.runtime.handshake(self.access)
         self.assertTrue(capabilities["important"])
-        self.assertEqual(capabilities["storage_version"], 4)
+        self.assertEqual(capabilities["storage_version"], 5)
 
     def test_explicit_span_is_durable_immediately_and_repeated_mark_keeps_identity(self) -> None:
         mark = ImportantMark(self.receipt.message_id, "original", 1, "synthetic-shared", 1, 4, "🙂e\u0301")
