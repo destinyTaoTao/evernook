@@ -28,6 +28,8 @@ async function memoryExtension(pi) {
 
 `createAgentSession` 必须用 `noTools: 'builtin'` 屏蔽未包装的内置工具，保留本扩展登记的明确工具集合；纯聊天可用 `noTools: 'all'`，但这也会屏蔽自定义工具。未包装工具被拒绝。该 SDK profile 不是任意现有扩展/CLI profile 的透明全局拦截器。
 
+可显式设置 `maintenance: { access, onReview, onResult }` 接入与 dsh 共用的[确认式维护](host-maintenance-v1.md)。维护身份必须独立，普通连接仍只含 capture/recall；模型只有经过工具保存屏障的提议入口，后续当前分支真实用户确认才在最终 provider 边界执行。可信 UI 使用返回的 `maintenance` 展示/拒绝预览和读取分页；重启失去待确认预览，已提交核心状态继续有效。启用此工具时使用 `noTools: 'builtin'`。
+
 ## 采集与发布屏障
 
 - 首次和每轮 provider 前保存原生 v3 header、稳定 entry ID、parent ID 与消息；原生消息和审计记录使用独立来源身份，重复重扫幂等。当前分支的真实用户消息作为输入依据，不把注入片段当成新用户事实。fork header 的 `parentSession` 仍保留在审计中；完整 fork/压缩/恢复验收尚未完成。

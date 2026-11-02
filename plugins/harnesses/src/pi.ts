@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
+import { Type, createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
   type Model, type SimpleStreamOptions, type TranscriptContext } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionEntry, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { MemoryClient, safeHistory, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
+import { createMaintenance, type MaintenanceConfig, type MaintenanceProposal } from './maintenance.ts';
 
 export interface PiConfig extends MemoryConfig {
+  maintenance?: MaintenanceConfig;
   /** An actual configured target model, never an invented endpoint or copied credential. */
   target: Model<Api>;
   providerId?: string;
@@ -97,7 +99,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
         || ![budget.memoryTokens, budget.contextWindow, budget.outputReserveTokens].every(Number.isSafeInteger)
         || budget.memoryTokens < 256 || budget.memoryTokens > 131072 || budget.outputReserveTokens < 1
         || budget.memoryTokens + budget.outputReserveTokens >= budget.contextWindow))) throw new Error('evernook:invalid_host_config');
-  const protectedTools = config.tools ?? [];
+  const protectedTools = [...(config.tools ?? [])];
   const toolNames = new Set(protectedTools.map(tool => tool.name));
   if (!providerId.startsWith('evernook-') || config.target.provider === providerId
       || !Number.isSafeInteger(maximum) || maximum < 1024 || maximum > 1024 * 1024
@@ -126,6 +128,9 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   const controllers = new Set<AbortController>();
   const contextStatus = new Map<string, Omit<ContextBundle, 'payload'>>();
   const contextErrors = new Map<string, string>();
+  let maintenance: Awaited<ReturnType<typeof createMaintenance>> | undefined;
+  const maintenanceRoute = { ...config };
+  const maintenanceOptions = config.maintenance ? { ...config.maintenance } : undefined;
   function notifyResumed(ctx: ExtensionContext, state: { protectedTexts: Set<string>; resumed: boolean }) {
     if (state.protectedTexts.size && !state.resumed) {
       ctx.ui.notify('EverNook: safe input saved; resumed using the current safe turn. Earlier native history is excluded; protected originals remain unsaved.', 'info');
@@ -184,7 +189,30 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   }
 
   try {
-  disposers.push(pi.on('session_start', async (_event, ctx) => { current = ctx; blocked = false; await connection(); }));
+  if (config.maintenance) {
+    if (toolNames.has('evernook_memory_propose')) throw new Error('evernook:duplicate_native_tool');
+    maintenance = await createMaintenance(maintenanceRoute, maintenanceOptions!);
+    protectedTools.push({ name: 'evernook_memory_propose', label: 'Review memory change',
+      description: 'Propose a memory change for trusted host review. Only a later actual native user confirmation can apply it.',
+      parameters: Type.Object({ proposal: Type.String({ maxLength: 131072,
+        description: 'JSON proposal: pin/suppress message_id; correct_source message_id/replacement_id; purge source_ids; profile tag_id/action/draft; fact_correction subject_id/predicate/run_id/candidate_id.' }) }),
+      async execute(_id, args, signal, _update, ctx) {
+        if (!args || typeof args !== 'object' || !('proposal' in args)
+            || typeof args.proposal !== 'string' || args.proposal.length > 131072) throw new Error('evernook:invalid_maintenance_proposal');
+        let proposal: MaintenanceProposal;
+        try { proposal = JSON.parse(args.proposal) as MaintenanceProposal; }
+        catch { throw new Error('evernook:invalid_maintenance_proposal'); }
+        if (!maintenance) throw new Error('evernook:adapter_closed');
+        const review = await maintenance.propose(ctx.sessionManager.getSessionId(), proposal, signal);
+        return { content: [{ type: 'text', text: JSON.stringify({ proposal_id: review.proposal_id,
+          operation: review.operation.kind, state: 'pending_user_confirmation' }) }], details: {} };
+      } });
+    toolNames.add('evernook_memory_propose');
+  }
+  disposers.push(pi.on('session_start', async (_event, ctx) => {
+    current = ctx; blocked = false; await connection();
+    if (maintenanceOptions && !maintenance) maintenance = await createMaintenance(maintenanceRoute, maintenanceOptions);
+  }));
   disposers.push(pi.on('before_agent_start', async (_event, ctx) => {
     if (ctx.model?.provider !== providerId) { blocked = true; ctx.abort(); return; }
     pi.setActiveTools([...toolNames]);
@@ -262,6 +290,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       const captured = await capture(ctx);
       if (!captured.receipt) throw new Error('evernook:authentic_input_unavailable');
       if (!captured.receipt.original_saved || !captured.latest) throw new Error('evernook:protected_input_not_saved');
+      await maintenance?.confirm(ctx.sessionManager.getSessionId(), captured.receipt.message_id, signal);
       const input = captured.latest.message;
       if (input.role !== 'user') throw new Error('evernook:authentic_input_unavailable');
       const safe = safeHistory(transcript.messages, textOf(input.content), captured.state.protectedTexts);
@@ -437,13 +466,14 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   disposers.push(pi.on('agent_end', async (_event, ctx) => { await capture(ctx); }));
   disposers.push(pi.on('session_shutdown', async () => {
     for (const controller of controllers) controller.abort();
+    await maintenance?.close(); maintenance = undefined;
     current = undefined;
     blocked = true;
     const active = client ?? await connecting;
     client = undefined;
     await active?.close();
   }));
-  return { model: proxy, capture,
+  return { model: proxy, capture, get maintenance() { return maintenance; },
     status(sessionId: string) { return { context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
       context: contextStatus.get(sessionId), error_code: contextErrors.get(sessionId) }; },
     async settings() {
@@ -455,6 +485,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       if (closed) return;
       closed = true;
       for (const controller of controllers) controller.abort();
+      await maintenance?.close();
       for (const dispose of disposers.reverse()) dispose();
       const active = client ?? await connecting;
       client = undefined;
@@ -463,6 +494,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     } };
   } catch {
     closed = true;
+    await maintenance?.close();
     for (const controller of controllers) controller.abort();
     for (const dispose of disposers.reverse()) { try { dispose(); } catch { /* Keep releasing owned resources. */ } }
     const active = client ?? await connecting?.catch(() => undefined);

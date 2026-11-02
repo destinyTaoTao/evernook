@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Thin trusted native harness adapters for the same EverNook ledger",
   "engines": { "node": ">=24.11.0 <25" },
-  "exports": { "./dsh": "./dist/dsh.js", "./dsh-maintenance": "./dist/dsh-maintenance.js", "./pi": "./dist/pi.js", "./client": "./dist/client.js" },
+  "exports": { "./dsh": "./dist/dsh.js", "./dsh-maintenance": "./dist/dsh-maintenance.js", "./maintenance": "./dist/maintenance.js", "./pi": "./dist/pi.js", "./client": "./dist/client.js" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",

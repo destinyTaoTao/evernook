@@ -27,7 +27,7 @@ const output = process.env.EVERNOOK_TEST_OUTPUT;
 if (!python || !output) throw new Error('Set external synthetic EVERNOOK_TEST_PYTHON and EVERNOOK_TEST_OUTPUT');
 const checkout = resolve(import.meta.dirname, '../../..');
 
-async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false) {
+async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'pi-native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; c,a=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); p=c.parent/'mcp-access-pi.json'; pair_client(c,client_id='synthetic-pi',entry='pi',access_path=p,scopes=('capture','recall')); print(json.dumps({'config':str(c),'access':str(p)}))";
@@ -36,6 +36,14 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   const fixture = budgeted ? await tokenizerFixture(root, faux.getModel().id) : undefined;
   const memoryConfig: PiConfig = { python: python!, config: paths.config, access: paths.access, entry: 'pi',
     cwd: checkout, target: faux.getModel(), tools };
+  const reviews: import('../src/maintenance.ts').MaintenanceReview[] = [];
+  const outcomes: import('../src/maintenance.ts').MaintenanceOutcome[] = [];
+  let onReview: (() => void | Promise<void>) | undefined;
+  if (maintained) {
+    const access = join(root, 'memory/mcp-access-maintenance.json');
+    execFileSync(python!, ['-c', "from pathlib import Path; import sys; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-maintenance',entry='pi-maintenance',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept','admin'))", paths.config, access], { cwd: checkout });
+    memoryConfig.maintenance = { access, onReview: async review => { reviews.push(review); await onReview?.(); }, onResult: async result => { outcomes.push(result); } };
+  }
   if (fixture) {
     memoryConfig.contextConfig = fixture.contextConfig;
     memoryConfig.memoryBudget = { provider: faux.getModel().provider, modelId: faux.getModel().id,
@@ -84,9 +92,16 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   await resources.reload();
   const model = { ...faux.getModel(), provider: 'evernook-memory', api: 'evernook-buffered-pi-v1' };
   const { session } = await createAgentSession({ cwd: root, agentDir: join(root, 'pi-agent'), modelRuntime: runtime,
-    resourceLoader: resources, settingsManager: settings, noTools: tools.length ? 'builtin' : 'all',
+    resourceLoader: resources, settingsManager: settings, noTools: tools.length || maintained ? 'builtin' : 'all',
     model, sessionManager: SessionManager.create(root, join(root, 'pi-sessions')) });
   return { root, paths, faux, rows, requests, rawChecks, session, memoryConfig, fixture,
+    reviews, outcomes,
+    maintenance() { assert.ok(memory?.maintenance); return memory.maintenance; },
+    setReview(value: () => void | Promise<void>) { onReview = value; },
+    async propose(proposal: import('../src/maintenance.ts').MaintenanceProposal, signal?: AbortSignal) {
+      assert.ok(memory?.maintenance && context); return memory.maintenance.propose(context.sessionManager.getSessionId(), proposal, signal);
+    },
+    async restart() { await session.reload(); },
     status() { assert.ok(memory && context); return memory.status(context.sessionManager.getSessionId()); },
     async settings() { assert.ok(memory); return memory.settings(); },
     setInspect(value: (signal?: AbortSignal) => void | Promise<void>) { inspect = value; },
@@ -95,6 +110,91 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     async close() { await memory?.close(); session.dispose(); },
   };
 }
+
+test('pi confirmation shares the exact-word and independent maintenance contract and rejection never writes', async () => {
+  const host = await boot(undefined, [], undefined, false, false, true);
+  try {
+    const words = '合成 pi 重要原话37.50元🙂\r\ne\u0301'.repeat(160);
+    await host.session.prompt(words);
+    const id = host.rows().find(row => row.event.text === words)!.receipt.message_id;
+    const rejected = await host.propose({ kind: 'pin', message_id: id });
+    await host.maintenance().reject(rejected.proposal_id);
+    await host.session.prompt(rejected.confirm_command);
+    assert.equal(host.maintenance().status(rejected.proposal_id)?.state, 'rejected');
+    const review = await host.propose({ kind: 'pin', message_id: id });
+    assert.equal(host.maintenance().status(review.proposal_id)?.state, 'pending');
+    await host.session.prompt(review.confirm_command);
+    const result = host.maintenance().status(review.proposal_id);
+    assert.equal(result?.state, 'completed');
+    const important = result?.result?.important_id; assert.equal(typeof important, 'string');
+    let restored = ''; let cursor: number | null = 0;
+    while (cursor !== null) {
+      const page = await host.maintenance().readImportant(important as string, cursor, 512);
+      restored += page.text; cursor = page.next_cursor;
+    }
+    assert.equal(restored, words);
+    assert.equal(host.outcomes.filter(outcome => outcome.state === 'completed').length, 1);
+  } finally { await host.close(); }
+});
+
+test('pi actual model tool only proposes and canceling a trusted review never grants an executable operation', async () => {
+  const host = await boot(undefined, [], undefined, false, false, true);
+  try {
+    await host.session.prompt('合成 pi 工具重要原话');
+    const id = host.rows().find(row => row.event.text === '合成 pi 工具重要原话')!.receipt.message_id;
+    const controller = new AbortController();
+    host.setReview(() => { controller.abort(); });
+    await assert.rejects(host.propose({ kind: 'pin', message_id: id }, controller.signal));
+    const canceled = host.reviews.at(-1)!;
+    assert.equal(host.maintenance().status(canceled.proposal_id), undefined);
+    await host.session.prompt(canceled.confirm_command);
+    host.setReview(() => {});
+    host.faux.setResponses([fauxAssistantMessage(fauxToolCall('evernook_memory_propose',
+      { proposal: JSON.stringify({ kind: 'pin', message_id: id }) }), { stopReason: 'toolUse' }), fauxAssistantMessage('合成：请在宿主审查预览')]);
+    await host.session.prompt('合成：提议记住这条');
+    const review = host.reviews.at(-1)!;
+    assert.notEqual(review.proposal_id, canceled.proposal_id);
+    assert.equal(host.maintenance().status(review.proposal_id)?.state, 'pending');
+    assert.equal(host.outcomes.length, 0);
+    await host.session.prompt(review.confirm_command);
+    assert.equal(host.maintenance().status(review.proposal_id)?.state, 'completed');
+    assert.equal(host.outcomes.length, 1);
+  } finally { await host.close(); }
+});
+
+test('pi source correction suppression and exact purge survive service restart without reviving a pending approval', async () => {
+  const host = await boot(undefined, [], undefined, false, false, true);
+  try {
+    await host.session.prompt('合成：地址原值A');
+    const target = host.rows().find(row => row.event.text === '合成：地址原值A')!.receipt.message_id;
+    await host.session.prompt('合成：更正地址B');
+    const replacement = host.rows().find(row => row.event.text === '合成：更正地址B')!.receipt.message_id;
+    const corrected = await host.propose({ kind: 'correct_source', message_id: target, replacement_id: replacement });
+    await host.session.prompt(corrected.confirm_command);
+    assert.equal(host.maintenance().status(corrected.proposal_id)?.state, 'completed');
+    assert.equal(host.maintenance().status(corrected.proposal_id)?.result?.status, 'corrected');
+    const pending = await host.propose({ kind: 'suppress', message_id: replacement });
+    const prior = host.maintenance();
+    await host.restart();
+    await assert.rejects(prior.propose('closed-native-runtime', { kind: 'pin', message_id: replacement }), /invalid_maintenance_proposal|aborted/i);
+    await host.session.prompt(pending.confirm_command);
+    assert.equal(host.maintenance().status(pending.proposal_id), undefined);
+    assert.equal((await host.maintenance().readSource(replacement)).text, '合成：更正地址B');
+    const suppressed = await host.propose({ kind: 'suppress', message_id: replacement });
+    await host.session.prompt(suppressed.confirm_command);
+    assert.equal(host.maintenance().status(suppressed.proposal_id)?.state, 'completed');
+    await assert.rejects(host.maintenance().readSource(replacement), /message_not_found/);
+    const purge = await host.propose({ kind: 'purge', source_ids: [target, replacement] });
+    assert.deepEqual(purge.residuals, ['existing_archives_and_backups_retained', 'host_copies_not_controlled']);
+    await host.session.prompt(purge.confirm_command);
+    assert.equal(host.maintenance().status(purge.proposal_id)?.state, 'completed');
+    const result = host.maintenance().status(purge.proposal_id)?.result;
+    assert.deepEqual(result?.residuals, purge.residuals);
+    await host.restart();
+    await assert.rejects(host.maintenance().readSource(target), /message_not_found/);
+    await assert.rejects(host.maintenance().readSource(replacement), /message_not_found/);
+  } finally { await host.close(); }
+});
 
 test('pi uses the same real tokenizer core with live settings and independent full-request budget checks', async () => {
   const host = await boot(undefined, [], undefined, true);
@@ -295,7 +395,7 @@ test('real pi split sensitive tool prefixes stay out of native partial updates a
 });
 
 test('actual dsh and pi kernels with separately paired entries recall from the same authoritative ledger', async () => {
-  const host = await boot(undefined, [], undefined, true);
+  const host = await boot(undefined, [], undefined, true, false, true);
   host.memoryConfig.memoryBudget!.memoryTokens = 2048;
   const piSaved = JSON.parse(await readFile(host.memoryConfig.contextConfig!, 'utf8'));
   piSaved.policy.normal_tokens = 2048;
@@ -360,6 +460,14 @@ test('actual dsh and pi kernels with separately paired entries recall from the s
     await memory.rescan(agent.agent.session.id);
     await host.rescan();
     assert.equal(host.rows().length, count);
+    const piSource = host.rows().find(row => row.event.text === '合成：在pi记下周末爬山。')!.receipt.message_id;
+    const suppression = await host.propose({ kind: 'suppress', message_id: piSource });
+    await host.session.prompt(suppression.confirm_command);
+    assert.equal(host.maintenance().status(suppression.proposal_id)?.state, 'completed');
+    agent.agent.followup(freezeMessage({ id: MessageId('synthetic-after-pi-suppress'), role: 'user', source: { kind: 'user' },
+      content: [{ type: 'text', text: '爬山' }] }));
+    await agent.agent.whenIdle();
+    assert.doesNotMatch(JSON.stringify(dshRequests.at(-1)?.messages), /在pi记下周末爬山/);
   } finally { await agent?.dispose(); await memory?.close(); await ctx.fiber.dispose(); await host.close(); }
 });
 
