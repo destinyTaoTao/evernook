@@ -36,4 +36,8 @@ run_core(suite, new_external_path) 新建合成运行库，通过公开 API 保�
 
 CLI 为 python -m evernook.evaluation validate/run-core/score。run-core 写 core-results.json 和 report.json；score 在 stdout 写完整报告。退出码 0/1/2 分别是检查通过/失败或输入无效/仍缺失观察。任一维度有失败时优先返回 1，不能被缺失或平均分掩盖。错误只输出有限代码，原始非法输入和模型诊断不回显。
 
-human_review.state=pending 表示候选集尚未人工冻结。attested 必须提供非空 reviewer、完整唯一 query_ids 与相同 suite_hash；这只是维护者声明记录。模型/硬件门槛在 v1 固定 pending，所有报告的 admission 均保持 pending；检查点全部通过也不授权自动接纳、桌面启用或性能承诺。#74 的人工核对尚未完成时，票据不能以“候选集有 224 条”作为完成证据。
+human_review 保留人工声明的原有语义：attested 必须提供非空 reviewer、完整唯一 query_ids 与相同 suite_hash；不能把 AI 复核写成人工核对。
+
+维护者于 2026-11-04 明确将复核委派给 AI 后，可用独立的 ai_review 记录冻结。它必须为 attested、绑定相同 suite_hash 与 ai-review.json 的原始字节 SHA-256。记录须说明 maintainer_delegated_ai_review 授权依据及日期，包含至少两位不同 AI 复核者；每位逐条覆盖全部查询、无重复/缺失/未通过项，并留下核对说明。记录是复核声明，不是身份认证或数字签名。
+
+load_suite 核对该记录后，报告的 dataset_review 分别标识 pending、human 或 ai_assisted；human_review 可继续为 pending，不能混淆为人工金标。旧数据/版本/安全策略身份或篡改复核文件均拒绝。模型/硬件门槛在 v1 仍固定 pending，所有报告的 admission 均保持 pending；数据冻结及检查点通过不授权模型自动接纳、桌面启用或性能承诺。

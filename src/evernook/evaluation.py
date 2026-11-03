@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -34,6 +34,7 @@ class EvaluationSuite:
     cases: tuple[EvaluationCase, ...]
     suite_hash: str
     policy_hash: str
+    dataset_review: JsonObject
 
 
 def _canonical(value: object) -> bytes:
@@ -186,7 +187,47 @@ def _load_suite(root: Path) -> EvaluationSuite:
     if review["state"] == "attested" and (not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip()
             or len(review["query_ids"]) != len(query_ids) or set(review["query_ids"]) != query_ids or review.get("suite_hash") != suite_hash):
         raise EvaluationError("incomplete_evaluation_review")
-    return EvaluationSuite(root.resolve(), manifest, corpus, tuple(cases), suite_hash, policy_hash)
+    dataset_review = _dataset_review(root, manifest, suite_hash, query_ids)
+    return EvaluationSuite(root.resolve(), manifest, corpus, tuple(cases), suite_hash, policy_hash, dataset_review)
+
+
+def _dataset_review(root: Path, manifest: JsonObject, suite_hash: str, query_ids: set[str]) -> JsonObject:
+    ai = manifest.get("ai_review")
+    result: JsonObject = {"state": "pending", "kind": None, "reviewers": []}
+    if ai is not None:
+        ai = _object(ai)
+        if (set(ai) != {"state", "suite_hash", "record_sha256"} or ai["state"] != "attested" or ai["suite_hash"] != suite_hash):
+            raise EvaluationError("incomplete_evaluation_ai_review")
+        raw = _raw(root / "ai-review.json")
+        if hashlib.sha256(raw).hexdigest() != ai["record_sha256"]:
+            raise EvaluationError("evaluation_review_hash_mismatch")
+        record = _object(_parse(raw))
+        authorization = _object(record.get("authorization"))
+        if (set(record) != {"suite_hash", "authorization", "reviews"} or record["suite_hash"] != suite_hash
+                or set(authorization) != {"basis", "date"} or authorization["basis"] != "maintainer_delegated_ai_review"
+                or not isinstance(authorization["date"], str) or not isinstance(record["reviews"], list) or len(record["reviews"]) < 2):
+            raise EvaluationError("incomplete_evaluation_ai_review")
+        date.fromisoformat(authorization["date"])
+        reviewers = []
+        for raw_review in record["reviews"]:
+            review = _object(raw_review)
+            if (set(review) != {"reviewer", "kind", "checks"} or review["kind"] != "ai" or not isinstance(review["reviewer"], str)
+                    or not review["reviewer"].strip() or review["reviewer"] in reviewers or not isinstance(review["checks"], list)):
+                raise EvaluationError("incomplete_evaluation_ai_review")
+            checked = set()
+            for raw_check in review["checks"]:
+                check = _object(raw_check)
+                if (set(check) != {"query_id", "status", "note"} or check["query_id"] not in query_ids or check["query_id"] in checked
+                        or check["status"] != "passed" or not isinstance(check["note"], str) or not check["note"].strip()):
+                    raise EvaluationError("incomplete_evaluation_ai_review")
+                checked.add(check["query_id"])
+            if checked != query_ids:
+                raise EvaluationError("incomplete_evaluation_ai_review")
+            reviewers.append(review["reviewer"])
+        result = {"state": "attested", "kind": "ai_assisted", "reviewers": reviewers, "record_sha256": ai["record_sha256"]}
+    if manifest["human_review"]["state"] == "attested":
+        result = {"state": "attested", "kind": "human", "reviewers": [manifest["human_review"]["reviewer"]]}
+    return result
 
 
 def _ids(rows: list[Any]) -> set[str]:
@@ -310,6 +351,7 @@ def _score(suite: EvaluationSuite, observations: JsonObject) -> JsonObject:
             "scorer_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "outcome": "failed" if failed else "incomplete" if missing else "passed",
             "admission": "pending", "human_review": suite.manifest["human_review"],
+            "dataset_review": suite.dataset_review,
             "model_hardware_gate": "pending", "metrics": metrics, "blocking_failures": blocking, "checks": checks}
 
 
@@ -422,6 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         suite = load_suite(args.suite)
         if args.command == "validate":
             result: JsonObject = {"suite_hash": suite.suite_hash, "policy_sha256": suite.policy_hash, "coverage": coverage(suite),
+                "dataset_review": suite.dataset_review,
                 "human_review": suite.manifest["human_review"], "model_hardware_gate": "pending"}
             exit_code = 0
         else:
@@ -431,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "run-core":
                 report_path = args.output.resolve() / "report.json"
                 report_path.write_bytes(_canonical(report) + b"\n")
-                result = {key: report[key] for key in ("suite_hash", "outcome", "admission", "metrics")}
+                result = {key: report[key] for key in ("suite_hash", "outcome", "admission", "dataset_review", "metrics")}
                 result["report"] = str(report_path)
             exit_code = 1 if report["outcome"] == "failed" else 2 if report["outcome"] == "incomplete" else 0
     except (EvaluationError, MemoryFailure) as error:

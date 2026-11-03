@@ -187,6 +187,49 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(EvaluationError, "incomplete_evaluation_review"):
             load_suite(root)
 
+    def install_ai_review(self, root: Path) -> tuple[dict[str, object], dict[str, object]]:
+        suite = load_suite(root)
+        record: dict[str, object] = {"suite_hash": suite.suite_hash, "authorization": {"basis": "maintainer_delegated_ai_review", "date": "2026-11-04"},
+                  "reviews": [{"reviewer": reviewer, "kind": "ai", "checks": [{"query_id": "q1", "status": "passed", "note": "Synthetic review fixture."}]}
+                              for reviewer in ("synthetic-primary", "synthetic-independent")]}
+        (root / "ai-review.json").write_text(json.dumps(record), encoding="utf-8")
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        manifest["ai_review"] = {"state": "attested", "suite_hash": suite.suite_hash,
+                                 "record_sha256": hashlib.sha256((root / "ai-review.json").read_bytes()).hexdigest()}
+        (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest, record
+
+    def test_delegated_ai_review_is_distinct_from_human_attestation_and_model_admission(self) -> None:
+        root = self.fixture()
+        self.install_ai_review(root)
+        reviewed = load_suite(root)
+        report = score(reviewed, {"suite_hash": reviewed.suite_hash, "rows": []})
+        self.assertEqual(report["dataset_review"]["kind"], "ai_assisted")
+        self.assertEqual(report["dataset_review"]["state"], "attested")
+        self.assertEqual(report["human_review"]["state"], "pending")
+        self.assertEqual(report["admission"], "pending")
+
+    def test_ai_review_requires_complete_distinct_reviews_and_an_unchanged_record(self) -> None:
+        root = self.fixture()
+        manifest, record = self.install_ai_review(root)
+        checked = [{"query_id": "q1", "status": "passed", "note": "Synthetic complete review."}]
+        cases = [
+            {**record, "reviews": []},
+            {**record, "suite_hash": "wrong"},
+            {**record, "reviews": [{"reviewer": "same", "kind": "ai", "checks": checked}] * 2},
+            {**record, "reviews": [{"reviewer": "first", "kind": "ai", "checks": checked}, {"reviewer": "second", "kind": "ai", "checks": []}]},
+        ]
+        for changed in cases:
+            (root / "ai-review.json").write_text(json.dumps(changed), encoding="utf-8")
+            manifest["ai_review"] = {"state": "attested", "suite_hash": record["suite_hash"],
+                                     "record_sha256": hashlib.sha256((root / "ai-review.json").read_bytes()).hexdigest()}
+            (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(EvaluationError, "incomplete_evaluation_ai_review"):
+                load_suite(root)
+        (root / "ai-review.json").write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(EvaluationError, "evaluation_review_hash_mismatch"):
+            load_suite(root)
+
 
 if __name__ == "__main__":
     unittest.main()
