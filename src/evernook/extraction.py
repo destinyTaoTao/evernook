@@ -155,6 +155,10 @@ class ExtractionProcessor:
     def __init__(self, runtime: MemoryRuntime, backend: ExtractorBackend):
         self.runtime, self.workflow, self.backend = runtime, CandidateWorkflow(runtime), backend
 
+    @property
+    def processor_version(self) -> str:
+        return self.backend.processor_version
+
     @staticmethod
     def _drafts(selection: object, sources: tuple[ExtractionSource, ...]) -> tuple[CandidateDraft, ...]:
         if not isinstance(selection, dict) or set(selection) != {"selections"} or not isinstance(selection["selections"], list) or len(selection["selections"]) > 32:
@@ -189,7 +193,7 @@ class ExtractionProcessor:
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
             raise MemoryFailure("invalid_extraction_request")
         deadline = time.monotonic() + timeout
-        lease = self.workflow.begin(access, source_ids, processor_version=self.backend.processor_version,
+        lease = self.workflow.begin(access, source_ids, processor_version=self.processor_version,
                                     lease_seconds=math.ceil(timeout) + 30)
         if lease.token is None:
             return ExtractionReport(lease.status, None)

@@ -113,6 +113,7 @@ def _parser() -> Parser:
         ("fact-query", "Read current/historical/planned facts using JSON stdin"),
         ("candidate-list", "Read a completed candidate run for trusted review using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
+        ("extract-preferences", "Explicit conservative offline preference drafts; no automatic acceptance"),
         ("maintenance-configure", "Configure explicit fixed-offset extractive navigation; no OS scheduler"),
         ("maintenance-pause", "Pause/resume navigation without pausing raw collection"),
         ("maintenance-tick", "Run bounded recoverable navigation work using JSON stdin"),
@@ -151,7 +152,7 @@ def _parser() -> Parser:
         command.add_argument("--access", type=Path, required=True)
         if name in ("recall", "refresh-semantic", "semantic-status"):
             command.add_argument("--embedding-config", type=Path)
-        if name == "extract":
+        if name in ("extract", "extract-preferences"):
             command.add_argument("--extraction-config", type=Path, required=True)
         if name in ("read", "state"):
             command.add_argument("--message-id", required=True)
@@ -286,12 +287,15 @@ def _execute(args: argparse.Namespace) -> object:
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
-    if args.command == "extract":
+    if args.command in ("extract", "extract-preferences"):
         from .extraction import ExtractionProcessor, LocalQwen
         value = _input()
         if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
+        if args.command == "extract-preferences":
+            from .preferences import PreferenceProcessor
+            return PreferenceProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
         return ExtractionProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
     if args.command.startswith("profile-"):
         from .candidates import EvidenceSpan

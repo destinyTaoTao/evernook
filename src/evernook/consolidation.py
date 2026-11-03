@@ -148,7 +148,7 @@ class ConsolidationWorkflow:
     def _candidate_id(runtime: MemoryRuntime, run_id: str, draft: CandidateDraft, source: ConsolidationDraft) -> str:
         # The mapped draft alone drops kind/category/confidence: two distinct drafts could then
         # collide on one candidate row and one proposal request. The original draft disambiguates.
-        payload = _json([run_id, asdict(draft), source.kind, source.category, source.confidence])
+        payload = _json([run_id, draft.payload(), source.kind, source.category, source.confidence])
         return hmac.digest(runtime._fingerprint_key, payload.encode("utf-8"), hashlib.sha256).hex()
 
     @staticmethod

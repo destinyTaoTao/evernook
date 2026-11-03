@@ -1,5 +1,7 @@
 # T12 显式离线抽取执行增量
 
+三类偏好草案的保守专用入口见[preferences-v1](preferences-v1.md)；其分类策略不会给本页通用摘录自动增加事实接纳权限。
+
 `evernook.extraction.ExtractionProcessor` 领取既有候选租约，在数据库事务之外运行有界本地模型，再调用同一 `CandidateWorkflow.complete` 核对来源版本并提交。任务成功/完成水位与候选仍为同一事务；不执行事实接纳，不修改人设或调度后台任务。
 
 当前唯一内置profile为 `qwen3-0.6b-experimental-extractive-v1`：复用R0已准备的 `onnx-community/Qwen3-0.6B-ONNX` 固定revision `58ca03a5e7b354b480b1a82b34bde8dc7b854cc0`，q4 CPU，Node24.11.x、Transformers4.2.0、onnxruntime-node1.24.3。每次核验九个本地文件的固定SHA-256，processor版本绑定模型/协议/依赖及实际worker脚本（含prompt）的SHA-256；缺失、改动或依赖不符失败，不下载、不退云。此profile仍未通过事实抽取质量准入，不能据此启用日常自动沉淀。

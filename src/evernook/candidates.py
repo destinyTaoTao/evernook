@@ -14,6 +14,8 @@ from .models import Access, MemoryFailure, StoredMessage
 from .runtime import MemoryRuntime, _identifier, _json
 from .safety import credential_signal
 
+PREFERENCE_CATEGORIES = ("response_style", "technical_tool", "general_interest")
+
 
 @dataclass(frozen=True)
 class EvidenceSpan:
@@ -32,6 +34,14 @@ class CandidateDraft:
     provenance: str
     sources: tuple[EvidenceSpan, ...]
     disputed: bool = False
+    preference_category: str | None = None
+
+    def payload(self) -> dict[str, object]:
+        value = asdict(self)
+        # Preserve legacy payload hashes and IDs when no preference label is present.
+        if self.preference_category is None:
+            del value["preference_category"]
+        return value
 
 
 @dataclass(frozen=True)
@@ -207,7 +217,7 @@ class CandidateWorkflow:
         encoded: set[str] = set()
         for draft in drafts:
             self._validate(draft, sources)
-            encoded.add(_json(asdict(draft)))
+            encoded.add(_json(draft.payload()))
         result_hash = self._hash(_json(sorted(encoded)))
         if row["state"] == "succeeded":
             if not hmac.compare_digest(bytes(row["result_hash"]), result_hash):
@@ -243,6 +253,9 @@ class CandidateWorkflow:
                 or len(draft.text) > 4096 or type(draft.disputed) is not bool
                 or not isinstance(draft.provenance, str) or draft.provenance not in {"user_statement", "assistant_generated", "quoted", "roleplay"}
                 or not isinstance(draft.sources, tuple) or not 1 <= len(draft.sources) <= 16):
+            raise MemoryFailure("invalid_candidate")
+        if draft.preference_category is not None and (
+                not isinstance(draft.preference_category, str) or draft.preference_category not in PREFERENCE_CATEGORIES):
             raise MemoryFailure("invalid_candidate")
         try:
             draft.text.encode("utf-8", errors="strict")
