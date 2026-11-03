@@ -27,7 +27,7 @@ await ctx.plugin(memory, {
 
 - 在 `system-prompt/assemble` 和 `agent/request` 阶段先 flush 原生 Session，再保存真实 `source.kind=user` 输入；保存失败抛错，阻断 provider，不静默继续未保存的交流。未提供“继续未保存”按钮。
 - 来源使用绑定的入口、Session ID、分支 ID 和原生 seq/index；另存 header 与事件审计。分支 header 保留 parentSession；继承前缀按子分支记录，不推断为新的当前事实。温态水位保存在内存；冷启动重扫依靠核心来源幂等，未声称有持久化扫描游标或有界启动成本。
-- `llm/stream` 在一次尝试内缓冲所有帧，合并检查分块/交错的凭证信号，然后原子提交正文和 `raw-stream-v1` JSON 附件；只有正文原件与完整采集均成功才向原生循环 yield 帧。**当前会等整个尝试保存后显示，尚无逐 token 实时输出。** 默认上限 768 KiB，超限阻断，不静默截取。
+- 默认 `streamMode='buffered'` 在一次尝试内缓冲所有帧，合并检查分块/交错的凭证信号，然后原子提交正文和 `raw-stream-v1` JSON 附件；只有正文原件与完整采集均成功才向原生循环 yield 帧。此兼容/验证模式等整个尝试保存后显示，不属于可靠逐块展示验收。显式可靠文本模式见下文。默认上限 768 KiB，超限阻断，不静默截取。
 - 失败、取消、未闭合流保留明确状态和投影，未确认的前缀不显示；异常可能已被原生 LLM 转成 `finish(error)`。进程在提交后、显示前终止会留下已保存但未显示的尝试，不保证“恰好显示一次”。
 - 原生 `tool/call` 的原始 arguments 与 `tool/result` 的文本分别保存采集信封，关联最近的真实用户输入与工具名称；失败工具保留 failed 状态。模型输出的工具帧已在进入循环/执行工具前经过上述保存屏障。派生上下文不授予执行权限。
 
@@ -48,3 +48,23 @@ await ctx.plugin(memory, {
 dsh 会先留存用户输入及运行记录，插件无法撤回宿主已保存的明文，也不能覆盖其历史 UI、日志或其他插件的显示通道。凭证检测仍是有限规则；保险库未启用时，检测到的原件不保存、不注入，敏感输入/输出会明确阻断。宿主收到普通记忆后的模型出机策略由宿主负责。
 
 真实桌面加载、系统断网、进程强杀/物理掉电、压缩/分支、用户取消及多插件组合仍须单独验收，不能用本契约的内核测试代替。
+
+## 可靠文本模式（M58-14）
+
+[#72](https://github.com/destinyTaoTao/evernook/issues/72) 增加显式 `streamMode: 'durable_text'`。固定 `dsh-agent-loop@0.2.1-rc.3/lib/index.js` 的循环先等待 `for await` 获取帧，再调用 `live.push(chunk)` 发布 `agent/assistant-stream`；适配器在 `llm/stream` 的每次 `yield` 前等待核心 `capture_chunk` 回执。因此 provider → SQLite FULL 提交 → 原生发布是可等待的顺序。SDK 当前[公开流契约](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/llm-streaming.md)说明中间件语义；本票以本地锁定版本源码和真实 SDK 合成测试为准，不把 master 文档当作固定版本运行证据。
+
+仅支持 index=0 的一个文本块：block-start、text-delta、内容等于累计 delta 的 block-end，最后 stop 或 max-tokens。每个 provider delta 可再按 64 KiB UTF-8 分块；跨 delta 的 UTF-16 代理对在传输前拼合。可见 text-delta 只包含核心回执的 `released_chars`，未消歧尾部保留在进程内，绝不直接发布原始 block-end。正常 stop 才释放剩余安全尾部、建立完整回答并发布重建后的 block-end；max-tokens 保留失败/未完成状态和未发布尾部。usage 与 replayState 等原始元数据不在文本契约内，不转发。整次帧 JSON 仍受 maxStreamBytes 约束，超过上限保留已提交部分并阻断后续发布。
+
+工具调用、reasoning、多文本块、其他索引或不一致最终块会在未经验证内容发布/工具执行前拒绝，保留已提交文本。原生 `dsh-tools` 的最终内容变换发生在可扩展 post-execute 之后，随后 `tools/result` 观察者不会被等待；因此这里没有声明通用工具结果保存屏障。维护提议工具等需要工具的调用继续使用 buffered 兼容模式，不能同时声称已通过本模式的逐块验收。
+
+provider 错误、取消或消费者关闭时尽量以空文本终止核心流；不释放待消歧尾部。正在提交时不取消 MCP 请求，收到回执后再次检查取消信号；若传输结果不确定，保留 open 供持久回查，既不以新请求覆盖同一块号，也不自动重试 provider。每次尝试使用 UUID 和固定来源/时间，开始标记先于数据块持久化；核心仍校验来源占用和重复块。native assistant/message 只留受保护事件审计，不再另行导入为普通助手回答，避免把失败/截断前缀变成完整答案。此模式也不把启用前的历史 native assistant/message 自动导入为完整原文；其原始记录仍在原生会话中。
+
+`installMemory` 的返回接口新增：
+
+- `streams(sessionId, offset=0)`：从账本分页搜索持久化尝试标记，返回当前入口/会话的 `streams: Source[]` 和全局 `next_offset`。应跟随 next_offset 到结束；其他会话可能使当前页为空。开始后尚未成功起流的尝试也可能出现，readStream 会明确失败。
+- `readStream(source, cursor=0, limit=2048)`：复用核心已授权回放，仅返回已提交正文、完整性和未保存尾部长度。强杀后无需原生 assistant settlement 即可找到已显示的流；rescan 只补扫原生记录，不从缺失尾部伪造完成。
+- `status(sessionId)` 披露 `stream_mode` 和 `tool_publication`；durable_text 为 blocked，buffered 为 buffered_calls_results_unverified。
+
+可信 renderer 必须显式显示未完成状态，并维护自己的 code point 显示游标；API 不会自动把旧文本重新推入原生循环。提交后显示前强杀可以留下已存但未显示的文本，不承诺恰好显示一次。新进程只回放，不续写丢失 carry 的旧流；后续 provider 请求建立新尝试。来源抑制/删除遵守核心控制，回放不能绕过它们。
+
+已验证范围为真实 SDK 发布事件、新 MCP 客户端、取消、provider 失败、数据库中途写入失败、强杀 SDK 子进程、重复重扫、敏感尾部及 Unicode 分页；不代表桌面 UI、真实 provider、多插件、物理断电或性能验收。

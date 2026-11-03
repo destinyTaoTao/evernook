@@ -87,7 +87,7 @@ sequenceDiagram
 
 保险库关闭时，声明或检测为敏感的内容只保存投影，并明确 `original_saved=false`；有限检测不保证任意秘密均可识别。重要标记、更正/抑制是各自显式操作，不应从上图推断一次普通提交会自动完成它们。
 
-工具与有界文本附件同事务保存，缺失、超限、不支持和未完成内容报告缺口。显式 stream 路径和 dsh/pi 包装会整次缓冲，完整保存后再发布，尚无实时逐 token 显示。pi 的明确包装工具有同类屏障；dsh 原生工具最终结果的通用 awaited seam 仍缺失。真实日常 UI/恢复/多插件组合未验收。见[采集](contracts/capture-v1.md)、[dsh](contracts/dsh-native-v1.md)与[pi](contracts/pi-native-v1.md)。
+工具与有界文本附件同事务保存，缺失、超限、不支持和未完成内容报告缺口。dsh 显式 durable_text 模式已通过核心分块回执逐步发布单文本块，并可从账本发现/分页回放中断尝试；工具、reasoning 和多块路径在此模式阻断。默认兼容 stream 路径和 pi 仍整次缓冲。pi 的明确包装工具有同类屏障；dsh 原生工具最终结果的通用 awaited seam 仍缺失。真实日常 UI/多插件组合未验收。见[采集](contracts/capture-v1.md)、[dsh](contracts/dsh-native-v1.md)与[pi](contracts/pi-native-v1.md)。
 
 ## 当前检索与降级
 
@@ -177,7 +177,7 @@ flowchart TD
 
 MCP 默认十个查询工具，可信宿主模式十七项，包含有限 capture/capture_stream 及可靠文本 capture_chunk/read_stream（显式 contextConfig 另加 context）；候选/事实/经验接纳、彻底删除、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
 
-核心支持[可靠文本分块](contracts/durable-stream-v1.md)：逐块事务回执、幂等顺序、未完成终态和重启分页回放；待消歧敏感尾部由宿主持有，库内仅保存校验及长度。完整结束同事务生成普通助手原文，删除/抑制和恢复核验包含流状态。dsh/pi 逐块发布钩子尚待后续接线，当前原生模式仍整段缓冲。
+核心支持[可靠文本分块](contracts/durable-stream-v1.md)：逐块事务回执、幂等顺序、未完成终态和重启分页回放；待消歧敏感尾部由宿主持有，库内仅保存校验及长度。完整结束同事务生成普通助手原文，删除/抑制和恢复核验包含流状态。dsh 显式单文本块发布已接线，真实 SDK 子进程强杀后可通过新客户端回放；pi 逐块发布待 #73，默认兼容模式仍整段缓冲。#72 验证与限制见[实施报告](reports/m58-14-dsh-durable-stream.md)。
 
 dsh/pi 可显式接线同一[确认式维护](contracts/host-maintenance-v1.md)：模型仅提议，可信宿主展示来源与精确范围，后续真实用户确认才由独立维护身份执行。重要原话、来源更正/抑制、画像修订/确认、既有候选事实更正和普通来源删除复用核心；重启后的已提交控制继续有效，待确认预览失效。真实桌面 UI 验收仍另行推进。
 

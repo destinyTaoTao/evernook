@@ -38,9 +38,12 @@ class Synthetic extends LlmAdapter {
   toolArguments = '{"amount":37.50}';
   private toolUsed = false;
   interrupt = false;
+  afterFirst?: () => Promise<void>;
+  chunks?: StreamChunk[];
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
     this.inspect?.(options);
+    if (this.chunks) { yield* this.chunks; return; }
     if (this.toolOnce && !this.toolUsed) {
       this.toolUsed = true;
       const id = ToolCallId('synthetic-call');
@@ -52,6 +55,7 @@ class Synthetic extends LlmAdapter {
     }
     yield { type: 'block-start', index: 0, blockType: 'text' };
     yield { type: 'text-delta', index: 0, text: this.reply.slice(0, 3) };
+    await this.afterFirst?.();
     if (this.interrupt) throw new Error('synthetic-provider-timeout');
     yield { type: 'text-delta', index: 0, text: this.reply.slice(3) };
     yield { type: 'block-end', index: 0, block: { type: 'text', text: this.reply } };
@@ -59,7 +63,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -76,6 +80,7 @@ async function boot(adapter: Synthetic, budgeted = false) {
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
   ctx.llm.registerAdapter(['synthetic'], adapter);
   const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  if (durable) Object.assign(config, { streamMode: 'durable_text' });
   let target: Tokenizer | undefined;
   if (budgeted) {
     const tokenizer = { model: { type: 'WordLevel', vocab: { '[UNK]': 0, hello: 1, world: 2 }, unk_token: '[UNK]' },
@@ -114,6 +119,261 @@ async function boot(adapter: Synthetic, budgeted = false) {
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('durable text is published and independently replayable before the provider finishes', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, false, true);
+  const reader = new MemoryClient(host.config);
+  await reader.connect();
+  const displayed: string[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => {
+    if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') displayed.push(frame.chunk.text);
+  });
+  const handle = await host.create('durable-live');
+  let checked = false;
+  adapter.afterFirst = async () => {
+    assert.equal(displayed.join(''), '合成回');
+    const found = await host.memory.streams(handle.agent.session.id);
+    assert.equal(found.streams.length, 1);
+    const page = await reader.readStream(found.streams[0]);
+    assert.equal(page.text, '合成回');
+    assert.equal(page.state, 'open');
+    checked = true;
+  };
+  try {
+    handle.agent.followup(user('durable-input', '合成：可靠分块'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    assert.equal(checked, true);
+    assert.equal(displayed.join(''), adapter.reply);
+    const found = await host.memory.streams(handle.agent.session.id);
+    const page = await reader.readStream(found.streams[0]);
+    assert.equal(page.text, adapter.reply);
+    assert.equal(page.state, 'complete');
+    assert.equal((await reader.read(page.final_message_id!)).event.text, adapter.reply);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+test('durable cancellation preserves the displayed prefix through a fresh adapter and repeated rescan', async () => {
+  const adapter = new Synthetic();
+  adapter.reply = '合成回password=synthetic-withheld-tail';
+  const host = await boot(adapter, false, true);
+  const displayed: string[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => {
+    if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') displayed.push(frame.chunk.text);
+  });
+  const handle = await host.create('durable-cancel');
+  adapter.afterFirst = async () => { handle.agent.cancel({ kind: 'user' }); };
+  let fresh: Awaited<ReturnType<typeof installMemory>> | undefined;
+  try {
+    handle.agent.followup(user('cancel-input', '合成：取消可靠流'));
+    await handle.agent.whenIdle();
+    assert.equal(displayed.join(''), '合成回');
+    await host.memory.close();
+    fresh = await installMemory(host.ctx, host.config);
+    await fresh.rescan(handle.agent.session.id);
+    await fresh.rescan(handle.agent.session.id);
+    const found = await fresh.streams(handle.agent.session.id);
+    assert.equal(found.streams.length, 1);
+    const page = await fresh.readStream(found.streams[0]);
+    assert.equal(page.text, '合成回');
+    assert.equal(page.state, 'canceled');
+    assert.equal(page.complete, false);
+    assert.equal(page.final_message_id, null);
+    assert.deepEqual(await fresh.readStream(found.streams[0]), page);
+  } finally { await fresh?.close(); await handle.dispose(); await host.close(); }
+});
+
+test('a killed real dsh process leaves displayed text discoverable without a native settlement', async () => {
+  const host = await boot(new Synthetic(), false, true);
+  await host.memory.close();
+  const worker = childProcess.fork(join(import.meta.dirname, 'dsh-crash-worker.ts'), [JSON.stringify(host.config), host.root],
+    { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  const exited = new Promise<void>(resolve => worker.once('exit', () => resolve()));
+  let fresh: Awaited<ReturnType<typeof installMemory>> | undefined;
+  try {
+    const displayed = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('synthetic-worker-timeout')), 30000);
+      worker.once('error', error => { clearTimeout(timer); reject(error); });
+      worker.once('exit', () => { clearTimeout(timer); reject(new Error('synthetic-worker-exited')); });
+      worker.once('message', value => {
+        clearTimeout(timer);
+        const message = value as { text?: string; error?: string };
+        if (message.text) resolve(message.text); else reject(new Error(message.error));
+      });
+    });
+    assert.equal(displayed, '已显示🙂');
+    worker.kill('SIGKILL');
+    await exited;
+    fresh = await installMemory(host.ctx, host.config);
+    await fresh.rescan(SessionId('durable-killed'));
+    await fresh.rescan(SessionId('durable-killed'));
+    const found = await fresh.streams(SessionId('durable-killed'));
+    assert.equal(found.streams.length, 1);
+    const reader = new MemoryClient(host.config);
+    await reader.connect();
+    try {
+      const page = await reader.readStream(found.streams[0]);
+      assert.equal(page.text, '已显示🙂');
+      assert.equal(page.state, 'open');
+      assert.equal(page.pending_chars, 4);
+      assert.equal(page.complete, false);
+      assert.deepEqual(await reader.readStream(found.streams[0]), page);
+    } finally { await reader.close(); }
+  } finally { worker.kill('SIGKILL'); await exited; await fresh?.close(); await host.close(); }
+});
+
+test('durable write failure after publication blocks the next delta and leaves its outcome reconcilable', async () => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, false, true);
+  const displayed: string[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => {
+    if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') displayed.push(frame.chunk.text);
+  });
+  adapter.afterFirst = async () => {
+    const db = new DatabaseSync(join(host.root, 'memory/memory.sqlite3'));
+    try { db.exec("CREATE TRIGGER synthetic_chunk_failure BEFORE INSERT ON text_stream_chunks_v1 WHEN NEW.chunk_index >= 2 BEGIN SELECT RAISE(ABORT,'synthetic failure'); END"); }
+    finally { db.close(); }
+  };
+  const handle = await host.create('durable-write-failure');
+  try {
+    handle.agent.followup(user('write-failure-input', '合成：中途保存失败'));
+    await handle.agent.whenIdle();
+    assert.equal(displayed.join(''), '合成回');
+    assert.ok(host.errors.length > 0);
+    const found = await host.memory.streams(handle.agent.session.id);
+    const page = await host.memory.readStream(found.streams[0]);
+    assert.equal(page.text, '合成回');
+    assert.equal(page.state, 'open');
+    assert.equal(page.next_index, 2);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('durable mode screens split sensitive tails and rejects tool calls before publication or execution', async () => {
+  for (const tool of [false, true]) {
+    const adapter = new Synthetic();
+    adapter.reply = 'password=synthetic-durable-output-sentinel';
+    adapter.toolOnce = tool;
+    const host = await boot(adapter, false, true);
+    let executions = 0;
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic blocked tool',
+      parameters: { amount: { type: 'number' } },
+      execute: async () => { executions++; return [{ type: 'text', text: 'synthetic result' }]; } }));
+    const visible: string[] = [];
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(JSON.stringify(frame.chunk)); });
+    const handle = await host.create('durable-protected');
+    try {
+      handle.agent.followup(user('protected-input', '合成：受限路径'));
+      await handle.agent.whenIdle();
+      assert.ok(host.errors.length > 0);
+      assert.equal(executions, 0);
+      assert.doesNotMatch(visible.join(''), /password|synthetic-durable-output-sentinel|synthetic-call|amount/);
+      assert.equal(host.memory.status(handle.agent.session.id).tool_publication, 'blocked');
+      const found = await host.memory.streams(handle.agent.session.id);
+      const page = await host.memory.readStream(found.streams[0]);
+      assert.equal(page.text, '');
+      assert.equal(page.state, tool ? 'failed' : 'protected');
+      const paths = await readdir(join(host.root, 'memory'));
+      const contents = Buffer.concat(await Promise.all(paths.filter(name => name.startsWith('memory.sqlite3')).map(name => readFile(join(host.root, 'memory', name)))));
+      assert.ok(!contents.includes(Buffer.from('synthetic-durable-output-sentinel')));
+    } finally { await handle.dispose(); await host.close(); }
+  }
+});
+
+test('a truncated provider finish keeps the withheld tail incomplete rather than declaring a full answer', async () => {
+  const adapter = new Synthetic();
+  adapter.chunks = [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text: '已显示pass' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '已显示pass' } },
+    { type: 'finish', reason: { kind: 'max-tokens' } },
+  ];
+  const host = await boot(adapter, false, true);
+  const visible: string[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => {
+    if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') visible.push(frame.chunk.text);
+  });
+  const handle = await host.create('durable-truncated');
+  try {
+    handle.agent.followup(user('truncated-input', '合成：输出上限'));
+    await handle.agent.whenIdle();
+    const found = await host.memory.streams(handle.agent.session.id);
+    const page = await host.memory.readStream(found.streams[0]);
+    assert.equal(page.state, 'failed');
+    assert.equal(page.text, '已显示');
+    assert.equal(page.pending_chars, 4);
+    assert.equal(page.final_message_id, null);
+    assert.equal(visible.join(''), '已显示');
+    const reader = new MemoryClient(host.config);
+    await reader.connect();
+    try {
+      const matches = await reader.call<{ hits: { role: string; completion: string }[] }>('search', { query: '已显示', mode: 'exact' });
+      assert.ok(!matches.hits.some(hit => hit.role === 'assistant' && hit.completion === 'complete'));
+    } finally { await reader.close(); }
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('budgeted durable text preserves split UTF-16 pairs and splits large provider deltas at the core byte limit', async () => {
+  const adapter = new Synthetic();
+  const text = '安全🙂' + '字'.repeat(22000) + '。';
+  adapter.chunks = [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text: '安全\uD83D' },
+    { type: 'text-delta', index: 0, text: '\uDE42' + '字'.repeat(22000) + '。' },
+    { type: 'block-end', index: 0, block: { type: 'text', text } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ];
+  const host = await boot(adapter, true, true);
+  const visible: string[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => {
+    if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') visible.push(frame.chunk.text);
+  });
+  const handle = await host.create('durable-unicode');
+  try {
+    handle.agent.followup(user('unicode-input', '合成：Unicode 分块'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    assert.equal(visible.join(''), text);
+    const found = await host.memory.streams(handle.agent.session.id);
+    let restored = '';
+    let cursor = 0;
+    for (;;) {
+      const page = await host.memory.readStream(found.streams[0], cursor, 4096);
+      restored += page.text;
+      if (page.next_cursor === null) break;
+      cursor = page.next_cursor;
+    }
+    assert.equal(restored, text);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('a failed provider and a mismatching final block cannot publish uncommitted final text or diagnostics', async () => {
+  for (const mismatch of [false, true]) {
+    const adapter = new Synthetic();
+    if (mismatch) adapter.chunks = [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: '已显示' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'password=synthetic-final-secret' } },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ];
+    else { adapter.reply = '已显示'; adapter.interrupt = true; }
+    const host = await boot(adapter, false, true);
+    const visible: string[] = [];
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(JSON.stringify(frame.chunk)); });
+    const handle = await host.create('durable-provider-error');
+    try {
+      handle.agent.followup(user('provider-error-input', '合成：失败与最终块不一致'));
+      await handle.agent.whenIdle();
+      assert.ok(host.errors.length > 0);
+      assert.doesNotMatch(visible.join(''), /synthetic-final-secret|password|synthetic-provider-timeout/);
+      const found = await host.memory.streams(handle.agent.session.id);
+      const page = await host.memory.readStream(found.streams[0]);
+      assert.equal(page.text, '已显示');
+      assert.equal(page.state, 'failed');
+      assert.equal(page.final_message_id, null);
+    } finally { await handle.dispose(); await host.close(); }
+  }
+});
 
 test('target tokenizer budgets the real core payload and provider request with a least-privilege identity', async () => {
   const adapter = new Synthetic();

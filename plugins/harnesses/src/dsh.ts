@@ -7,13 +7,16 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session-persistence';
 import type {} from '@deepseek-ai/dsh-system-prompt';
-import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle } from './client.ts';
+import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
+import { durableText } from './durable-text.ts';
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config extends MemoryConfig {
-  /** A hard bound for the buffered stream, not a claim of per-token live publication. */
+  /** Explicit text-only publication. Buffered mode remains the compatibility/validation path. */
+  streamMode?: 'buffered' | 'durable_text';
+  /** Hard bound on provider frame JSON bytes in either publication mode. */
   maxStreamBytes?: number;
   /** Bound only the optional evidence contribution; full token budgeting belongs to context construction. */
   maxEvidenceChars?: number;
@@ -58,6 +61,8 @@ function event(config: Config, session: string, id: string, role: Event['role'],
 
 /** Fixed dsh 0.2.1-rc.3 adapter. No host configuration or user data directory is mutated here. */
 export async function installMemory(ctx: Context, config: Config) {
+  const streamMode = config.streamMode ?? 'buffered';
+  if (!['buffered', 'durable_text'].includes(streamMode)) throw new Error('evernook:invalid_host_config');
   const maxStreamBytes = config.maxStreamBytes ?? 768 * 1024;
   const maxEvidenceChars = config.maxEvidenceChars ?? 12000;
   const budget = config.memoryBudget;
@@ -144,7 +149,9 @@ export async function installMemory(ctx: Context, config: Config) {
         last = { text, receipt };
       }
       if (record.seq <= (through.get(sessionId) ?? -1)) continue;
-      if (record.type === 'assistant/message') {
+      // Reliable text is authoritative in the core stream. Reimporting native partial settlements
+      // would turn failed/truncated prefixes into independent ordinary assistant answers.
+      if (record.type === 'assistant/message' && streamMode === 'buffered') {
         await client.remember(event(config, sessionId, `assistant:${record.seq}`, 'assistant', textOf(record.data.message),
           record.seq, record.time, record.data.interrupted ? 'partial' : 'complete'));
       }
@@ -256,7 +263,7 @@ export async function installMemory(ctx: Context, config: Config) {
     assertProtectedHistoryExcluded({ ...options, messages: safe.messages }, protectedTexts.get(sessionId) ?? new Set());
     excludedHistory.set(sessionId, safe.omitted);
     // The SDK freezes loop requests. A screened request uses its public one-shot path;
-    // this outer barrier still retains every frame until the same durable save succeeds.
+    // the outer publication barrier still applies to its resulting frames.
     let prepared: GenerateOptions = { ...options, messages: budget ? currentMemoryOnly(safe.messages, currentPayloads.get(sessionId) ?? '') : safe.messages,
       ...(safe.omitted ? { toolHistory: undefined } : {}),
       ...(budget ? { maxTokens: Math.min(options.maxTokens ?? budget.outputReserveTokens, budget.outputReserveTokens) } : {}) };
@@ -286,7 +293,13 @@ export async function installMemory(ctx: Context, config: Config) {
     const timestamp = Date.now();
     const source = String(options.sessionId);
     await client.remember(event(config, source, `attempt:${attempt}:start`, 'system',
-      stable({ kind: 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+      stable({ kind: streamMode === 'durable_text' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+    if (streamMode === 'durable_text') {
+      yield* durableText(client, incoming,
+        event(config, source, `attempt:${attempt}:display`, 'assistant', '', 1, timestamp, 'partial'),
+        input.receipt.message_id, maxStreamBytes, options.signal);
+      return;
+    }
     const frames: StreamChunk[] = [];
     let bytes = 0;
     try {
@@ -318,6 +331,15 @@ export async function installMemory(ctx: Context, config: Config) {
   let closed = false;
   return {
     capture,
+    /** Paginated attempt discovery from the durable ledger, including attempts interrupted before native settlement. */
+    async streams(sessionId: SessionId, offset = 0) {
+      const page = await client.call<{ hits: { source: Source; role: string }[]; next_offset: number | null }>('search',
+        { query: 'evernook_dsh_text_stream_v1', mode: 'exact', limit: 100, offset });
+      return { streams: page.hits.filter(hit => hit.role === 'system' && hit.source.entry === config.entry
+          && hit.source.session === String(sessionId) && /^attempt:[0-9a-f-]{36}:start$/.test(hit.source.event))
+        .map(hit => ({ ...hit.source, event: hit.source.event.replace(/:start$/, ':display') })), next_offset: page.next_offset };
+    },
+    readStream(source: Source, cursor = 0, limit = 2048) { return client.readStream(source, cursor, limit); },
     async settings() {
       const state = await client.call<{ context: { configured: boolean; saved_policy?: Record<string, unknown>;
         recommended_policy?: Record<string, unknown>; model_id?: string; counter_id?: string } }>('status', {});
@@ -327,6 +349,7 @@ export async function installMemory(ctx: Context, config: Config) {
     status(sessionId: SessionId) {
       const key = String(sessionId);
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
+        stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked' : 'buffered_calls_results_unverified',
         context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
         protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
         provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };

@@ -8,6 +8,8 @@ The opt-in pi SDK adapter targets `@earendil-works/pi-coding-agent` / `pi-ai` `1
 
 The explicit `./dsh-maintenance` export and optional pi `maintenance` configuration share reviewed pin, correction, suppression and purge proposals. They require separate maintenance credentials and trusted preview/result callbacks; only a later actual native user confirmation can apply a proposal. See the [maintenance contract](../../docs/contracts/host-maintenance-v1.md). Installing them does not change a desktop profile or grant the model maintenance scopes.
 
+dsh can explicitly select `streamMode: 'durable_text'` to publish a single text block incrementally through the core chunk barrier. Tool/reasoning/multiple-block paths are rejected in this mode. `streams(sessionId, offset?)` discovers durable attempts after a restart; `readStream(source, cursor?, limit?)` pages only committed text for a trusted renderer. The renderer owns its display cursor; no provider resume or exactly-once display is implied. The default `buffered` mode remains a compatibility/validation path. See the [reliable dsh contract](../../docs/contracts/dsh-native-v1.md#可靠文本模式m58-14).
+
 ```powershell
 npm ci --ignore-scripts
 npm run typecheck
