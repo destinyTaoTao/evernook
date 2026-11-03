@@ -21,21 +21,24 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import { installMemory } from '../src/dsh.ts';
+import { MemoryClient } from '../src/client.ts';
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 const output = process.env.EVERNOOK_TEST_OUTPUT;
 if (!python || !output) throw new Error('Set external synthetic EVERNOOK_TEST_PYTHON and EVERNOOK_TEST_OUTPUT');
 const checkout = resolve(import.meta.dirname, '../../..');
 
-async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false) {
+async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false, durable = false) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'pi-native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; c,a=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); p=c.parent/'mcp-access-pi.json'; pair_client(c,client_id='synthetic-pi',entry='pi',access_path=p,scopes=('capture','recall')); print(json.dumps({'config':str(c),'access':str(p)}))";
   const paths = JSON.parse(execFileSync(python!, ['-c', script, join(root, 'memory')], { cwd: checkout, encoding: 'utf8' }));
-  const faux = fauxProvider({ provider: 'synthetic-local-pi', tokenSize: { min: 2, max: 3 } });
+  const faux = fauxProvider({ provider: 'synthetic-local-pi', tokenSize: { min: 2, max: 3 },
+    ...(durable ? { tokensPerSecond: 40 } : {}) });
   const fixture = budgeted ? await tokenizerFixture(root, faux.getModel().id) : undefined;
   const memoryConfig: PiConfig = { python: python!, config: paths.config, access: paths.access, entry: 'pi',
     cwd: checkout, target: faux.getModel(), tools };
+  if (durable) Object.assign(memoryConfig, { streamMode: 'durable_text' });
   const reviews: import('../src/maintenance.ts').MaintenanceReview[] = [];
   const outcomes: import('../src/maintenance.ts').MaintenanceOutcome[] = [];
   let onReview: (() => void | Promise<void>) | undefined;
@@ -90,7 +93,7 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
       });
     }] });
   await resources.reload();
-  const model = { ...faux.getModel(), provider: 'evernook-memory', api: 'evernook-buffered-pi-v1' };
+  const model = { ...faux.getModel(), provider: 'evernook-memory', api: durable ? 'evernook-durable-pi-v1' : 'evernook-buffered-pi-v1' };
   const { session } = await createAgentSession({ cwd: root, agentDir: join(root, 'pi-agent'), modelRuntime: runtime,
     resourceLoader: resources, settingsManager: settings, noTools: tools.length || maintained ? 'builtin' : 'all',
     model, sessionManager: SessionManager.create(root, join(root, 'pi-sessions')) });
@@ -107,9 +110,169 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     setInspect(value: (signal?: AbortSignal) => void | Promise<void>) { inspect = value; },
     setRawObserver(value: () => void) { rawObserver = value; },
     async rescan() { assert.ok(memory && context); await memory.rescan(context); },
+    async streams() { assert.ok(memory); return memory.streams(session.sessionManager.getSessionId()); },
     async close() { await memory?.close(); session.dispose(); },
   };
 }
+
+test('pi durable text publishes only committed prefixes before the full answer is saved and survives reload', async () => {
+  const reply = '合成可靠分块🙂之后仍继续逐块生成。';
+  const host = await boot(reply, [], undefined, true, false, false, true);
+  const reader = new MemoryClient(host.memoryConfig);
+  await reader.connect();
+  const displayed: string[] = [];
+  const checks: Promise<void>[] = [];
+  host.session.subscribe(event => {
+    if (event.type !== 'message_update' || event.assistantMessageEvent.type !== 'text_delta') return;
+    displayed.push(event.assistantMessageEvent.delta);
+    if (checks.length) return;
+    const first = displayed.join('');
+    checks.push((async () => {
+      const found = await host.streams();
+      const page = await reader.readStream(found.streams[0]);
+      assert.ok(page.text.startsWith(first));
+      assert.equal(page.state, 'open');
+      assert.equal(page.final_message_id, null);
+    })());
+    void checks.at(-1)!.catch(() => {});
+  });
+  try {
+    await host.session.prompt('合成：pi 可靠输出');
+    await Promise.all(checks);
+    assert.ok(checks.length);
+    assert.equal(displayed.join(''), reply);
+    assert.deepEqual(host.rawChecks, []);
+    await host.restart();
+    await host.session.prompt('/evernook-rescan'); await host.session.prompt('/evernook-rescan');
+    const found = await host.streams();
+    assert.equal(found.streams.length, 1);
+    const page = await reader.readStream(found.streams[0]);
+    assert.equal(page.text, reply);
+    assert.equal(page.state, 'complete');
+  } finally { await reader.close(); await host.close(); }
+});
+
+test('pi durable cancellation recovers only committed partial text after restart and duplicate rescan', async () => {
+  const host = await boot('已显示之后还有许多合成文字🙂pass', [], undefined, false, false, false, true);
+  const visible: string[] = [];
+  let abort: Promise<void> | undefined;
+  host.session.subscribe(event => {
+    if (event.type !== 'message_update' || event.assistantMessageEvent.type !== 'text_delta') return;
+    visible.push(event.assistantMessageEvent.delta);
+    abort ??= host.session.abort();
+  });
+  try {
+    await host.session.prompt('合成：取消 pi 流');
+    await abort;
+    assert.ok(visible.join(''));
+    await host.restart();
+    await host.session.prompt('/evernook-rescan'); await host.session.prompt('/evernook-rescan');
+    const found = await host.streams();
+    const reader = new MemoryClient(host.memoryConfig);
+    await reader.connect();
+    try {
+      const page = await reader.readStream(found.streams[0]);
+      assert.ok(page.text.startsWith(visible.join('')));
+      assert.equal(page.state, 'canceled');
+      assert.equal(page.complete, false);
+      assert.equal(page.final_message_id, null);
+      assert.deepEqual(await reader.readStream(found.streams[0]), page);
+    } finally { await reader.close(); }
+  } finally { await host.close(); }
+});
+
+test('pi durable mid-stream storage failure prevents unsaved publication and preserves the saved prefix', async () => {
+  const reply = '已显示之后还有许多合成文字用于失败验证。';
+  const host = await boot(reply, [], undefined, false, false, false, true);
+  const visible: string[] = [];
+  host.session.subscribe(event => {
+    if (event.type !== 'message_update' || event.assistantMessageEvent.type !== 'text_delta') return;
+    visible.push(event.assistantMessageEvent.delta);
+    if (visible.length !== 1) return;
+    const db = new DatabaseSync(join(host.root, 'memory/memory.sqlite3'));
+    try { db.exec("CREATE TRIGGER synthetic_pi_chunk_failure BEFORE INSERT ON text_stream_chunks_v1 BEGIN SELECT RAISE(ABORT,'synthetic failure'); END"); }
+    finally { db.close(); }
+  });
+  try {
+    await host.session.prompt('合成：pi 写入中断');
+    assert.ok(visible.join(''));
+    assert.notEqual(visible.join(''), reply);
+    const found = await host.streams();
+    const reader = new MemoryClient(host.memoryConfig); await reader.connect();
+    try {
+      const page = await reader.readStream(found.streams[0]);
+      assert.equal(page.text, visible.join(''));
+      assert.equal(page.state, 'open');
+      assert.equal(page.final_message_id, null);
+    } finally { await reader.close(); }
+  } finally { await host.close(); }
+});
+
+test('pi durable sensitive and unsupported tool output never leaks through snapshots or raw observers', async () => {
+  for (const tool of [false, true]) {
+    const host = await boot('password=synthetic-pi-durable-secret', [], undefined, false, false, false, true);
+    if (tool) host.faux.setResponses([fauxAssistantMessage(fauxToolCall('unwrapped-tool', { secret: 'synthetic-pi-durable-secret' }), { stopReason: 'toolUse' })]);
+    const visible: string[] = [];
+    host.session.subscribe(event => { if (event.type === 'message_update') visible.push(JSON.stringify(event)); });
+    try {
+      await host.session.prompt('合成：pi 保护测试');
+      assert.doesNotMatch(visible.join(''), /password|synthetic-pi-durable-secret|unwrapped-tool/);
+      assert.deepEqual(host.rawChecks, []);
+      const found = await host.streams();
+      const reader = new MemoryClient(host.memoryConfig); await reader.connect();
+      try {
+        const page = await reader.readStream(found.streams[0]);
+        assert.equal(page.text, '');
+        assert.equal(page.state, tool ? 'failed' : 'protected');
+      } finally { await reader.close(); }
+      const paths = await readdir(join(host.root, 'memory'));
+      const contents = Buffer.concat(await Promise.all(paths.filter(name => name.startsWith('memory.sqlite3')).map(name => readFile(join(host.root, 'memory', name)))));
+      assert.ok(!contents.includes(Buffer.from('synthetic-pi-durable-secret')));
+    } finally { await host.close(); }
+  }
+});
+
+test('pi durable first-fragment timing measures synthetic provider delta receipt to publication', async () => {
+  const host = await boot('合成可靠分块首片测量🙂。', [], undefined, false, false, false, true);
+  const samples: { first_delta_to_publication_ms: number; request_to_publication_ms: number }[] = [];
+  try {
+    for (let index = 0; index < 5; index++) {
+      await host.session.prompt('合成：首片测量' + index);
+      const timing = host.status().stream_timing;
+      assert.ok(timing);
+      assert.ok(timing.first_delta_to_publication_ms >= 0);
+      assert.ok(timing.request_to_publication_ms >= timing.first_delta_to_publication_ms);
+      samples.push(timing);
+    }
+    process.stdout.write('PI_DURABLE_SYNTHETIC_TIMING ' + JSON.stringify(samples) + '\n');
+  } finally { await host.close(); }
+});
+
+test('pi durable length and provider errors preserve partial evidence without importing a complete answer', async () => {
+  for (const stopReason of ['length', 'error'] as const) {
+    const host = await boot('已显示pass', [], undefined, false, false, false, true);
+    host.faux.setResponses([fauxAssistantMessage('已显示pass', { stopReason,
+      errorMessage: 'password=synthetic-provider-diagnostic' })]);
+    const visible: string[] = [];
+    host.session.subscribe(event => { if (event.type === 'message_update') visible.push(JSON.stringify(event)); });
+    try {
+      await host.session.prompt('合成：输出终态');
+      assert.doesNotMatch(visible.join(''), /synthetic-provider-diagnostic|password/);
+      await host.session.prompt('/evernook-rescan');
+      const found = await host.streams();
+      const reader = new MemoryClient(host.memoryConfig); await reader.connect();
+      try {
+        const page = await reader.readStream(found.streams[0]);
+        assert.equal(page.state, 'failed');
+        assert.equal(page.text, '已显示');
+        assert.equal(page.pending_chars, 4);
+        assert.equal(page.final_message_id, null);
+        const matches = await reader.call<{ hits: { role: string; completion: string }[] }>('search', { query: '已显示', mode: 'exact' });
+        assert.ok(!matches.hits.some(hit => hit.role === 'assistant' && hit.completion === 'complete'));
+      } finally { await reader.close(); }
+    } finally { await host.close(); }
+  }
+});
 
 test('pi confirmation shares the exact-word and independent maintenance contract and rejection never writes', async () => {
   const host = await boot(undefined, [], undefined, false, false, true);

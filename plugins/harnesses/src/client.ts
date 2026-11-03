@@ -120,6 +120,12 @@ export class MemoryClient {
   readStream(source: Source, cursor = 0, limit = 2048, signal?: AbortSignal) {
     return this.call<StreamPage>('read_stream', { source, cursor, limit }, signal);
   }
+  async streamAttempts(marker: string, entry: string, session: string, offset = 0) {
+    const page = await this.call<{ hits: { source: Source; role: string }[]; next_offset: number | null }>('search',
+      { query: marker, mode: 'exact', limit: 100, offset });
+    return { sources: page.hits.filter(hit => hit.role === 'system' && hit.source.entry === entry
+      && hit.source.session === session).map(hit => hit.source), next_offset: page.next_offset };
+  }
   capture(event: Event, kind: 'message' | 'tool_call' | 'tool_result', attachments: Attachment[] = [], input_id?: string, tool_name?: string) {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }

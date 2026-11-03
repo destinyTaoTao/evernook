@@ -333,11 +333,9 @@ export async function installMemory(ctx: Context, config: Config) {
     capture,
     /** Paginated attempt discovery from the durable ledger, including attempts interrupted before native settlement. */
     async streams(sessionId: SessionId, offset = 0) {
-      const page = await client.call<{ hits: { source: Source; role: string }[]; next_offset: number | null }>('search',
-        { query: 'evernook_dsh_text_stream_v1', mode: 'exact', limit: 100, offset });
-      return { streams: page.hits.filter(hit => hit.role === 'system' && hit.source.entry === config.entry
-          && hit.source.session === String(sessionId) && /^attempt:[0-9a-f-]{36}:start$/.test(hit.source.event))
-        .map(hit => ({ ...hit.source, event: hit.source.event.replace(/:start$/, ':display') })), next_offset: page.next_offset };
+      const page = await client.streamAttempts('evernook_dsh_text_stream_v1', config.entry, String(sessionId), offset);
+      return { streams: page.sources.filter(source => /^attempt:[0-9a-f-]{36}:start$/.test(source.event))
+        .map(source => ({ ...source, event: source.event.replace(/:start$/, ':display') })), next_offset: page.next_offset };
     },
     readStream(source: Source, cursor = 0, limit = 2048) { return client.readStream(source, cursor, limit); },
     async settings() {

@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { Type, createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
   type Model, type SimpleStreamOptions, type TranscriptContext } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionEntry, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { MemoryClient, safeHistory, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle } from './client.ts';
+import { MemoryClient, safeHistory, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { createMaintenance, type MaintenanceConfig, type MaintenanceProposal } from './maintenance.ts';
+import { durableText } from './durable-text.ts';
+import { piTextFrames } from './pi-text.ts';
 
 export interface PiConfig extends MemoryConfig {
+  streamMode?: 'buffered' | 'durable_text';
   maintenance?: MaintenanceConfig;
   /** An actual configured target model, never an invented endpoint or copied credential. */
   target: Model<Api>;
@@ -89,6 +92,9 @@ function rawAttachment(id: string, value: unknown, maximum: number): Attachment 
 
 /** Fixed Pi1.4.0 opt-in model profile. Never changes a user's existing files or model selection. */
 export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
+  const streamMode = config.streamMode ?? 'buffered';
+  if (!['buffered', 'durable_text'].includes(streamMode)
+      || (streamMode === 'durable_text' && (config.tools?.length || config.maintenance))) throw new Error('evernook:invalid_host_config');
   const providerId = config.providerId ?? 'evernook-memory';
   const maximum = config.maxStreamBytes ?? 768 * 1024;
   const maxEvidenceChars = config.maxEvidenceChars ?? 12000;
@@ -105,7 +111,8 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       || !Number.isSafeInteger(maximum) || maximum < 1024 || maximum > 1024 * 1024
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
   if (toolNames.size !== protectedTools.length) throw new Error('evernook:duplicate_native_tool');
-  const proxy: Model<Api> = { ...config.target, provider: providerId, api: 'evernook-buffered-pi-v1', headers: undefined };
+  const proxy: Model<Api> = { ...config.target, provider: providerId,
+    api: streamMode === 'durable_text' ? 'evernook-durable-pi-v1' : 'evernook-buffered-pi-v1', headers: undefined };
   let client: MemoryClient | undefined;
   let connecting: Promise<MemoryClient> | undefined;
   let closed = false;
@@ -128,6 +135,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   const controllers = new Set<AbortController>();
   const contextStatus = new Map<string, Omit<ContextBundle, 'payload'>>();
   const contextErrors = new Map<string, string>();
+  const streamTiming = new Map<string, { first_delta_to_publication_ms: number; request_to_publication_ms: number }>();
   let maintenance: Awaited<ReturnType<typeof createMaintenance>> | undefined;
   const maintenanceRoute = { ...config };
   const maintenanceOptions = config.maintenance ? { ...config.maintenance } : undefined;
@@ -159,7 +167,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       const branch = 'parent:' + (entry.parentId ?? 'root');
       if (entry.type === 'message') {
         const message = entry.message;
-        if (message.role === 'user' || message.role === 'assistant' || message.role === 'toolResult') {
+        if (message.role === 'user' || (message.role === 'assistant' && streamMode === 'buffered') || message.role === 'toolResult') {
           // Initial supported profile is text-only. Do not turn binary base64 into an ordinary JSON text object.
           if (hasImage(message.content)) throw new Error('evernook:unsupported_native_image');
           const event = source(ctx, branch, `native:${entry.id}`, message.role === 'toolResult' ? 'tool' : message.role,
@@ -275,13 +283,15 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     }
   }));
 
-  function buffered(_model: Model<Api>, transcript: TranscriptContext, options?: SimpleStreamOptions) {
+  function streamMemory(_model: Model<Api>, transcript: TranscriptContext, options?: SimpleStreamOptions) {
+    const requestStarted = performance.now();
+    let publishedText = '';
     const output = createAssistantMessageEventStream();
     const controller = new AbortController();
     controllers.add(controller);
     const signal = options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
     const requestSession = current?.sessionManager.getSessionId();
-    if (requestSession) contextErrors.delete(requestSession);
+    if (requestSession) { contextErrors.delete(requestSession); streamTiming.delete(requestSession); }
     void (async () => {
       const ctx = current;
       if (!ctx || blocked || ctx.model?.provider !== providerId) throw new Error('evernook:protected_profile_required');
@@ -319,7 +329,42 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       const attempt = randomUUID();
       const event = source(ctx, 'attempt:' + attempt, 'display:' + attempt, 'assistant', '', 0, new Date().toISOString());
       await memory.remember({ ...event, source: { ...event.source, event: 'start:' + attempt },
-        role: 'system', text: stable({ kind: 'assistant_attempt_started', attempt }), completion: 'partial' });
+        role: 'system', text: stable({ kind: streamMode === 'durable_text' ? 'evernook_pi_text_stream_v1' : 'assistant_attempt_started', attempt }), completion: 'partial' });
+      if (streamMode === 'durable_text') {
+        let generatedAt: number | undefined;
+        const onDelta = () => { generatedAt ??= performance.now(); };
+        async function* frames() {
+          // Defer provider startup until the shared barrier has created its initial durable stream.
+          const delegated = ctx!.modelRegistry.streamSimple(config.target, requestContext, { ...options,
+            maxTokens: outputTokens, apiKey: undefined, signal, onProviderStreamEvent: async () => {} });
+          yield* piTextFrames(delegated, onDelta);
+        }
+        const live: AssistantMessage = { ...failure(proxy, false), stopReason: 'pending', errorMessage: undefined };
+        for await (const frame of durableText(memory, frames(), event, captured.receipt.message_id, maximum, signal)) {
+          signal.throwIfAborted();
+          if (frame.type === 'block-start') {
+            output.push({ type: 'start', partial: structuredClone(live) });
+            live.content = [{ type: 'text', text: '' }];
+            output.push({ type: 'text_start', contentIndex: 0, partial: structuredClone(live) });
+          } else if (frame.type === 'text-delta') {
+            publishedText += frame.text;
+            live.content = [{ type: 'text', text: publishedText }];
+            if (!streamTiming.has(ctx.sessionManager.getSessionId()) && generatedAt !== undefined) {
+              const now = performance.now();
+              streamTiming.set(ctx.sessionManager.getSessionId(), { first_delta_to_publication_ms: now - generatedAt,
+                request_to_publication_ms: now - requestStarted });
+            }
+            output.push({ type: 'text_delta', contentIndex: 0, delta: frame.text, partial: structuredClone(live) });
+          } else if (frame.type === 'block-end') {
+            output.push({ type: 'text_end', contentIndex: 0, content: publishedText, partial: structuredClone(live) });
+          } else if (frame.type === 'finish') {
+            live.stopReason = frame.reason.kind === 'max-tokens' ? 'length' : 'stop';
+            output.push({ type: 'done', reason: live.stopReason, message: structuredClone(live) });
+            output.end(live);
+          }
+        }
+        return;
+      }
       const frames: object[] = [];
       const providerEvents: { data: unknown; model: Model<Api> }[] = [];
       let bytes = 0;
@@ -400,14 +445,15 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       if (requestSession) contextErrors.set(requestSession, code);
       controller.abort();
       const message = failure(proxy, aborted, code);
+      if (streamMode === 'durable_text' && publishedText) message.content = [{ type: 'text', text: publishedText }];
       output.push({ type: 'error', reason: message.stopReason === 'aborted' ? 'aborted' : 'error', error: message });
       output.end(message);
     }).finally(() => { controllers.delete(controller); });
     return output;
   }
-  pi.registerProvider(createProvider({ id: providerId, name: 'EverNook buffered memory', models: [proxy],
+  pi.registerProvider(createProvider({ id: providerId, name: streamMode === 'durable_text' ? 'EverNook durable text memory' : 'EverNook buffered memory', models: [proxy],
     auth: { apiKey: { name: 'Local memory wrapper', resolve: async () => ({ auth: {} }) } },
-    api: { stream: buffered, streamSimple: buffered } }));
+    api: { stream: streamMemory, streamSimple: streamMemory } }));
 
   disposers.push(pi.on('tool_call', async event => toolNames.has(event.toolName) ? undefined
     : { block: true, reason: 'EverNook: tool is outside the protected profile.', terminate: true }));
@@ -474,7 +520,15 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     await active?.close();
   }));
   return { model: proxy, capture, get maintenance() { return maintenance; },
+    async streams(sessionId: string, offset = 0) {
+      const memory = await connection();
+      const page = await memory.streamAttempts('evernook_pi_text_stream_v1', config.entry, sessionId, offset);
+      return { streams: page.sources.filter(source => /^start:[0-9a-f-]{36}$/.test(source.event))
+        .map(source => ({ ...source, event: source.event.replace(/^start:/, 'display:') })), next_offset: page.next_offset };
+    },
+    async readStream(source: Source, cursor = 0, limit = 2048) { return (await connection()).readStream(source, cursor, limit); },
     status(sessionId: string) { return { context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
+      stream_mode: streamMode, stream_timing: streamTiming.get(sessionId),
       context: contextStatus.get(sessionId), error_code: contextErrors.get(sessionId) }; },
     async settings() {
       const memory = await connection();

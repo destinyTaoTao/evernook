@@ -1,6 +1,6 @@
 # 可靠文本分块 v1
 
-对应 [#71](https://github.com/destinyTaoTao/evernook/issues/71)。这是可信本地 Python/CLI/MCP 的文本流持久化入口。[dsh 显式可靠文本模式](dsh-native-v1.md#可靠文本模式m58-14)已在 #72 接线，默认兼容模式和 pi 仍整段缓冲。核心不显示文字、不执行工具，也不能撤回宿主已经发布的副本。
+对应 [#71](https://github.com/destinyTaoTao/evernook/issues/71)。这是可信本地 Python/CLI/MCP 的文本流持久化入口。[dsh 显式可靠文本模式](dsh-native-v1.md#可靠文本模式m58-14)和 [pi 显式可靠文本模式](pi-native-v1.md#可靠文本模式m58-15)分别在 #72/#73 接线，默认兼容模式仍整段缓冲。核心不显示文字、不执行工具，也不能撤回宿主已经发布的副本。
 
 ## 调用和回执
 
