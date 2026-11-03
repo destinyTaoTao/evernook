@@ -16,6 +16,7 @@ from .safety import credential_signal
 
 PROFILE_CATEGORIES = ("identity", "preference", "interest", "relation", "goal", "boundary")
 PROFILE_TAXONOMY_VERSION = 1
+PREFERENCE_CLARIFICATION_PROCESSOR = "preference-clarification-v1:"
 
 
 @dataclass(frozen=True)
@@ -166,14 +167,16 @@ class ProfileRegistry:
     def _decide(self, db: sqlite3.Connection, request: ProfileDecision) -> ProfileRecord:
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
-                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm"}):
+                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm", "clarify"}):
             raise MemoryFailure("invalid_profile_decision")
         for identifier in (request.request_id, request.tag_id):
             _identifier(identifier)
-        if request.action in {"propose", "revise"}:
-            if request.draft is None or request.confirmation_id is not None:
+        if request.action in {"propose", "revise", "clarify"}:
+            if request.draft is None or ((request.action == "clarify") != (request.confirmation_id is not None)):
                 raise MemoryFailure("invalid_profile_decision")
             self._validate(request.draft)
+            if request.confirmation_id is not None:
+                _identifier(request.confirmation_id)
         elif request.action == "auto_confirm":
             if request.draft is not None or request.confirmation_id is not None:
                 raise MemoryFailure("invalid_profile_decision")
@@ -200,14 +203,23 @@ class ProfileRegistry:
         if (request.action == "propose") != (previous is None):
             raise MemoryFailure("invalid_profile_transition")
         confirmation = None
-        if request.draft is not None:
+        if (previous is not None and previous.state == "draft" and request.action in {"revise", "reject"}
+                and previous.draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR)):
+            raise MemoryFailure("preference_clarification_required")
+        if request.draft is not None and request.action != "clarify":
             draft = request.draft
             self._sources(db, draft)
             content_revision = 1 if previous is None else previous.content_revision + 1
             state = "draft"
         else:
-            assert previous is not None and request.draft is None
-            draft, content_revision = previous.draft, previous.content_revision
+            assert previous is not None
+            draft = previous.draft if request.draft is None else request.draft
+            content_revision = previous.content_revision + (draft != previous.draft)
+            if request.action == "clarify" and (
+                    previous.state != "draft" or draft.category != previous.draft.category
+                    or draft.processor_version != previous.draft.processor_version
+                    or not draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR)):
+                raise MemoryFailure("invalid_profile_transition")
             if request.action != "auto_confirm":
                 assert request.confirmation_id is not None
                 confirmation = self._confirmation(db, request.confirmation_id)
@@ -218,16 +230,23 @@ class ProfileRegistry:
                 received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
                 if _time(received) < _time(previous.recorded_at):
                     raise MemoryFailure("profile_confirmation_predates_review")
-            if request.action == "confirm":
+            if request.action in {"confirm", "clarify"}:
                 if previous.state not in {"draft", "suppressed"}:
                     raise MemoryFailure("invalid_profile_transition")
                 self._sources(db, draft)
+                if draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR):
+                    if request.action != "clarify":
+                        raise MemoryFailure("preference_clarification_required")
+                    assert request.confirmation_id is not None
+                    self._resolved_clarification(db, draft, request.confirmation_id)
                 state = "confirmed"
             elif request.action == "auto_confirm":
                 # Whitelist guard: only the low-risk interest category may skip user review,
                 # so direct calls can never auto-confirm preferences, goals or boundaries.
                 if previous.state != "draft":
                     raise MemoryFailure("invalid_profile_transition")
+                if draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR):
+                    raise MemoryFailure("preference_clarification_required")
                 if previous.draft.category != "interest":
                     raise MemoryFailure("profile_auto_confirm_limited")
                 self._sources(db, draft)
@@ -248,6 +267,21 @@ class ProfileRegistry:
         db.execute("INSERT INTO profile_events_v1 VALUES (?,?,?,?,?)",
             (request.request_id, request.tag_id, revision + 1, fingerprint, _json(asdict(record))))
         return record
+
+    @staticmethod
+    def _resolved_clarification(db: sqlite3.Connection, draft: ProfileDraft, confirmation_id: str) -> None:
+        from .facts import FactRegistry
+        clarification_id = draft.processor_version.removeprefix(PREFERENCE_CLARIFICATION_PROCESSOR)
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_decisions_v1'").fetchone():
+            raise MemoryFailure("preference_clarification_required")
+        row = db.execute("SELECT subject,predicate FROM fact_decisions_v1 WHERE id=?", (clarification_id,)).fetchone()
+        if row is None:
+            raise MemoryFailure("preference_clarification_required")
+        view = FactRegistry._query_snapshot(db, row["subject"], row["predicate"])
+        if (view.clarification_required or view.fact is None or clarification_id not in view.fact.resolves
+                or view.fact.confirmation_id != confirmation_id or view.fact.sources != draft.sources
+                or view.fact.text != draft.label):
+            raise MemoryFailure("preference_clarification_required")
 
     def read(self, access: Access, tag_id: str) -> ProfileView:
         self.runtime._require_scope(access, "recall", "profile_read")

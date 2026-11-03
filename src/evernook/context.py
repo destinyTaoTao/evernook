@@ -204,11 +204,16 @@ class ContextBuilder:
                 if not records:
                     if view.state != "no_fact":
                         degraded.append("fact_" + view.state)
-                    continue
+                    if not view.clarification_required:
+                        continue
                 for record in records:
                     references.extend((span.message_id, span.state_version, span.content_version) for span in record.sources)
                     references.append((record.confirmation_id, record.confirmation_version, 1))
-                items.append(_Item("facts", subject + ":" + predicate, asdict(view), tuple(dict.fromkeys(references))))
+                data = asdict(view)
+                if view.clarification_required:
+                    # The old assertion remains queryable as history, never a certain injected preference.
+                    data["fact"] = None
+                items.append(_Item("facts", subject + ":" + predicate, data, tuple(dict.fromkeys(references))))
             experiences = ExperienceRegistry(self.runtime)
             for experience_id in dict.fromkeys(self.policy.experience_ids):
                 budget()
@@ -264,6 +269,11 @@ class ContextBuilder:
             db.execute("BEGIN")
             for item in items:
                 usable = True
+                if item.kind == "facts":
+                    current_facts = FactRegistry._query_snapshot(db, item.data["subject_id"], item.data["predicate"],
+                        valid_at=as_of, known_at=known_at)
+                    usable = (current_facts.knowledge_revision == item.data["knowledge_revision"]
+                              and current_facts.clarification_required == item.data["clarification_required"])
                 if item.kind == "reviewed_experience":
                     current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
                     usable = current.state == "enabled" and current.revision == item.data["revision"]

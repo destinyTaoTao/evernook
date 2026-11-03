@@ -114,6 +114,8 @@ def _parser() -> Parser:
         ("candidate-list", "Read a completed candidate run for trusted review using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
         ("extract-preferences", "Explicit conservative offline preference drafts; no automatic acceptance"),
+        ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
+        ("preference-resolve", "Trusted user clarification as correction or real change"),
         ("maintenance-configure", "Configure explicit fixed-offset extractive navigation; no OS scheduler"),
         ("maintenance-pause", "Pause/resume navigation without pausing raw collection"),
         ("maintenance-tick", "Run bounded recoverable navigation work using JSON stdin"),
@@ -287,6 +289,12 @@ def _execute(args: argparse.Namespace) -> object:
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command in ("preference-clarify", "preference-resolve"):
+        from .preference_clarifications import OpenClarification, PreferenceClarifications, ResolveClarification
+        clarifications = PreferenceClarifications(runtime)
+        if args.command == "preference-clarify":
+            return clarifications.open(access, OpenClarification(**_input()))
+        return clarifications.resolve(access, ResolveClarification(**_input()))
     if args.command in ("extract", "extract-preferences"):
         from .extraction import ExtractionProcessor, LocalQwen
         value = _input()

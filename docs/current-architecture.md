@@ -55,6 +55,7 @@ flowchart TB
 | [purge.py](../src/evernook/purge.py) | 精确范围预览/用户确认、两阶段普通来源删除、派生传播与来源墓碑；不处理受保护资产或外部副本 |
 | [evaluation.py](../src/evernook/evaluation.py) | 哈希绑定评测集、保存/检索/时态公共 API 基线与五分项评分；维护者委派 AI 逐条复核已记录，人工/AI 状态分开，模型/硬件准入仍待完成 |
 | [preferences.py](../src/evernook/preferences.py) | 显式离线三类有来源偏好草案、完整陈述保守识别、策略身份与任务复用；有限表达式、低召回，真实模型质量和自动更新仍待准入 |
+| [preference_clarifications.py](../src/evernook/preference_clarifications.py) | 可信本地原子争议/画像暂停与一次用户澄清，显式保留旧值或接纳更正/变化；不自动推断语义冲突或宿主用户意图 |
 | [backup.py](../src/evernook/backup.py) | 显式认证加密快照、恢复材料及保留；恢复仍需审查 |
 | [protected.py](../src/evernook/protected.py)、[vault_local.py](../src/evernook/vault_local.py) | 显式加密 Event 收件、可恢复关联与本地主口令单次显示；无自动宿主分流 |
 | [plugins/harnesses](../plugins/harnesses) | 固定版本 dsh/pi 内核适配、整次输出保存后发布、共享普通记忆与基本证据注入 |

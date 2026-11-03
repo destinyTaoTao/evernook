@@ -182,68 +182,72 @@ class FactRegistry:
     def decide(self, access: Access, request: FactDecision) -> FactRecord:
         """Trusted maintenance boundary: the caller must establish the user's actual confirmation."""
         self.runtime._require_scope(access, "accept", "fact_decide")
-        self._validate(request)
-        fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            self._schema(db)
-            if db.execute("SELECT 1 FROM fact_tombstones_v1 WHERE id=?", (request.request_id,)).fetchone():
-                raise MemoryFailure("fact_source_purged")
-            existing = db.execute("SELECT fingerprint,record FROM fact_decisions_v1 WHERE id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("fact_request_conflict")
-                return self._record(existing["record"])
-            rows = self._rows(db, request.subject_id, request.predicate)
-            revision = rows[-1].revision if rows else 0
-            if request.expected_revision != revision:
-                raise MemoryFailure("fact_revision_conflict")
-            draft, processor = self._candidate(db, request.candidate_id)
-            if draft.disputed and request.kind != "disputed":
-                raise MemoryFailure("candidate_disputed")
-            confirmation_version, _ = self._confirmation(db, request.confirmation_id)
-            source_times = [item.message.event.occurred_at for item in self.workflow._sources(db, tuple(span.message_id for span in draft.sources))]
-            learned = max((item for item in source_times if item is not None), key=_time) if all(item is not None for item in source_times) else None
-            actual = [row for row in rows if row.kind in {"assert", "change"}]
-            by_id = {row.fact_id: row for row in rows}
-            previous = by_id.get(request.replaces_id or "")
-            anchor = request.request_id
-            if request.kind == "assert" and actual:
-                raise MemoryFailure("fact_conflict_requires_resolution")
-            if request.kind in {"correction", "change"}:
-                if previous is None or previous.kind not in {"assert", "change", "correction"}:
-                    raise MemoryFailure("invalid_fact_predecessor")
-                replacements = [row for row in rows if row.anchor_id == previous.anchor_id]
-                if replacements[-1].fact_id != previous.fact_id:
-                    raise MemoryFailure("fact_predecessor_superseded")
-                if request.kind == "correction":
-                    if (request.valid_from != previous.valid_from or request.valid_until != previous.valid_until
-                            or request.occurred_at != previous.occurred_at):
-                        raise MemoryFailure("correction_must_preserve_time")
-                    anchor = previous.anchor_id
-                else:
-                    if not actual or previous.anchor_id != actual[-1].anchor_id:
-                        raise MemoryFailure("fact_change_not_latest")
-                    assert request.valid_from is not None
-                    if previous.valid_from is not None and _time(request.valid_from) <= _time(previous.valid_from):
-                        raise MemoryFailure("non_monotonic_fact_change")
-            resolved = {item for row in rows for item in row.resolves}
-            for item in request.resolves:
-                if item not in by_id or by_id[item].kind not in {"plan", "disputed"} or item in resolved:
-                    raise MemoryFailure("invalid_fact_resolution")
-            now = datetime.now(timezone.utc).isoformat()
-            if rows:
-                # The knowledge watermark must never step backwards: a wall-clock regression between
-                # decisions would fabricate knowledge views that never existed for this subject/predicate.
-                now = max([now] + [row.recorded_at for row in rows], key=_time)
-            record = FactRecord(request.request_id, request.subject_id, request.predicate, revision + 1, request.kind,
-                anchor, request.replaces_id, request.candidate_id, processor, draft.text, request.valid_from, request.valid_until, request.occurred_at,
-                learned, now, draft.sources, request.confirmation_id, confirmation_version, request.resolves, request.category)
-            db.execute("INSERT INTO fact_decisions_v1 VALUES (?,?,?,?,?,?,?)", (record.fact_id, request.subject_id, request.predicate,
-                record.revision, fingerprint, _json(asdict(request)), _json(asdict(record))))
-            db.execute("INSERT INTO fact_heads_v1 VALUES (?,?,?) ON CONFLICT(subject,predicate) DO UPDATE SET revision=excluded.revision",
-                (request.subject_id, request.predicate, record.revision))
+            record = self._decide(db, request)
             db.execute("COMMIT")
+        return record
+
+    def _decide(self, db: sqlite3.Connection, request: FactDecision) -> FactRecord:
+        self._validate(request)
+        fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
+        self._schema(db)
+        if db.execute("SELECT 1 FROM fact_tombstones_v1 WHERE id=?", (request.request_id,)).fetchone():
+            raise MemoryFailure("fact_source_purged")
+        existing = db.execute("SELECT fingerprint,record FROM fact_decisions_v1 WHERE id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("fact_request_conflict")
+            return self._record(existing["record"])
+        rows = self._rows(db, request.subject_id, request.predicate)
+        revision = rows[-1].revision if rows else 0
+        if request.expected_revision != revision:
+            raise MemoryFailure("fact_revision_conflict")
+        draft, processor = self._candidate(db, request.candidate_id)
+        if draft.disputed and request.kind != "disputed":
+            raise MemoryFailure("candidate_disputed")
+        confirmation_version, _ = self._confirmation(db, request.confirmation_id)
+        source_times = [item.message.event.occurred_at for item in self.workflow._sources(db, tuple(span.message_id for span in draft.sources))]
+        learned = max((item for item in source_times if item is not None), key=_time) if all(item is not None for item in source_times) else None
+        actual = [row for row in rows if row.kind in {"assert", "change"}]
+        by_id = {row.fact_id: row for row in rows}
+        previous = by_id.get(request.replaces_id or "")
+        anchor = request.request_id
+        if request.kind == "assert" and actual:
+            raise MemoryFailure("fact_conflict_requires_resolution")
+        if request.kind in {"correction", "change"}:
+            if previous is None or previous.kind not in {"assert", "change", "correction"}:
+                raise MemoryFailure("invalid_fact_predecessor")
+            replacements = [row for row in rows if row.anchor_id == previous.anchor_id]
+            if replacements[-1].fact_id != previous.fact_id:
+                raise MemoryFailure("fact_predecessor_superseded")
+            if request.kind == "correction":
+                if (request.valid_from != previous.valid_from or request.valid_until != previous.valid_until
+                        or request.occurred_at != previous.occurred_at):
+                    raise MemoryFailure("correction_must_preserve_time")
+                anchor = previous.anchor_id
+            else:
+                if not actual or previous.anchor_id != actual[-1].anchor_id:
+                    raise MemoryFailure("fact_change_not_latest")
+                assert request.valid_from is not None
+                if previous.valid_from is not None and _time(request.valid_from) <= _time(previous.valid_from):
+                    raise MemoryFailure("non_monotonic_fact_change")
+        resolved = {item for row in rows for item in row.resolves}
+        for item in request.resolves:
+            if item not in by_id or by_id[item].kind not in {"plan", "disputed"} or item in resolved:
+                raise MemoryFailure("invalid_fact_resolution")
+        now = datetime.now(timezone.utc).isoformat()
+        if rows:
+            # The knowledge watermark must never step backwards: a wall-clock regression between
+            # decisions would fabricate knowledge views that never existed for this subject/predicate.
+            now = max([now] + [row.recorded_at for row in rows], key=_time)
+        record = FactRecord(request.request_id, request.subject_id, request.predicate, revision + 1, request.kind,
+            anchor, request.replaces_id, request.candidate_id, processor, draft.text, request.valid_from, request.valid_until, request.occurred_at,
+            learned, now, draft.sources, request.confirmation_id, confirmation_version, request.resolves, request.category)
+        db.execute("INSERT INTO fact_decisions_v1 VALUES (?,?,?,?,?,?,?)", (record.fact_id, request.subject_id, request.predicate,
+            record.revision, fingerprint, _json(asdict(request)), _json(asdict(record))))
+        db.execute("INSERT INTO fact_heads_v1 VALUES (?,?,?) ON CONFLICT(subject,predicate) DO UPDATE SET revision=excluded.revision",
+            (request.subject_id, request.predicate, record.revision))
         return record
 
     @staticmethod
@@ -307,9 +311,10 @@ class FactRegistry:
                     unavailable.append(row.fact_id)
             return available[row.fact_id]
         plans = tuple(row for row in rows if row.kind == "plan" and row.fact_id not in resolved and visible(row))
-        disputes = tuple(row for row in rows if row.kind == "disputed" and row.fact_id not in resolved
+        pending_disputes = tuple(row for row in rows if row.kind == "disputed" and row.fact_id not in resolved
             and (row.valid_from is None or _time(row.valid_from) <= at_time)
-            and (row.valid_until is None or _time(row.valid_until) > at_time) and visible(row))
+            and (row.valid_until is None or _time(row.valid_until) > at_time))
+        disputes = tuple(row for row in pending_disputes if visible(row))
         state = "current" if valid_at is None else "historical"
         if chosen is None:
             state = "unknown_time" if unknown else "no_fact"
@@ -317,8 +322,9 @@ class FactRegistry:
             chosen, state = None, "source_unavailable"
         elif chosen.valid_from is None:
             state = "unknown_time"
-        if disputes:
+        # Withholding one disputed source does not confirm the competing assertion.
+        if pending_disputes:
             state = "disputed"
         return FactView(subject_id, predicate, all_rows[-1].revision if all_rows else 0,
-            rows[-1].revision if rows else 0, state, chosen, plans, disputes, tuple(unavailable), bool(disputes), at, known,
+            rows[-1].revision if rows else 0, state, chosen, plans, disputes, tuple(unavailable), bool(pending_disputes), at, known,
             effective_until if chosen is not None else None)

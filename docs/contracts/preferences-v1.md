@@ -19,6 +19,8 @@
 
 类别只是审查标签。所有结果仍为 candidate，automatic_acceptance=false、quality_admission=pending，不修改事实、画像、人设或任何权限；即使模型输出合法且标签匹配也不代表已通过自动更新准入。争议/未知内容不会被当作确定长期偏好注入。
 
+有冲突时的可信联合澄清见[preference-clarifications-v1](preference-clarifications-v1.md)，其用户确认可以写入事实/画像；本抽取入口本身仍只写草案。
+
 ## 身份、兼容与资源
 
 偏好处理身份绑定 preferences.py 字节 SHA-256 和原 backend.processor_version 的 SHA-256，与通用抽取任务分开；改动策略不能复用旧成功结果。相同来源版本与同一策略重试复用既有任务；来源失效后候选读取为空。原有无类别草案的 payload、哈希与候选 ID 保持原样，新字段无需重写旧行。
