@@ -63,7 +63,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -80,6 +80,11 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false) {
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
   ctx.llm.registerAdapter(['synthetic'], adapter);
   const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  if (lifecycle.consolidation) {
+    const access = join(root, 'memory/mcp-access-consolidation.json');
+    execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime; from evernook.scheduler import ConsolidationScheduler; c=Path(sys.argv[1]); owner=c.parent/'mcp-access-owner.json'; a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=owner); pair_client(c,client_id='synthetic-consolidation',entry='dsh-background',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept')); ConsolidationScheduler(MemoryRuntime(c)).configure(a,paused=True,min_pending=1,idle_seconds=0,max_sources_per_run=4,max_runs_per_trigger=2,max_trigger_seconds=2)", paths.config, access], { cwd: checkout });
+    config.consolidation = { access, pollMs: 100 };
+  }
   if (durable) Object.assign(config, { streamMode: 'durable_text' });
   let target: Tokenizer | undefined;
   if (budgeted) {
@@ -119,6 +124,70 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false) {
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('native dsh lifecycle defers consolidation during provider work and resumes after the turn', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, false, true, { consolidation: true });
+  t.after(() => host.close());
+  const background = host.memory.consolidation;
+  assert.ok(background);
+  const handle = await host.create('consolidation-dsh');
+  let checked = false;
+  adapter.afterFirst = async () => {
+    assert.equal((await background.status()).foreground_sessions, 1);
+    execFileSync(python!, ['-m', 'evernook.cli', 'scheduler-configure', '--config', host.config.config,
+      '--access', join(host.root, 'memory/mcp-access-owner.json')], { cwd: checkout, input: JSON.stringify({ paused: false }) });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal((await background.status()).processed, 0);
+    checked = true;
+  };
+  try {
+    handle.agent.followup(user('consolidation-input', '合成：会话结束后有界处理'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []);
+    assert.equal(checked, true);
+    const deadline = Date.now() + 20000;
+    let status = await background.status();
+    while ((status.pending !== 0 || status.foreground_sessions !== 0) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 100)); status = await background.status();
+    }
+    assert.equal(status.pending, 0);
+    assert.equal(status.foreground_sessions, 0);
+    assert.ok(Number(status.covered_messages) > 0);
+    assert.doesNotMatch(JSON.stringify(adapter.requests), /mcp-access-(consolidation|owner)/);
+    await handle.dispose();
+    const endedBy = Date.now() + 8000;
+    status = await background.status();
+    while (status.session_marks === 0 && Date.now() < endedBy) {
+      await new Promise(resolve => setTimeout(resolve, 100)); status = await background.status();
+    }
+    assert.ok(Number(status.session_marks) > 0);
+  } finally { await handle.dispose(); }
+});
+
+test('native dsh cancellation and provider failure release foreground activity without disposing the session', async t => {
+  for (const canceled of [true, false]) {
+    const adapter = new Synthetic();
+    const host = await boot(adapter, false, true, { consolidation: true });
+    t.after(() => host.close());
+    const background = host.memory.consolidation!;
+    const handle = await host.create('consolidation-interrupted-' + canceled);
+    t.after(() => handle.dispose());
+    adapter.afterFirst = async () => { if (canceled) handle.agent.cancel({ kind: 'user' }); };
+    adapter.interrupt = !canceled;
+    handle.agent.followup(user('interrupted-input', '合成：中断不应永久阻塞后台'));
+    await handle.agent.whenIdle();
+    assert.equal(background.snapshot().foreground, 0);
+    const releasedBy = Date.now() + 5000;
+    let status = await background.status();
+    while (status.foreground_sessions !== 0 && Date.now() < releasedBy) {
+      await new Promise(resolve => setTimeout(resolve, 100)); status = await background.status();
+    }
+    assert.equal(status.foreground_sessions, 0);
+    if (!canceled) assert.ok(host.errors.length > 0);
+    await handle.dispose(); await host.close();
+  }
+});
 
 test('durable text is published and independently replayable before the provider finishes', async () => {
   const adapter = new Synthetic();

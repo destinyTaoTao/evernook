@@ -28,7 +28,7 @@ const output = process.env.EVERNOOK_TEST_OUTPUT;
 if (!python || !output) throw new Error('Set external synthetic EVERNOOK_TEST_PYTHON and EVERNOOK_TEST_OUTPUT');
 const checkout = resolve(import.meta.dirname, '../../..');
 
-async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false, durable = false) {
+async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false, durable = false, lifecycle: { consolidation?: boolean } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'pi-native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; c,a=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); p=c.parent/'mcp-access-pi.json'; pair_client(c,client_id='synthetic-pi',entry='pi',access_path=p,scopes=('capture','recall')); print(json.dumps({'config':str(c),'access':str(p)}))";
@@ -39,6 +39,11 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   const memoryConfig: PiConfig = { python: python!, config: paths.config, access: paths.access, entry: 'pi',
     cwd: checkout, target: faux.getModel(), tools };
   if (durable) Object.assign(memoryConfig, { streamMode: 'durable_text' });
+  if (lifecycle.consolidation) {
+    const access = join(root, 'memory/mcp-access-consolidation.json');
+    execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime; from evernook.scheduler import ConsolidationScheduler; c=Path(sys.argv[1]); owner=c.parent/'mcp-access-owner.json'; a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=owner); pair_client(c,client_id='synthetic-consolidation',entry='pi-background',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept')); ConsolidationScheduler(MemoryRuntime(c)).configure(a,paused=True,min_pending=1,idle_seconds=0,max_sources_per_run=4,max_runs_per_trigger=2,max_trigger_seconds=2)", paths.config, access], { cwd: checkout });
+    memoryConfig.consolidation = { access, pollMs: 100 };
+  }
   const reviews: import('../src/maintenance.ts').MaintenanceReview[] = [];
   const outcomes: import('../src/maintenance.ts').MaintenanceOutcome[] = [];
   let onReview: (() => void | Promise<void>) | undefined;
@@ -100,6 +105,7 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   return { root, paths, faux, rows, requests, rawChecks, session, memoryConfig, fixture,
     reviews, outcomes,
     maintenance() { assert.ok(memory?.maintenance); return memory.maintenance; },
+    consolidation() { assert.ok(memory?.consolidation); return memory.consolidation; },
     setReview(value: () => void | Promise<void>) { onReview = value; },
     async propose(proposal: import('../src/maintenance.ts').MaintenanceProposal, signal?: AbortSignal) {
       assert.ok(memory?.maintenance && context); return memory.maintenance.propose(context.sessionManager.getSessionId(), proposal, signal);
@@ -114,6 +120,36 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     async close() { await memory?.close(); session.dispose(); },
   };
 }
+
+test('native pi lifecycle gates background work and reload catches up without changing actor scopes', async t => {
+  const host = await boot('合成：前台 pi 输出', [], undefined, false, false, false, false, { consolidation: true });
+  t.after(() => host.close());
+  const background = host.consolidation();
+  let checked = false;
+  host.setInspect(async () => {
+    assert.equal((await background.status()).foreground_sessions, 1);
+    execFileSync(python!, ['-m', 'evernook.cli', 'scheduler-configure', '--config', host.paths.config,
+      '--access', join(host.root, 'memory/mcp-access-owner.json')], { cwd: checkout, input: JSON.stringify({ paused: false }) });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal((await background.status()).processed, 0);
+    checked = true;
+  });
+  await host.session.prompt('合成：前台结束后处理');
+  assert.equal(checked, true);
+  const deadline = Date.now() + 20000;
+  let status = await background.status();
+  while ((status.pending !== 0 || status.foreground_sessions !== 0) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100)); status = await background.status();
+  }
+  assert.equal(status.pending, 0);
+  assert.equal(status.foreground_sessions, 0);
+  assert.ok(Number(status.covered_messages) > 0);
+  assert.doesNotMatch(JSON.stringify(host.requests), /mcp-access-(consolidation|owner)/);
+  await host.restart();
+  const resumed = await host.consolidation().status();
+  assert.equal(resumed.foreground_sessions, 0);
+  assert.ok(Number(resumed.session_marks) > 0);
+});
 
 test('pi durable text publishes only committed prefixes before the full answer is saved and survives reload', async () => {
   const reply = '合成可靠分块🙂之后仍继续逐块生成。';

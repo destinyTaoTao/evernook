@@ -10,6 +10,7 @@ import sqlite3
 
 from .models import Access, Change, MemoryFailure, MessageState
 from .facts import FactRegistry
+from .consolidation import ConsolidationWorkflow
 from .runtime import MemoryRuntime, _identifier, _json, _time
 
 
@@ -141,6 +142,13 @@ class PurgeWorkflow:
             runs = [str(row["id"]) for row in db.execute("SELECT id,sources FROM candidate_runs_v1")
                     if targets.intersection(item[0] for item in json.loads(row["sources"]))]
             for run_id in runs:
+                run = db.execute('SELECT processor FROM candidate_runs_v1 WHERE id=?', (run_id,)).fetchone()
+                if (run['processor'] == 'consolidation-scheduler-v1'
+                        and db.execute("SELECT 1 FROM sqlite_master WHERE name='scheduler_progress_v1'").fetchone()):
+                    # Preserve only proven, unaffected coverage before deleting this run's proof.
+                    for source_id, state in ConsolidationWorkflow._recoverable_sources(db, run_id, targets).items():
+                        db.execute('INSERT OR IGNORE INTO scheduler_progress_v1 VALUES (?,?,?,?)',
+                            (source_id, run_id, state, datetime.now(timezone.utc).isoformat()))
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_results_v1'").fetchone():
                     db.execute("DELETE FROM consolidation_results_v1 WHERE run_id=?", (run_id,))
                 db.execute("DELETE FROM fact_candidates_v1 WHERE run_id=?", (run_id,))

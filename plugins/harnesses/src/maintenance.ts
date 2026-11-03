@@ -1,11 +1,9 @@
-import { spawn } from 'node:child_process';
+import { runLocalCli as run, type MaintenanceOperation as Operation } from './local-cli.ts';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { MemoryClient, type MemoryConfig } from './client.ts';
 
 type RecordValue = Record<string, unknown>;
-type Operation = 'status' | 'mark-important' | 'change' | 'purge-preview' | 'purge' | 'profile-read' | 'profile-decide'
-  | 'candidate-list' | 'fact-query' | 'fact-decide';
 type Apply = (confirmationId: string, signal?: AbortSignal) => Promise<RecordValue>;
 export type MaintenanceProposal = { kind: 'pin' | 'suppress'; message_id: string }
   | { kind: 'correct_source'; message_id: string; replacement_id: string }
@@ -29,46 +27,6 @@ export interface MaintenanceConfig {
   onResult: (result: MaintenanceOutcome) => Promise<void>;
 }
 function object(value: unknown): value is RecordValue { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-
-/** Fixed local CLI operations. Evidence goes through stdin, never a shell or process arguments. */
-function run(config: MemoryConfig, access: string, operation: Operation, input: RecordValue,
-             signal?: AbortSignal): Promise<RecordValue> {
-  signal?.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const child = spawn(config.python, ['-m', 'evernook.cli', operation, '--config', config.config, '--access', access],
-      { cwd: config.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-    let failure: string | undefined;
-    const abort = () => { failure = 'operation_canceled'; child.kill(); };
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
-    const timer = setTimeout(() => { failure = 'maintenance_timeout'; child.kill(); }, 30000);
-    child.stdout.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > 8 * 1024 * 1024) { failure = 'maintenance_result_too_large'; child.kill(); }
-      else chunks.push(chunk);
-    });
-    child.stdin.on('error', () => { failure ??= 'maintenance_unavailable'; });
-    child.on('error', () => { failure = 'maintenance_unavailable'; });
-    child.on('close', code => {
-      clearTimeout(timer); signal?.removeEventListener('abort', abort);
-      if (failure) { reject(new Error('evernook:' + failure)); return; }
-      try {
-        const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-        if (!object(payload)) throw new Error();
-        if (code !== 0 || payload.ok !== true) {
-          const reason = object(payload.error) && typeof payload.error.code === 'string' && /^[a-z_]{1,80}$/.test(payload.error.code)
-            ? payload.error.code : 'maintenance_unavailable';
-          reject(new Error('evernook:' + reason)); return;
-        }
-        if (!object(payload.result)) throw new Error();
-        resolve(payload.result);
-      } catch { reject(new Error('evernook:maintenance_unavailable')); }
-    });
-    child.stdin.end(JSON.stringify(input));
-  });
-}
 
 /** A proposal never authorizes itself. Only a subsequently saved native user command can confirm it. */
 export async function createMaintenance(config: MemoryConfig, maintenance: MaintenanceConfig) {

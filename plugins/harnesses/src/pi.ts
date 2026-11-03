@@ -7,10 +7,12 @@ import { loadTargetCounter } from './tokenizer.ts';
 import { createMaintenance, type MaintenanceConfig, type MaintenanceProposal } from './maintenance.ts';
 import { durableText } from './durable-text.ts';
 import { piTextFrames } from './pi-text.ts';
+import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 
 export interface PiConfig extends MemoryConfig {
   streamMode?: 'buffered' | 'durable_text';
   maintenance?: MaintenanceConfig;
+  consolidation?: ConsolidationConfig;
   /** An actual configured target model, never an invented endpoint or copied credential. */
   target: Model<Api>;
   providerId?: string;
@@ -137,6 +139,9 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   const contextErrors = new Map<string, string>();
   const streamTiming = new Map<string, { first_delta_to_publication_ms: number; request_to_publication_ms: number }>();
   let maintenance: Awaited<ReturnType<typeof createMaintenance>> | undefined;
+  let consolidation: Awaited<ReturnType<typeof createConsolidation>> | undefined;
+  const consolidationRoute = { ...config };
+  const consolidationOptions = config.consolidation ? { ...config.consolidation } : undefined;
   const maintenanceRoute = { ...config };
   const maintenanceOptions = config.maintenance ? { ...config.maintenance } : undefined;
   function notifyResumed(ctx: ExtensionContext, state: { protectedTexts: Set<string>; resumed: boolean }) {
@@ -197,6 +202,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   }
 
   try {
+  if (consolidationOptions) consolidation = await createConsolidation(consolidationRoute, consolidationOptions);
   if (config.maintenance) {
     if (toolNames.has('evernook_memory_propose')) throw new Error('evernook:duplicate_native_tool');
     maintenance = await createMaintenance(maintenanceRoute, maintenanceOptions!);
@@ -220,9 +226,11 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   disposers.push(pi.on('session_start', async (_event, ctx) => {
     current = ctx; blocked = false; await connection();
     if (maintenanceOptions && !maintenance) maintenance = await createMaintenance(maintenanceRoute, maintenanceOptions);
+    if (consolidationOptions && !consolidation) consolidation = await createConsolidation(consolidationRoute, consolidationOptions);
   }));
   disposers.push(pi.on('before_agent_start', async (_event, ctx) => {
     if (ctx.model?.provider !== providerId) { blocked = true; ctx.abort(); return; }
+    await consolidation?.turnStarted(ctx.sessionManager.getSessionId());
     pi.setActiveTools([...toolNames]);
   }));
   disposers.push(pi.on('input', async (event, ctx) => {
@@ -509,9 +517,14 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     await capture(ctx);
     ctx.ui.notify('EverNook: native session reconciliation completed.', 'info');
   } });
-  disposers.push(pi.on('agent_end', async (_event, ctx) => { await capture(ctx); }));
+  disposers.push(pi.on('agent_end', async (_event, ctx) => {
+    try { await capture(ctx); }
+    finally { await consolidation?.turnEnded(ctx.sessionManager.getSessionId()); }
+  }));
   disposers.push(pi.on('session_shutdown', async () => {
     for (const controller of controllers) controller.abort();
+    if (current) await consolidation?.sessionEnded(current.sessionManager.getSessionId());
+    await consolidation?.close(); consolidation = undefined;
     await maintenance?.close(); maintenance = undefined;
     current = undefined;
     blocked = true;
@@ -519,7 +532,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     client = undefined;
     await active?.close();
   }));
-  return { model: proxy, capture, get maintenance() { return maintenance; },
+  return { model: proxy, capture, get maintenance() { return maintenance; }, get consolidation() { return consolidation; },
     async streams(sessionId: string, offset = 0) {
       const memory = await connection();
       const page = await memory.streamAttempts('evernook_pi_text_stream_v1', config.entry, sessionId, offset);
@@ -529,6 +542,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     async readStream(source: Source, cursor = 0, limit = 2048) { return (await connection()).readStream(source, cursor, limit); },
     status(sessionId: string) { return { context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
       stream_mode: streamMode, stream_timing: streamTiming.get(sessionId),
+      consolidation: consolidation?.snapshot(),
       context: contextStatus.get(sessionId), error_code: contextErrors.get(sessionId) }; },
     async settings() {
       const memory = await connection();
@@ -539,6 +553,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       if (closed) return;
       closed = true;
       for (const controller of controllers) controller.abort();
+      await consolidation?.close(); consolidation = undefined;
       await maintenance?.close();
       for (const dispose of disposers.reverse()) dispose();
       const active = client ?? await connecting;
@@ -548,6 +563,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     } };
   } catch {
     closed = true;
+    await consolidation?.close(); consolidation = undefined;
     await maintenance?.close();
     for (const controller of controllers) controller.abort();
     for (const dispose of disposers.reverse()) { try { dispose(); } catch { /* Keep releasing owned resources. */ } }

@@ -145,6 +145,7 @@ def _parser() -> Parser:
         ("scheduler-pause", "Pause or resume the consolidation scheduler"),
         ("scheduler-status", "Read scheduler settings and progress"),
         ("scheduler-session-end", "Capture-scope hook marking a session boundary"),
+        ("scheduler-foreground", "Capture-scope expiring foreground activity for one owned session"),
         ("scheduler-trigger", "Run one bounded consolidation pass (extractive builtin provider)"),
         ("preset-apply", "Apply the companion preset of recommended defaults; overrides win"),
         ("preset-show", "Read the applied or recommended companion preset"),
@@ -399,6 +400,8 @@ def _execute(args: argparse.Namespace) -> object:
         from .scheduler import ConsolidationScheduler
         scheduler = ConsolidationScheduler(runtime)
         value = _input()
+        if args.command == "scheduler-foreground":
+            return scheduler.foreground(access, **value)
         if args.command == "scheduler-configure":
             return scheduler.configure(access, **value)
         if args.command == "scheduler-pause":

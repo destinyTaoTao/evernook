@@ -65,3 +65,5 @@ evernook status --config E:\evernook-lab\synthetic-cli-data\runtime.json --acces
 T13新增可信本地 `fact-decide` 与普通 `fact-query`，两者使用JSON stdin和同一身份/账本，详见 [事实契约](facts-v1.md)。决定接口要求真实用户确认及来源/版本，不得作为模型shell工具开放；MCP仅增加读取。
 
 T19新增可信本地 `purge-preview` 与 `purge`：先提交精确来源范围，再使用预览之后的真实用户确认执行，详见[普通来源删除契约](purge-v1.md)。预览不删除；既有归档、备份和宿主副本残留必须保留在回执中。两个命令均不注册为 MCP 工具。
+
+M58-19：`scheduler-foreground` 仅用 capture 标记本身份活动；`scheduler-configure/status/trigger` 要求 maintain，支持保存的暂停/阈值/预算与独立覆盖状态，详见[宿主沉淀契约](host-consolidation-v1.md)。宿主使用 `python -m evernook.worker` 建立 Windows 自有进程树生命周期保护，再执行固定 CLI 操作。

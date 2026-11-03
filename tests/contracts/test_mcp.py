@@ -33,6 +33,25 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                   "--profile", "trusted-host"],
             cwd=str(Path(__file__).resolve().parents[2]))
 
+    async def test_capture_identity_can_mark_host_activity_but_recall_profile_cannot(self) -> None:
+        from evernook.scheduler import ConsolidationScheduler
+        access_file = self.config.parent / "mcp-access-active-host.json"
+        pair_client(self.config, client_id="active-host", entry="active-host", access_path=access_file,
+                    scopes=("capture", "recall"))
+        arguments = list(self.parameters.args)
+        arguments[arguments.index("--access") + 1] = str(access_file)
+        host = self.parameters.model_copy(update={"args": arguments})
+        async with Client(host, read_timeout_seconds=20) as client:
+            result = await client.call_tool("evernook_v1_host_activity", {"session": "native", "active": True})
+            self.assertFalse(result.is_error, result)
+            self.assertEqual(ConsolidationScheduler(MemoryRuntime(self.config)).status(self.access).foreground_sessions, 1)
+        recall = host.model_copy(update={"args": arguments[:-2]})
+        async with Client(recall, read_timeout_seconds=20) as client:
+            denied = await client.call_tool("evernook_v1_host_activity", {"session": "native", "active": False})
+            self.assertTrue(denied.is_error)
+            assert denied.structured_content is not None
+            self.assertEqual(denied.structured_content["error"]["code"], "operation_not_allowed")
+
     async def test_default_recall_profile_denies_mutation_and_bulk_list_even_by_direct_call(self) -> None:
         runtime = MemoryRuntime(self.config)
         event = Event(Source("test", "session", "main", "existing"), "user", 1, None,

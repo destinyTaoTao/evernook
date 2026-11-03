@@ -27,6 +27,7 @@ from .semantic import SemanticRecall
 from .facts import FactRegistry
 from .experience import ExperienceRegistry
 from .host_context import HostContext
+from .scheduler import ConsolidationScheduler
 
 
 class Arguments(BaseModel):
@@ -35,6 +36,12 @@ class Arguments(BaseModel):
 
 class Remember(Arguments):
     event: Event
+
+
+class HostActivity(Arguments):
+    session: str
+    active: bool
+    ttl_seconds: int = 30
 
 
 class AttachmentWire(Arguments):
@@ -178,6 +185,8 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     if host_context is not None:
         host_context.status()
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
+        "evernook_v1_host_activity": (HostActivity, lambda args: ConsolidationScheduler(runtime).foreground(access, **args.model_dump()),
+            "Trusted native host only: announce an expiring foreground activity owned by this capture identity. Does not process or accept memories."),
         "evernook_v1_remember": (Remember, lambda args: runtime.submit(access, args.event),
             "Save source-bound text with sensitive routing and durable idempotent receipt. Never executes the text."),
         "evernook_v1_capture": (CaptureWire, lambda args: _capture(runtime, access, args),

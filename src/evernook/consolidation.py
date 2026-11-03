@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import time
 
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan
 from .models import Access, MemoryFailure
@@ -183,14 +184,67 @@ class ConsolidationWorkflow:
             db.execute("COMMIT")
             return result
 
-    def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
+    def recoverable_sources(self, access: Access, run_id: str) -> dict[str, str]:
+        """Prove per-source coverage of a committed run even if another source became stale."""
+        self.runtime._require_scope(access, 'maintain', 'consolidation_result')
+        with self.runtime._connection() as db:
+            db.execute('BEGIN')
+            self._schema(db)
+            return self._recoverable_sources(db, run_id)
+
+    @staticmethod
+    def _recoverable_sources(db: sqlite3.Connection, run_id: str, unavailable: set[str] | None = None) -> dict[str, str]:
+        unavailable = unavailable or set()
+        run = CandidateWorkflow._row(db, run_id)
+        if run['state'] != 'succeeded':
+            return {}
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_results_v1'").fetchone():
+            return {}
+        marker = db.execute('SELECT candidate_ids FROM consolidation_results_v1 WHERE run_id=?', (run_id,)).fetchone()
+        rows = db.execute('SELECT * FROM consolidation_drafts_v1 WHERE run_id=?', (run_id,)).fetchall()
+        if marker is None or set(json.loads(marker[0])) != {row['candidate_id'] for row in rows}:
+            return {}  # A partial legacy run must not claim complete assets.
+        covered: dict[str, str] = {}
+        for version in json.loads(run['sources']):
+            if version[0] in unavailable:
+                continue
+            try:
+                sources = CandidateWorkflow._sources(db, (str(version[0]),))
+            except MemoryFailure as error:
+                if error.code not in {'stale_source', 'message_not_found', 'unsupported_extraction_source'}:
+                    raise
+                continue
+            if CandidateWorkflow._versions(sources) == _json([version]):
+                covered[str(version[0])] = 'skipped:no_drafts'
+        for row in rows:
+            draft = ConsolidationWorkflow._draft_row(row)
+            related = {span.message_id for span in draft.sources}
+            # Coverage records historical successful processing, not current asset visibility.
+            # Later invalidation of co-evidence must not recreate the original valid task.
+            for source in related.intersection(covered):
+                covered[source] = 'consolidated'
+        return covered
+
+    @staticmethod
+    def _available_draft(db: sqlite3.Connection, draft: ConsolidationDraftRow) -> bool:
+        try:
+            ProfileRegistry._sources(db, ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources))
+            return True
+        except MemoryFailure as error:
+            if error.code not in {'stale_profile_source', 'message_not_found', 'profile_span_mismatch'}:
+                raise
+            return False
+
+    def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...], *,
+                 scheduler_token: str | None = None) -> ConsolidationResult:
         """Commit candidate success, profile effects and the full review queue atomically."""
         if not isinstance(token, str):
             raise MemoryFailure("invalid_candidate_batch")
-        return self._complete(access, run_id, token, drafts)
+        return self._complete(access, run_id, token, drafts, scheduler_token=scheduler_token)
 
     def recover(self, access: Access, run_id: str,
-                provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]]) -> ConsolidationResult:
+                provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]], *,
+                scheduler_token: str | None = None) -> ConsolidationResult:
         """Repair legacy partial runs only when regenerated drafts match their committed candidates."""
         self.runtime._require_scope(access, "accept", "consolidation_recover")
         identity = self.runtime._require_scope(access, "maintain", "consolidation_recover")
@@ -202,13 +256,21 @@ class ConsolidationWorkflow:
                 raise MemoryFailure("invalid_candidate_lease")
             sources = self.candidates._sources(db, run.source_ids)
         drafts = provider(CandidateLease(run, None, sources))
-        return self._complete(access, run_id, None, drafts)
+        return self._complete(access, run_id, None, drafts, scheduler_token=scheduler_token)
+
+    @staticmethod
+    def _scheduler_fence(db: sqlite3.Connection, token: str) -> None:
+        lease = db.execute('SELECT token,expires FROM scheduler_lease_v1 WHERE id=1').fetchone()
+        if lease is None or lease[0] != token or float(lease[1]) <= time.time():
+            raise MemoryFailure('scheduler_time_budget')
 
     def _complete(self, access: Access, run_id: str, token: str | None,
-                  drafts: tuple[ConsolidationDraft, ...]) -> ConsolidationResult:
+                  drafts: tuple[ConsolidationDraft, ...], *, scheduler_token: str | None = None) -> ConsolidationResult:
         self.runtime._require_scope(access, "accept", "consolidation_complete")
         identity = self.runtime._require_scope(access, "maintain", "candidate_complete")
-        if not isinstance(drafts, tuple) or not 1 <= len(drafts) <= 32:
+        if scheduler_token is not None and (not isinstance(scheduler_token, str) or not 1 <= len(scheduler_token) <= 128):
+            raise MemoryFailure('invalid_consolidation_batch')
+        if not isinstance(drafts, tuple) or not (0 if scheduler_token is not None else 1) <= len(drafts) <= 32:
             raise MemoryFailure("invalid_consolidation_batch")
         for draft in drafts:
             self._validate(draft)
@@ -218,6 +280,8 @@ class ConsolidationWorkflow:
             draft.sources, draft.disputed) for draft in drafts)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if scheduler_token is not None:
+                self._scheduler_fence(db, scheduler_token)
             lease_row = self.candidates._row(db, run_id)
             run = self.candidates._complete(db, identity.client_id, run_id, token, mapped)
             self._schema(db)
@@ -253,6 +317,8 @@ class ConsolidationWorkflow:
             result = self._result(db, run)
             if token is not None:
                 self.candidates._lease(lease_row, identity.client_id, token)
+            if scheduler_token is not None:
+                self._scheduler_fence(db, scheduler_token)
             db.execute("COMMIT")
             return result
 
@@ -270,5 +336,7 @@ class ConsolidationWorkflow:
                 LIMIT ? OFFSET ?""", (limit + 1, offset)).fetchall()
             result: list[ConsolidationDraftRow] = []
             for row in rows[:limit]:
-                result.append(self._draft_row(row))
+                draft = self._draft_row(row)
+                if self._available_draft(db, draft):
+                    result.append(draft)
             return ConsolidationQueuePage(tuple(result), offset + limit if len(rows) > limit else None)

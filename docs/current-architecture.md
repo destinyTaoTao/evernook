@@ -49,7 +49,7 @@ flowchart TB
 | [context.py](../src/evernook/context.py) | 宿主提供 tokenizer 的完整 payload 预算、必读（含人设块与画像摘要独立预算）/事实/已审查经验/原文与最终校验 |
 | [maintenance.py](../src/evernook/maintenance.py)、[experience.py](../src/evernook/experience.py) | 有界可补跑摘录导航、经验草案与指定版本用户审查，无自动执行权限 |
 | [persona.py](../src/evernook/persona.py)、[profile.py](../src/evernook/profile.py) | 版本化核心人设块与可追溯回滚；用户画像标签草案-确认生命周期、抑制与聚合摘要 |
-| [consolidation.py](../src/evernook/consolidation.py)、[scheduler.py](../src/evernook/scheduler.py) | 原始任务到审查队列草案的显式合并、档位与收窄白名单；进程内会话/空闲触发调度与补跑，无 OS 计划任务 |
+| [consolidation.py](../src/evernook/consolidation.py)、[scheduler.py](../src/evernook/scheduler.py) | 原始任务到审查队列草案的显式合并、档位与收窄白名单；可选 dsh/pi 生命周期、前台让路、持久门槛与补跑，无 OS 计划任务；[边界](contracts/host-consolidation-v1.md) |
 | [preset.py](../src/evernook/preset.py) | 伴侣推荐默认值一键应用、全部可覆盖；推荐值不是验收过的性能承诺 |
 | [adapters/](../src/evernook/adapters) | [外壳适配器符合性契约](contracts/adapter-conformance-v1.md)套件与 OLV 参考适配器（文本回合、缺口披露） |
 | [purge.py](../src/evernook/purge.py) | 精确范围预览/用户确认、两阶段普通来源删除、派生传播与来源墓碑；不处理受保护资产或外部副本 |

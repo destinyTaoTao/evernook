@@ -10,10 +10,12 @@ import type {} from '@deepseek-ai/dsh-system-prompt';
 import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { durableText } from './durable-text.ts';
+import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config extends MemoryConfig {
+  consolidation?: ConsolidationConfig;
   /** Explicit text-only publication. Buffered mode remains the compatibility/validation path. */
   streamMode?: 'buffered' | 'durable_text';
   /** Hard bound on provider frame JSON bytes in either publication mode. */
@@ -75,6 +77,9 @@ export async function installMemory(ctx: Context, config: Config) {
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
   const client = new MemoryClient(config);
   await client.connect();
+  let consolidation: Awaited<ReturnType<typeof createConsolidation>> | undefined;
+  try { if (config.consolidation) consolidation = await createConsolidation(config, config.consolidation); }
+  catch (error) { await client.close(); throw error; }
   const through = new Map<string, number>();
   const latest = new Map<string, { text: string; receipt: Receipt }>();
   const disposers: (() => void)[] = [];
@@ -247,10 +252,16 @@ export async function installMemory(ctx: Context, config: Config) {
   }));
   disposers.push(ctx.on('agent/request', async ({ agent, signal }, next) => {
     signal.throwIfAborted();
-    await capture(agent.session);
-    return next();
+    await consolidation?.turnStarted(String(agent.session.id));
+    try { await capture(agent.session); return await next(); }
+    catch (error) { await consolidation?.turnEnded(String(agent.session.id)); throw error; }
   }));
   disposers.push(ctx.on('agent/turn-stopping', async ({ agent }) => { await capture(agent.session); }));
+  // The pinned SDK emits turn/end in its finally path, including cancellation and errors.
+  disposers.push(ctx.on('session/event', (session, value) => {
+    if (value.type === 'turn/end') void consolidation?.turnEnded(String(session.id));
+  }));
+  disposers.push(ctx.on('agent/disposed', ({ agent }) => { void consolidation?.sessionEnded(String(agent.session.id)); }));
   disposers.push(ctx.on('llm/stream', async function* (options, next) {
     if (!isAgentLoopRequest(options) || !options.sessionId) {
       yield* next();
@@ -331,6 +342,7 @@ export async function installMemory(ctx: Context, config: Config) {
   let closed = false;
   return {
     capture,
+    get consolidation() { return consolidation; },
     /** Paginated attempt discovery from the durable ledger, including attempts interrupted before native settlement. */
     async streams(sessionId: SessionId, offset = 0) {
       const page = await client.streamAttempts('evernook_dsh_text_stream_v1', config.entry, String(sessionId), offset);
@@ -349,6 +361,7 @@ export async function installMemory(ctx: Context, config: Config) {
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
         stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked' : 'buffered_calls_results_unverified',
         context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
+        consolidation: consolidation?.snapshot(),
         protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
         provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };
     },
@@ -360,8 +373,8 @@ export async function installMemory(ctx: Context, config: Config) {
     async close() {
       if (closed) return;
       closed = true;
-      for (const dispose of disposers.reverse()) dispose();
-      await client.close();
+      try { for (const dispose of disposers.reverse()) dispose(); }
+      finally { try { await consolidation?.close(); } finally { await client.close(); } }
     },
   };
 }
