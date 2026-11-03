@@ -1,0 +1,19 @@
+{
+  "suite_version": "zh-memory-v1-draft-2026-11-03",
+  "scorer_version": "evernook-evaluation-v1",
+  "corpus_sha256": "ac29b21bb44858bc1707071405eefb6398d728187cad10f607dec6981be31d95",
+  "expectations_sha256": "b22c353bc620442c6371980c27100594dbe0f7304594188fc6d7fa3e902953d1",
+  "version_sha256": "9195e154f23a7d7d53e31008497b94fa12abca059c68e0637a4c21b2afe47a3c",
+  "human_review": {
+    "state": "pending",
+    "reviewer": null,
+    "query_ids": []
+  },
+  "model_hardware_gate": "pending",
+  "forbidden_literals": [
+    "synthetic-evaluation-password-01",
+    "synthetic-evaluation-bearer-02",
+    "synthetic-evaluation-api-key-03",
+    "synthetic-evaluation-url-pass-04"
+  ]
+}
