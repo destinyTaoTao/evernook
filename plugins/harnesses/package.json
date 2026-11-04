@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": ["dist", "README.md"],
   "description": "Thin trusted native harness adapters for the same EverNook ledger",
   "engines": { "node": ">=24.11.0 <25" },
   "exports": { "./dsh": "./dist/dsh.js", "./dsh-maintenance": "./dist/dsh-maintenance.js", "./maintenance": "./dist/maintenance.js", "./pi": "./dist/pi.js", "./client": "./dist/client.js" },

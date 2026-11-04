@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment": "m58-24-2026-11-04-restricted-v1",
+  "profile": "isolated_synthetic_installation_only",
+  "core_minimum_version": "0.1.1",
+  "python": "3.14.4",
+  "node": "24.12.0",
+  "dsh": "0.2.1-rc.3",
+  "pi": "1.4.0",
+  "observation_seconds": 1800,
+  "turn_interval_seconds": 10,
+  "owned_private_bytes_max": 2147483648,
+  "experiment_disk_bytes_max": 10737418240,
+  "resource_sample_interval_ms": 250,
+  "model": "none; deterministic synthetic provider validates installed lifecycle only",
+  "ordinary_scopes": ["capture", "recall"],
+  "maintenance_scopes": ["maintain", "recall"],
+  "network": "worker-level deny hooks only; no workstation network configuration changes",
+  "physical_sleep_restart": "unmeasured; process restart and public lifecycle hooks are separate checks",
+  "admission": "restricted; failed or missing #81 gates never authorize daily model activation"
+}
