@@ -158,5 +158,29 @@ diagnostics may appear in stderr. It emits native ORT profiles, output hashes an
 memory ownership markers. No answer or reliable stream is produced. `monitor.py` adds Unix
 observation timestamps to correlate 250ms process samples with the stable phase windows.
 See [measured attribution and limitations](../../docs/reports/m58-followup-86-prefill-attribution.md).
+
+## Independent last-hidden LM-head candidate (#86)
+
+Use a separate external Python 3.14 environment containing `onnx==1.20.1`; do not add it to
+the Core runtime. With `PYTHONPATH` pointing to checkout `src`, export through
+`probes/admission/export_last_head.py --profile ORIGINAL_PROFILE --output NEW_EXTERNAL_ROOT`,
+under `monitor.py --max-seconds 60`. Original assets must not overlap the new output.
+The exporter pins the original graph, inserts only a final-position Slice before LM head,
+checks that node, and proves exact original protobuf restoration after undoing the change.
+The original pre-fused graph already fails the standard full-model checker; that identical
+parent/candidate limitation is recorded, never called a full checker pass.
+
+The resulting `profile.json` uses `qwen3-0.6b-last-hidden-experimental-v1`. The experimental
+loader pins its distinct graph SHA and all unchanged tokenizer/config assets independently;
+the original profile still requires the original graph. Original weights, prompt/attention/KV,
+32768 window, 4096 memory allowance and 512 output allowance are not reduced. This candidate
+is not admitted by the original frozen policy or enabled as the default provider.
+
+`prefill-resources.ts` also writes the final logits row/hash for exact comparison. Run
+`model-resources.ts` for the same captured provider request through full generation. For
+a one-case real dsh cancellation diagnostic, append `1 cancel-after-first-visible` to
+`admission.ts` arguments. It verifies canceled partial replay and delegated model stop;
+the observation is explicitly an error/diagnostic, never a successful quality answer.
+See [candidate results and remaining gates](../../docs/reports/m58-followup-86-last-head-candidate.md).
 These experiment scripts use actual APIs and SDKs for measurement; synthetic or component
 success does not establish real daily use, physical power-loss safety or model admission.

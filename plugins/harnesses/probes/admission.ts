@@ -19,10 +19,11 @@ import { installPiMemory } from '../src/pi.ts';
 import { MemoryClient, type Source } from '../src/client.ts';
 import { LocalQwenChat, type ModelRun } from './local-qwen.ts';
 
-const [entry, planFile, output, modelProfile, embeddingConfig, python, maximum] = process.argv.slice(2);
+const [entry, planFile, output, modelProfile, embeddingConfig, python, maximum, control] = process.argv.slice(2);
 if (!['dsh', 'pi'].includes(entry) || ![planFile, output, modelProfile, embeddingConfig, python].every(Boolean)) {
   throw new Error('Use: admission.ts dsh|pi plan.json new-external-output model-profile.json embedding-profile.json python.exe [max-cases]');
 }
+if (control && (control !== 'cancel-after-first-visible' || entry !== 'dsh')) throw new Error('unsupported_diagnostic_control');
 const checkout = resolve(import.meta.dirname, '../../..');
 const destination = resolve(output);
 if (destination === checkout || destination.startsWith(checkout + '\\')) throw new Error('external_output_required');
@@ -47,7 +48,8 @@ await writeFile(join(destination, 'manifest.json'), JSON.stringify({ phase: 'act
   probe_sha256: digest(await readFile(import.meta.filename)), model_probe_sha256: digest(await readFile(join(import.meta.dirname, 'local-qwen.ts'))),
   core_sha256: sourceHashes, model: model.startup, model_preloaded_before_user_requests: true,
   parser: policy.host.parser, sdk: { dsh: '0.2.1-rc.3', pi: '1.4.0' }, node: process.versions.node,
-  maximum_cases: maximum ? Number(maximum) : null, scope: 'Independent allowed-source fixture per question; explicit facts only, no automatic extraction claim.' }, null, 2) + '\n');
+  maximum_cases: maximum ? Number(maximum) : null, diagnostic_control: control ?? null,
+  scope: 'Independent allowed-source fixture per question; explicit facts only, no automatic extraction claim.' }, null, 2) + '\n');
 
 interface Plan {
   query_id: string; category: string; question: string; config: string; access: string;
@@ -63,6 +65,7 @@ interface CaseRun {
   first_visible_independently_read: boolean | null; final_replay_matches: boolean | null;
   error_code: string | null; context: unknown;
   diagnostics?: { name: string; message: string; stack?: string }[];
+  cancellation?: { requested: boolean; state: string; final_message_id: string | null; verified: boolean };
 }
 
 async function counterConfig(row: Plan) {
@@ -87,13 +90,15 @@ async function replay(reader: MemoryClient, source: Source) {
   for (let page = 0; page < 128; page++) {
     const value = await reader.readStream(source, cursor);
     text += value.text;
-    if (value.next_cursor === null) return { text, complete: value.complete, state: value.state };
+    if (value.next_cursor === null) return { text, complete: value.complete, state: value.state, final_message_id: value.final_message_id };
     cursor = value.next_cursor;
   }
   throw new Error('replay_limit');
 }
 
 function payload(run: CaseRun, aliases: Record<string, string>): Record<string, unknown> {
+  if (run.cancellation) return { error_code: run.error_code
+    ?? (run.cancellation.verified ? 'diagnostic_canceled' : 'cancellation_not_verified'), observed: run.visible };
   if (run.error_code) return { error_code: run.error_code, observed: run.visible };
   try {
     const result = JSON.parse(run.visible);
@@ -118,6 +123,8 @@ async function runCase(row: Plan): Promise<CaseRun> {
   let requestedAt = 0;
   const proofs: Promise<void>[] = [];
   let streamSource: (() => Promise<Source[]>) | undefined;
+  let cancelTarget: (() => void) | undefined;
+  let cancellationRequested = false;
   const publish = (text: string) => {
     if (!text) return;
     run.visible += text;
@@ -129,6 +136,7 @@ async function runCase(row: Plan): Promise<CaseRun> {
       if (sources.length !== 1) { run.first_visible_independently_read = false; return; }
       run.first_visible_independently_read = (await replay(reader!, sources[0])).text.startsWith(first);
     })());
+    if (control && cancelTarget) { cancellationRequested = true; cancelTarget(); }
   };
   const entered = (request: unknown) => {
     run.memory_pre_provider_ms ??= performance.now() - requestedAt;
@@ -176,6 +184,7 @@ async function runCase(row: Plan): Promise<CaseRun> {
       const handle = await ctx.agents.create({ sessionId: sid, meta: { cwd: join(destination, row.query_id), delegationDepth: 0 },
         agentOptions: { provider: 'local-qwen-evaluation', model: model.id } });
       cleanups.push(() => handle.dispose());
+      cancelTarget = () => handle.agent.cancel({ kind: 'user' });
       streamSource = async () => (await memory.streams(sid)).streams;
       ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') publish(frame.chunk.text); });
       ctx.on('agent/error', ({ error }) => { run.error_code = 'native_agent_error';
@@ -189,7 +198,13 @@ async function runCase(row: Plan): Promise<CaseRun> {
         await Promise.all(proofs);
         const sources = await streamSource();
         if (sources.length === 1) { const result = await replay(reader, sources[0]); run.final_replay_matches = result.text === run.visible;
-          if (!result.complete) run.error_code ??= 'incomplete_model_output'; }
+          if (control) {
+            const verified = cancellationRequested && result.state === 'canceled' && !result.complete
+              && result.final_message_id === null && run.final_replay_matches && run.first_visible_independently_read === true
+              && model.last?.failure?.aborted === true;
+            run.cancellation = { requested: cancellationRequested, state: result.state, final_message_id: result.final_message_id, verified };
+            if (!verified) run.error_code ??= 'cancellation_not_verified';
+          } else if (!result.complete) run.error_code ??= 'incomplete_model_output'; }
     } else {
       const target: Model<Api> = { id: model.id, name: 'Local pinned Qwen evaluation candidate', provider: 'local-qwen-evaluation',
         api: 'local-qwen-evaluation-v1', baseUrl: '', reasoning: false, input: ['text'],
@@ -270,6 +285,10 @@ async function runCase(row: Plan): Promise<CaseRun> {
     await reader?.close();
   }
   if (!run.requests.length) run.error_code ??= 'target_not_dispatched';
+  if (control && !run.cancellation) {
+    run.cancellation = { requested: cancellationRequested, state: 'unverified', final_message_id: null, verified: false };
+    run.error_code ??= 'cancellation_not_observed';
+  }
   if (run.requests.length === 1 && !run.model_runs.length && model.last?.request_sha256 === digest(JSON.stringify(run.requests[0]))) {
     run.model_runs.push(structuredClone(model.last));
   }

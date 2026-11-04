@@ -83,6 +83,7 @@ try {
   const metadata = Object.fromEntries(Object.entries(result!).map(([name, tensor]) =>
     [name, { type: tensor.type, dims: tensor.dims, bytes: tensor.data.byteLength, sha256: hash(tensor.data) }]));
   let firstGreedyToken: number | null = null;
+  let lastLogitsSha256: string | null = null;
   if (result!.logits) {
     const logits = result!.logits;
     const vocabulary = logits.dims.at(-1)!;
@@ -90,9 +91,14 @@ try {
     let best = 0;
     for (let index = 1; index < vocabulary; index++) if (logits.data[start + index] > logits.data[start + best]) best = index;
     firstGreedyToken = best;
+    if (logits.type !== 'float32') throw new Error('diagnostic_unexpected_logits_dtype');
+    const lastRow = Buffer.from(new Uint8Array(logits.data.buffer,
+      logits.data.byteOffset + logits.data.byteLength - vocabulary * 4, vocabulary * 4));
+    lastLogitsSha256 = createHash('sha256').update(lastRow).digest('hex');
+    await writeFile(join(destination, 'last-logits.f32le'), lastRow);
   }
   await writeFile(join(destination, 'forward.json'), JSON.stringify({ forward_ms: forwardMs,
-    first_greedy_token: firstGreedyToken, outputs: metadata }) + '\n');
+    first_greedy_token: firstGreedyToken, last_logits_sha256: lastLogitsSha256, outputs: metadata }) + '\n');
   const outputRoot = Symbol('evernook_prefill_outputs');
   Object.defineProperty(globalThis, outputRoot, { value: result, configurable: true });
   result = undefined;
