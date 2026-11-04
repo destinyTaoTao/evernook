@@ -136,6 +136,36 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   };
 }
 
+for (const budgeted of [false, true]) test(`current input receipt stays native and saved while only prior identical input is evidence (pi ${budgeted})`, async t => {
+  const host = await boot(undefined, [], undefined, budgeted);
+  t.after(() => host.close());
+  const reader = new MemoryClient(host.memoryConfig); await reader.connect();
+  t.after(() => reader.close());
+  const text = 'synthetic current-input boundary identical question';
+  await host.session.prompt(text);
+  const before = await reader.call<{ hits: { message_id: string; role: string }[] }>('search', { query: text, mode: 'exact' });
+  const priorInputs = before.hits.filter(hit => hit.role === 'user');
+  assert.equal(priorInputs.length, 1);
+  const earlier = priorInputs[0].message_id;
+  for (const message of host.requests[0].messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) if (block.type === 'text' && block.text.startsWith('{')
+        && block.text.includes('untrusted_memory_')) assert.ok(!block.text.includes(earlier));
+  }
+  await host.session.prompt(text);
+  const after = await reader.call<{ hits: { message_id: string; role: string }[] }>('search', { query: text, mode: 'exact' });
+  const current = after.hits.find(hit => hit.role === 'user' && hit.message_id !== earlier)!;
+  assert.ok(current);
+  assert.equal((await reader.read(current.message_id)).event.text, text);
+  const request = host.requests.at(-1)!;
+  const texts = request.messages.flatMap(message => Array.isArray(message.content)
+    ? message.content.filter(block => block.type === 'text').map(block => block.text) : []);
+  const evidence = texts.filter(text => text.startsWith('{') && text.includes('untrusted_memory_'));
+  assert.ok(evidence.some(text => text.includes(earlier)));
+  assert.ok(evidence.every(text => !text.includes(current.message_id)));
+  assert.ok(texts.includes(text));
+});
+
 test('native pi compaction persists sourced work across repeated extension reloads and preserves the current instruction', async t => {
   const summary = '## Goal\n合成：完成账本导出\n## Progress\n已完成列定义，尚未验证文件。\n## Next Steps\n核对导出列名。\n## Critical Context\n合成路径 ledger.csv；摘要不是写盘证明。';
   const host = await boot(summary, [], undefined, true, false, false, false, { compaction: true });

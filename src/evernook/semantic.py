@@ -240,7 +240,8 @@ class SemanticRecall:
         if type(value) not in (float, int) or not math.isfinite(value) or not 0 < value <= 120:
             raise MemoryFailure("invalid_timeout")
 
-    def _recent(self, access: Access, as_of: str, target_chars: int, days: int, *, check: Callable[[], float] | None = None) -> tuple[str, bool, int, bool]:
+    def _recent(self, access: Access, as_of: str, target_chars: int, days: int, *, check: Callable[[], float] | None = None,
+                current_input_id: str | None = None) -> tuple[str, bool, int, bool]:
         self.runtime._authorize(access)
         instant = _time(as_of)
         base = instant - timedelta(days=days).total_seconds()
@@ -248,7 +249,8 @@ class SemanticRecall:
         # Unknown/future source times never pretend to be recent. They remain in global recall.
         with self.runtime._connection() as db:
             for row in db.execute(f"""SELECT event,receipt,occurred FROM messages WHERE {_ELIGIBLE}
-                    AND occurred<=? ORDER BY occurred DESC,id LIMIT 257""", (instant,)):
+                    AND occurred<=? AND (? IS NULL OR messages.id<>?) ORDER BY occurred DESC,id LIMIT 257""",
+                    (instant, current_input_id, current_input_id)):
                 # The scan-limit return wins at the boundary: verified recent rows must not be dropped
                 # to a deadline/cancel firing on exactly the row where the partial window is promised.
                 if scanned == 256:
@@ -263,11 +265,12 @@ class SemanticRecall:
         return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, False
 
     def _semantic(self, access: Access, vector: tuple[float, ...], *, since: str | None, until: str | None,
-                  minimum: float, check: Callable[[], float] | None = None) -> tuple[list[tuple[SearchHit, float]], int, bool]:
+                  minimum: float, check: Callable[[], float] | None = None,
+                  current_input_id: str | None = None) -> tuple[list[tuple[SearchHit, float]], int, bool]:
         space = self.space
         if space is None:
             return [], 0, False
-        parameters: list[object] = [space.key]
+        parameters: list[object] = [space.key, current_input_id, current_input_id]
         condition = ""
         for key, value, operator in (("since", since, ">="), ("until", until, "<")):
             if value is not None:
@@ -282,7 +285,7 @@ class SemanticRecall:
             rows = db.execute(f"""SELECT messages.event,messages.receipt,c.start,c.end,c.vector,
                 COALESCE(v.version,1) AS state_version FROM semantic_chunks_v1 c
                 JOIN messages ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE c.space_id=? AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
+                WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}
                 ORDER BY received,messages.id,c.start LIMIT 10001""", parameters)
             for row in rows:
@@ -314,8 +317,10 @@ class SemanticRecall:
 
     def recall(self, access: Access, query: str, *, limit: int = 10, as_of: str | None = None,
                recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
-               cancel: threading.Event | None = None) -> RecallPage:
+               cancel: threading.Event | None = None, current_input_id: str | None = None) -> RecallPage:
         self.runtime._require_scope(access, "recall", "recall")
+        if current_input_id is not None:
+            _identifier(current_input_id)
         self._timeout(timeout)
         deadline = time.monotonic() + timeout
         def budget() -> float:
@@ -329,7 +334,7 @@ class SemanticRecall:
         def literal(*, mode: str = "lexical", since: str | None = None, until: str | None = None) -> SearchPage:
             try:
                 return self.runtime.search(access, query, mode=mode, since=since, until=until,
-                                           limit=100, timeout=budget(), cancel=cancel)
+                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id)
             except MemoryFailure as failure:
                 if failure.code in {"search_timeout", "search_canceled"}:
                     raise MemoryFailure(failure.code.replace("search_", "recall_", 1)) from None
@@ -347,7 +352,8 @@ class SemanticRecall:
         budget()
         exact = literal(mode="exact")
         instant = as_of if as_of is not None else datetime.now(timezone.utc).isoformat()
-        since, expanded, chars, window_limited = self._recent(access, instant, recent_target_chars, recent_days, check=budget)
+        since, expanded, chars, window_limited = self._recent(access, instant, recent_target_chars, recent_days,
+                                                           check=budget, current_input_id=current_input_id)
         # until is exclusive; one microsecond includes the reference instant in this channel.
         until = (datetime.fromtimestamp(_time(instant), timezone.utc) + timedelta(microseconds=1)).isoformat()
         recent_lexical = literal(since=since, until=until)
@@ -366,8 +372,10 @@ class SemanticRecall:
                 if len(vectors) != 1:
                     raise MemoryFailure("invalid_embedding")
                 vector = unit_vector(vectors[0], space.dimensions)
-                global_hits, count, limited = self._semantic(access, vector, since=None, until=None, minimum=min_similarity, check=budget)
-                recent_hits, recent_count, recent_limited = self._semantic(access, vector, since=since, until=until, minimum=min_similarity, check=budget)
+                global_hits, count, limited = self._semantic(access, vector, since=None, until=None, minimum=min_similarity,
+                                                           check=budget, current_input_id=current_input_id)
+                recent_hits, recent_count, recent_limited = self._semantic(access, vector, since=since, until=until, minimum=min_similarity,
+                                                                         check=budget, current_input_id=current_input_id)
                 scanned, scan_limited = count + recent_count, limited or recent_limited
                 channels["semantic"] = [hit for hit, _ in global_hits]
                 channels["recent_semantic"] = [hit for hit, _ in recent_hits]

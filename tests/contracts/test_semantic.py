@@ -68,6 +68,21 @@ class SemanticTests(unittest.TestCase):
         literal = self.workflow.recall(self.access, "辛辣")
         self.assertIn("exact", literal.hits[0].channels)
 
+    def test_current_receipt_is_excluded_before_fusion_in_built_and_unbuilt_channels(self) -> None:
+        earlier = self.save("合成：喜欢辛辣的食物。")
+        current = self.save("合成：饮食偏好是什么？")
+        for indexed in (False, True):
+            if indexed:
+                self.workflow.refresh(self.access)
+                self.runtime.refresh_lexical(self.access)
+            result = self.workflow.recall(self.access, "饮食偏好", limit=1, current_input_id=current)
+            self.assertNotIn(current, [hit.evidence.message_id for hit in result.hits])
+            if indexed:
+                self.assertEqual(result.hits[0].evidence.message_id, earlier)
+                self.assertIn("semantic", result.hits[0].channels)
+            else:
+                self.assertEqual(result.hits, ())
+
     def test_partial_chunks_resume_after_restart_and_preserve_unicode_coordinates(self) -> None:
         target = self.save("甲🙂e\u0301" * 70 + "合成终点")
         status = self.workflow.refresh(self.access, limit=1)

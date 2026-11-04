@@ -30,3 +30,15 @@
 嵌入后端接口增加可选 `cancel`；自定义backend须接受并正确处理这个参数。普通MCP/CLI不接收或持有Python Event，默认调用保持兼容的无取消行为。
 
 dsh/pi 已有显式本地目标 tokenizer 接线和每轮构造注入；真实部署的 tokenizer/provider 模板、多轮主体解析、性能及系统断网验收仍需后续工作。当前构造器没有启用日常 profile。
+
+## Current-input receipt scope (#85)
+
+`ContextBuilder.build`, `HostContext.build` and MCP `context` accept optional
+`current_input_id`. The trusted adapter supplies the current capture receipt, not a text
+fingerprint. Exact, lexical, semantic and recent candidate selection exclude that ID before
+ranking/limits; derived context items that depend on it are also omitted (`current_input`).
+`SemanticRecall.recall` and MCP `recall` share that optional scope. No global visibility,
+original record or earlier identical input is changed. With the next turn's receipt the
+previous input becomes eligible again. Omission does not grant permission to publish or
+weaken native input capture, protected-history screening, source versions, cancellation
+or independent full-request budget checks.

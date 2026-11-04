@@ -329,7 +329,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
         notifyResumed(ctx, captured.state);
         return { messages: safe.messages };
       }
-      const recalled = query.trim() ? await memory.recall(query, 32) : undefined;
+      const recalled = query.trim() ? await memory.recall(query, 32, captured.receipt.message_id) : undefined;
       const hits = [];
       let characters = 0;
       for (const hit of recalled?.hits ?? []) {
@@ -395,7 +395,8 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
         const continuation = await work?.current(ctx.sessionManager.getSessionId());
         if (auxiliary && JSON.stringify(continuation ?? null) !== auxiliary.expectedWork) throw new Error('evernook:continuation_changed');
         const bundle = auxiliary ? undefined : await memory.context(textOf(input.content), config.target.id,
-          continuation ? Math.floor(budget.memoryTokens / 2) : budget.memoryTokens, new Date().toISOString(), signal);
+          continuation ? Math.floor(budget.memoryTokens / 2) : budget.memoryTokens, new Date().toISOString(), signal,
+          captured.receipt.message_id);
         signal.throwIfAborted();
         if (bundle && (counter.counterId !== bundle.counter_id || counter.count(bundle.payload) !== bundle.used_tokens
             || bundle.used_tokens > bundle.token_limit || bundle.token_limit > budget.memoryTokens)) throw new Error('evernook:invalid_token_counter');

@@ -121,6 +121,7 @@ class Mark(Arguments):
 
 
 class Recall(Arguments):
+    current_input_id: str | None = None
     query: str
     limit: int = 10
     as_of: str | None = None
@@ -138,6 +139,7 @@ class FactQuery(Arguments):
 
 
 class BuildContext(Arguments):
+    current_input_id: str | None = None
     query: str
     model_id: str
     max_tokens: int

@@ -224,7 +224,7 @@ export async function installMemory(ctx: Context, config: Config) {
     await ingest(session.header, session.snapshotEvents(), session.inheritedEventCount);
   }
 
-  async function budgetedPayload(sessionId: string, input: string, signal?: AbortSignal) {
+  async function budgetedPayload(sessionId: string, input: string, inputId: string, signal?: AbortSignal) {
     if (!budget || !config.contextConfig) throw new Error('evernook:invalid_host_config');
     const target = loadTargetCounter(config.contextConfig);
     if (target.modelId !== budget.modelId) throw new Error('evernook:tokenizer_model_mismatch');
@@ -234,7 +234,7 @@ export async function installMemory(ctx: Context, config: Config) {
     const restored = continuation ? renderWork(continuation, Math.floor(budget.memoryTokens / 2), text => target.count(text)) : null;
     if (restored) allowance -= target.count(JSON.stringify(restored));
     for (let attempt = 0; attempt < 3; attempt++) {
-      const bundle = await client.context(input, budget.modelId, allowance, new Date().toISOString(), signal);
+      const bundle = await client.context(input, budget.modelId, allowance, new Date().toISOString(), signal, inputId);
       signal?.throwIfAborted();
       if (bundle.counter_id !== target.counterId || target.count(bundle.payload) !== bundle.used_tokens
           || bundle.used_tokens > bundle.token_limit || bundle.token_limit > allowance) throw new Error('evernook:invalid_token_counter');
@@ -298,10 +298,10 @@ export async function installMemory(ctx: Context, config: Config) {
     if (budget && config.contextConfig) {
       if (context.agent.options.model !== budget.modelId
           || context.agent.options.provider !== budget.provider) throw new Error('evernook:tokenizer_model_mismatch');
-      const section = await budgetedPayload(String(context.agent.session.id), input.text, context.signal);
+      const section = await budgetedPayload(String(context.agent.session.id), input.text, input.receipt.message_id, context.signal);
       return section.text ? { ...result, contexts: [...result.contexts, section] } : result;
     }
-    const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32);
+    const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32, input.receipt.message_id);
     context.signal?.throwIfAborted();
     const kept = [];
     let characters = 0;
@@ -405,7 +405,7 @@ export async function installMemory(ctx: Context, config: Config) {
         if (!Number.isSafeInteger(used) || used < 1) throw new Error('evernook:invalid_token_counter');
         if (workSnapshot !== undefined && JSON.stringify(await work?.current(sessionId) ?? null) !== workSnapshot) {
           if (auxiliary || attempt) throw new Error('evernook:continuation_changed');
-          const section = await budgetedPayload(sessionId, input.text, options.signal);
+          const section = await budgetedPayload(sessionId, input.text, input.receipt.message_id, options.signal);
           workSnapshot = workSnapshots.get(sessionId);
           prepared = { ...prepared, messages: currentMemoryOnly(prepared.messages, section.text, true) };
           continue;

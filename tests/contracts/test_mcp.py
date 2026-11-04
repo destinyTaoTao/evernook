@@ -41,6 +41,22 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             assert result.structured_content is not None
             self.assertEqual(result.structured_content["error"]["code"], "search_timeout")
 
+    async def test_current_input_scope_excludes_only_this_receipt_and_keeps_it_readable(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        text = "合成：本轮历史检索范围"
+        receipts = [runtime.submit(self.access, Event(Source("test", "scope", "main", str(index)),
+            "user", index, None, "complete", text)) for index in range(2)]
+        async with Client(self.parameters, read_timeout_seconds=10) as client:
+            result = await client.call_tool("evernook_v1_recall", {"query": text,
+                "current_input_id": receipts[1].message_id})
+            self.assertFalse(result.is_error, result)
+            assert result.structured_content is not None
+            self.assertEqual([hit["evidence"]["message_id"] for hit in result.structured_content["result"]["hits"]],
+                             [receipts[0].message_id])
+            read = await client.call_tool("evernook_v1_read", {"message_id": receipts[1].message_id})
+            assert read.structured_content is not None
+            self.assertEqual(read.structured_content["result"]["event"]["text"], text)
+
     async def test_capture_identity_can_mark_host_activity_but_recall_profile_cannot(self) -> None:
         from evernook.scheduler import ConsolidationScheduler
         access_file = self.config.parent / "mcp-access-active-host.json"

@@ -93,6 +93,40 @@ class ContextTests(unittest.TestCase):
         self.assertTrue(recalled)
         self.assertIn("excerpt", recalled[0]["data"])
 
+    def test_current_input_is_saved_but_only_earlier_identical_input_is_historical_evidence(self) -> None:
+        text = "合成：当前提问边界，Java 版本是多少？"
+        earlier = self.save(text)
+        current = self.save(text)
+        result = self.build("当前提问边界", current_input_id=current)
+        ids = {item["evidence_id"] for item in json.loads(result.payload)["items"]}
+        self.assertIn(earlier, ids)
+        self.assertNotIn(current, ids)
+        stored = self.runtime.read(self.access, current)
+        assert stored is not None
+        self.assertEqual(stored.event.text, text)
+        next_turn = self.save("合成：下一轮输入")
+        later = self.build("当前提问边界", current_input_id=next_turn)
+        later_ids = {item["evidence_id"] for item in json.loads(later.payload)["items"]}
+        self.assertIn(current, later_ids)
+
+    def test_current_derived_profile_cannot_spend_the_historical_profile_allowance(self) -> None:
+        from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
+        profiles = ProfileRegistry(self.runtime)
+        sources = []
+        for tag_id, confidence in (("earlier", .5), ("current", 1.0)):
+            text = "合成：喜欢摄影"
+            source = self.save(text)
+            sources.append(source)
+            draft = ProfileDraft("interest", "喜欢摄影", confidence,
+                (EvidenceSpan(source, 1, "original", 1, 0, len(text), text),))
+            proposed = profiles.decide(self.access, ProfileDecision("propose-" + tag_id, tag_id, 0, "propose", draft))
+            confirmation = self.save("合成：确认画像")
+            profiles.decide(self.access, ProfileDecision("confirm-" + tag_id, tag_id, proposed.revision,
+                "confirm", confirmation_id=confirmation))
+        result = self.build("", replace(self.policy, profile_tokens=250), current_input_id=sources[1])
+        ids = {item["evidence_id"] for item in json.loads(result.payload)["items"]}
+        self.assertEqual(ids, {"profile:earlier"})
+
     def test_overlong_important_item_is_explicitly_omitted_and_original_remains_pageable(self) -> None:
         pin, _ = self.pin("合" * 5000)
         result = self.build("", replace(self.policy, pinned_ids=(pin,)))

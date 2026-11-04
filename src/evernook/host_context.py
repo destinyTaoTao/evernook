@@ -52,7 +52,8 @@ class HostContext:
                 "saved_policy": asdict(policy), "recommended_policy": recommended}
 
     def build(self, access: Access, query: str, *, model_id: str, max_tokens: int,
-              as_of: str, mode: str, timeout: float, cancel: threading.Event | None = None) -> ContextBundle:
+              as_of: str, mode: str, timeout: float, cancel: threading.Event | None = None,
+              current_input_id: str | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "host_context_build")
         policy, counter = self._configured()
         counter.cancel = cancel
@@ -65,4 +66,4 @@ class HostContext:
         with counter.session(timeout=timeout) as scoped:
             return ContextBuilder(self.runtime, self.recall, effective, scoped).build(
                 access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
-                query_omitted=len(query) > 256, cancel=cancel)
+                query_omitted=len(query) > 256, cancel=cancel, current_input_id=current_input_id)

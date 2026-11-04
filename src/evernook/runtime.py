@@ -1059,8 +1059,10 @@ class MemoryRuntime:
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
                until: str | None = None, limit: int = 10, offset: int = 0, timeout: float = 30,
-               cancel: threading.Event | None = None) -> SearchPage:
+               cancel: threading.Event | None = None, current_input_id: str | None = None) -> SearchPage:
         self._require_scope(access, "recall", "search")
+        if current_input_id is not None:
+            _identifier(current_input_id)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
             raise MemoryFailure("invalid_timeout")
         if cancel is not None and not isinstance(cancel, threading.Event):
@@ -1094,9 +1096,10 @@ class MemoryRuntime:
             status = self._lexical_status(db)
             base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
                 FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}"""
+                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
+                  AND (? IS NULL OR messages.id<>?)"""
             order = " ORDER BY occurred,received,messages.id"
-            parameters: tuple[object, ...] = (start, start, end, end)
+            parameters: tuple[object, ...] = (start, start, end, end, current_input_id, current_input_id)
             used_index = status.state in {"ready", "behind"}
             reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
             try:

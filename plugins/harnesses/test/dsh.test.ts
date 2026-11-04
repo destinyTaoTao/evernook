@@ -134,6 +134,34 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
 
+for (const budgeted of [false, true]) test(`current input receipt stays native and saved while only prior identical input is evidence (dsh ${budgeted})`, async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, budgeted);
+  t.after(() => host.close());
+  const reader = new MemoryClient(host.config); await reader.connect();
+  t.after(() => reader.close());
+  const text = 'synthetic current-input boundary identical question';
+  const first = await host.create('scope-first'); t.after(() => first.dispose());
+  first.agent.followup(user('scope-one', text)); await first.agent.whenIdle();
+  const earlier = host.memory.status(SessionId('scope-first')).latest_input!;
+  assert.ok(!JSON.stringify(adapter.requests[0].messages.filter(message => message.role === 'user'
+    && message.source && 'form' in message.source && message.source.form === 'snapshot')).includes(earlier.message_id));
+  const second = await host.create('scope-second'); t.after(() => second.dispose());
+  second.agent.followup(user('scope-two', text)); await second.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  const current = host.memory.status(SessionId('scope-second')).latest_input!;
+  assert.equal((await reader.read(current.message_id)).event.text, text);
+  const request = adapter.requests.at(-1)!;
+  const section = request.messages.flatMap(message => message.role === 'user' && message.source
+    && 'form' in message.source && message.source.form === 'snapshot' ? message.source.sections : [])
+    .find(section => section.name === 'evernook-evidence');
+  assert.ok(section);
+  assert.ok(section.text.includes(earlier.message_id));
+  assert.ok(!section.text.includes(current.message_id));
+  assert.ok(request.messages.some(message => message.role === 'user'
+    && message.content.some(block => block.type === 'text' && block.text === text)));
+});
+
 test('real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget', async t => {
   const adapter = new Synthetic();
   const host = await boot(adapter, true, true, { compaction: true });

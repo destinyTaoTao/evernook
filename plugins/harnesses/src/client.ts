@@ -141,9 +141,11 @@ export class MemoryClient {
   capture(event: Event, kind: 'message' | 'tool_call' | 'tool_result', attachments: Attachment[] = [], input_id?: string, tool_name?: string) {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
-  recall(query: string, limit = 8) { return this.call<RecallResult>('recall', { query, limit }); }
-  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal) {
-    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal' }, signal);
+  recall(query: string, limit = 8, current_input_id?: string) {
+    return this.call<RecallResult>('recall', { query, limit, current_input_id });
+  }
+  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal, current_input_id?: string) {
+    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal', current_input_id }, signal);
   }
   read(message_id: string, signal?: AbortSignal) { return this.call<{ event: Event; receipt: Receipt & { content_version: number; received_at: string } }>('read', { message_id }, signal); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }

@@ -103,8 +103,10 @@ class ContextBuilder:
 
     def build(self, access: Access, query: str, *, as_of: str, mode: str, timeout: float,
               known_at: str | None = None, cancel: threading.Event | None = None,
-              query_omitted: bool = False) -> ContextBundle:
+              query_omitted: bool = False, current_input_id: str | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "context_build")
+        if current_input_id is not None:
+            _identifier(current_input_id)
         _time(as_of)
         if known_at is not None:
             _time(known_at)
@@ -143,6 +145,9 @@ class ContextBuilder:
                 budget()
                 try:
                     page = self.runtime.read_important(access, important_id, limit=4096)
+                    if page.item.message_id == current_input_id:
+                        omitted.append(OmittedEvidence(important_id, "current_input"))
+                        continue
                     if page.remaining:
                         omitted.append(OmittedEvidence(important_id, "important_requires_paging"))
                         continue
@@ -183,6 +188,9 @@ class ContextBuilder:
                 profile_used = 0
                 summary = ProfileRegistry(self.runtime).summary(access)
                 for tag in sorted(summary.tags, key=lambda item: (-item.draft.confidence, item.tag_id)):
+                    if tag.confirmation_id == current_input_id or any(span.message_id == current_input_id for span in tag.draft.sources):
+                        omitted.append(OmittedEvidence("profile:" + tag.tag_id, "current_input"))
+                        continue
                     data = {"tag_id": tag.tag_id, "category": tag.draft.category, "label": tag.draft.label,
                             "confidence": tag.draft.confidence, "recorded_at": tag.recorded_at,
                             "revision": tag.revision, "content_revision": tag.content_revision}
@@ -254,7 +262,7 @@ class ContextBuilder:
             if query.strip():
                 recalled = self.recall.recall(access, query, limit=32, as_of=as_of,
                     recent_days=self.policy.recent_days, recent_target_chars=self.policy.recent_target_chars,
-                    timeout=budget(), cancel=cancel)
+                    timeout=budget(), cancel=cancel, current_input_id=current_input_id)
                 degraded.extend(recalled.degraded)
                 coverage = {"lexical": asdict(recalled.lexical), "semantic": asdict(recalled.semantic),
                     "recent_since": recalled.recent_since, "recent_expanded": recalled.recent_expanded,
@@ -284,6 +292,9 @@ class ContextBuilder:
         with self.runtime._connection() as db:
             db.execute("BEGIN")
             for item in items:
+                if any(reference[0] == current_input_id for reference in item.references):
+                    omitted.append(OmittedEvidence(item.evidence_id, "current_input"))
+                    continue
                 usable = True
                 if item.kind == "facts":
                     current_facts = FactRegistry._query_snapshot(db, item.data["subject_id"], item.data["predicate"],
