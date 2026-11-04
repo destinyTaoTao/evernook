@@ -167,7 +167,7 @@ class ProfileRegistry:
     def _decide(self, db: sqlite3.Connection, request: ProfileDecision) -> ProfileRecord:
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
-                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm", "clarify"}):
+                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm", "auto_preference", "clarify"}):
             raise MemoryFailure("invalid_profile_decision")
         for identifier in (request.request_id, request.tag_id):
             _identifier(identifier)
@@ -177,7 +177,7 @@ class ProfileRegistry:
             self._validate(request.draft)
             if request.confirmation_id is not None:
                 _identifier(request.confirmation_id)
-        elif request.action == "auto_confirm":
+        elif request.action in {"auto_confirm", "auto_preference"}:
             if request.draft is not None or request.confirmation_id is not None:
                 raise MemoryFailure("invalid_profile_decision")
         else:
@@ -220,7 +220,7 @@ class ProfileRegistry:
                     or draft.processor_version != previous.draft.processor_version
                     or not draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR)):
                 raise MemoryFailure("invalid_profile_transition")
-            if request.action != "auto_confirm":
+            if request.action not in {"auto_confirm", "auto_preference"}:
                 assert request.confirmation_id is not None
                 confirmation = self._confirmation(db, request.confirmation_id)
                 approval = db.execute("SELECT tag_id,reviewed_revision,action FROM profile_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
@@ -240,15 +240,17 @@ class ProfileRegistry:
                     assert request.confirmation_id is not None
                     self._resolved_clarification(db, draft, request.confirmation_id)
                 state = "confirmed"
-            elif request.action == "auto_confirm":
-                # Whitelist guard: only the low-risk interest category may skip user review,
-                # so direct calls can never auto-confirm preferences, goals or boundaries.
+            elif request.action in {"auto_confirm", "auto_preference"}:
+                # The legacy interest action also requires the new admission proof; changing
+                # action names cannot bypass the qualified preference publication boundary.
                 if previous.state != "draft":
                     raise MemoryFailure("invalid_profile_transition")
                 if draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR):
                     raise MemoryFailure("preference_clarification_required")
-                if previous.draft.category != "interest":
+                if request.action == 'auto_confirm' and previous.draft.category != "interest":
                     raise MemoryFailure("profile_auto_confirm_limited")
+                from .automatic_preferences import PreferenceUpdates
+                PreferenceUpdates(self.runtime).validate_publication(db, draft, request.tag_id)
                 self._sources(db, draft)
                 state = "confirmed"
             elif request.action == "reject":
@@ -259,7 +261,7 @@ class ProfileRegistry:
                 if previous.state != "confirmed":
                     raise MemoryFailure("invalid_profile_transition")
                 state = "suppressed"
-            if request.action != "auto_confirm":
+            if request.action not in {"auto_confirm", "auto_preference"}:
                 assert request.confirmation_id is not None
                 db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
         record = ProfileRecord(request.tag_id, revision + 1, content_revision, state, PROFILE_TAXONOMY_VERSION,

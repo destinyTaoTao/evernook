@@ -116,6 +116,9 @@ def _parser() -> Parser:
         ("extract-preferences", "Explicit conservative offline preference drafts; no automatic acceptance"),
         ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
         ("preference-resolve", "Trusted user clarification as correction or real change"),
+        ("preference-update-configure", "Narrow finite preference rules and explicitly admit their pinned identity"),
+        ("preference-update-status", "Read saved automatic preference admission and historical receipts"),
+        ("preference-update-process", "Trusted finite preference rules and gated publication"),
         ("maintenance-configure", "Configure explicit fixed-offset extractive navigation; no OS scheduler"),
         ("maintenance-pause", "Pause/resume navigation without pausing raw collection"),
         ("maintenance-tick", "Run bounded recoverable navigation work using JSON stdin"),
@@ -290,6 +293,22 @@ def _execute(args: argparse.Namespace) -> object:
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command.startswith('preference-update-'):
+        from .automatic_preferences import PreferenceUpdates
+        preferences = PreferenceUpdates(runtime)
+        value = _input()
+        if args.command == 'preference-update-status':
+            return preferences.status(access, **value)
+        if args.command == 'preference-update-configure':
+            if 'categories' in value:
+                if not isinstance(value['categories'], list):
+                    raise MemoryFailure('invalid_arguments')
+                value['categories'] = tuple(value['categories'])
+            return preferences.configure(access, **value)
+        if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
+            raise MemoryFailure('invalid_arguments')
+        value['source_ids'] = tuple(value['source_ids'])
+        return preferences.process(access, **value)
     if args.command in ("preference-clarify", "preference-resolve"):
         from .preference_clarifications import OpenClarification, PreferenceClarifications, ResolveClarification
         clarifications = PreferenceClarifications(runtime)

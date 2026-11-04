@@ -20,7 +20,7 @@ flowchart TB
     Lexical --> Index[(同库 FTS5 派生索引)]
     Index --> Ledger
     Ledger --> State[重要交代 / 更正与抑制 / 来源片段]
-    Ledger --> Jobs[原始待处理任务：无自动消费者]
+    Ledger --> Jobs[原始待处理任务：可选有界宿主触发]
     Candidates --> Ledger
     Runtime --> Archive[archive.py 普通归档与审查恢复]
     Archive --> Review[EvidenceArchive：review_required]
@@ -54,7 +54,8 @@ flowchart TB
 | [adapters/](../src/evernook/adapters) | [外壳适配器符合性契约](contracts/adapter-conformance-v1.md)套件与 OLV 参考适配器（文本回合、缺口披露） |
 | [purge.py](../src/evernook/purge.py) | 精确范围预览/用户确认、两阶段普通来源删除、派生传播与来源墓碑；不处理受保护资产或外部副本 |
 | [evaluation.py](../src/evernook/evaluation.py) | 哈希绑定评测集、保存/检索/时态公共 API 基线与五分项评分；维护者委派 AI 逐条复核已记录，人工/AI 状态分开，模型/硬件准入仍待完成 |
-| [preferences.py](../src/evernook/preferences.py) | 显式离线三类有来源偏好草案、完整陈述保守识别、策略身份与任务复用；有限表达式、低召回，真实模型质量和自动更新仍待准入 |
+| [preferences.py](../src/evernook/preferences.py) | 显式离线三类有来源偏好草案、完整陈述保守识别、策略身份与任务复用；模型入口只产草案，真实模型质量仍待准入 |
+| [automatic_preferences.py](../src/evernook/automatic_preferences.py) | 独立可信身份中的三类有限规则、显式代码身份准入、原子事实/画像发布和有界草案晋升；否定只作冲突/审查，模型仍未准入；[契约](contracts/automatic-preferences-v1.md) |
 | [preference_clarifications.py](../src/evernook/preference_clarifications.py) | 可信本地原子争议/画像暂停与一次用户澄清，显式保留旧值或接纳更正/变化；不自动推断语义冲突或宿主用户意图 |
 | [backup.py](../src/evernook/backup.py) | 显式认证加密快照、恢复材料及保留；恢复仍需审查 |
 | [protected.py](../src/evernook/protected.py)、[vault_local.py](../src/evernook/vault_local.py) | 显式加密 Event 收件、可恢复关联与本地主口令单次显示；无自动宿主分流 |
@@ -86,7 +87,7 @@ sequenceDiagram
     end
 ```
 
-来源为入口、会话、分支、源事件 ID 的组合；相同文本的不同真实事件分别保留。SQLite 提交失败不能返回成功。核心使用短事务，尚无统一后台写调度器或自动抽取消费者；候选任务需由可信本地维护端显式领取/提交。
+来源为入口、会话、分支、源事件 ID 的组合；相同文本的不同真实事件分别保留。SQLite 提交失败不能返回成功。核心使用短事务；可选宿主触发有界主题沉淀及受准入控制的有限偏好规则，不安装 OS 守护任务。固定模型候选仍通过可信本地入口显式处理。
 
 保险库关闭时，声明或检测为敏感的内容只保存投影，并明确 `original_saved=false`；有限检测不保证任意秘密均可识别。重要标记、更正/抑制是各自显式操作，不应从上图推断一次普通提交会自动完成它们。
 

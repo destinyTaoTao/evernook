@@ -12,6 +12,7 @@ from .facts import FactRegistry
 from .experience import ExperienceRegistry
 from .persona import PERSONA_BLOCKS, PersonaRegistry
 from .profile import ProfileRegistry
+from .automatic_preferences import AUTOMATIC_PREFERENCE_PROCESSOR_PREFIX, PreferenceUpdates
 from .models import Access, MemoryFailure, Receipt
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
@@ -210,6 +211,21 @@ class ContextBuilder:
                     references.extend((span.message_id, span.state_version, span.content_version) for span in record.sources)
                     references.append((record.confirmation_id, record.confirmation_version, 1))
                 data = asdict(view)
+                if (view.fact is not None and subject == 'user' and predicate.startswith('preference:')
+                        and view.fact.processor_version.startswith(AUTOMATIC_PREFERENCE_PROCESSOR_PREFIX)):
+                    tag_id = PreferenceUpdates(self.runtime)._tag(predicate)
+                    profile = None
+                    try:
+                        profile = ProfileRegistry(self.runtime).read(access, tag_id)
+                    except MemoryFailure as error:
+                        if error.code != 'profile_not_found':
+                            raise
+                    data['preference_profile'] = {'tag_id': tag_id, 'revision': 0 if profile is None else profile.revision,
+                        'state': 'missing' if profile is None else profile.state}
+                    if (profile is None or profile.state != 'confirmed' or profile.record is None
+                            or profile.record.draft.sources != view.fact.sources or profile.record.draft.label != view.fact.text):
+                        data['fact'] = None
+                        omitted.append(OmittedEvidence('profile:' + tag_id, 'preference_profile_unavailable'))
                 if view.clarification_required:
                     # The old assertion remains queryable as history, never a certain injected preference.
                     data["fact"] = None
@@ -274,6 +290,15 @@ class ContextBuilder:
                         valid_at=as_of, known_at=known_at)
                     usable = (current_facts.knowledge_revision == item.data["knowledge_revision"]
                               and current_facts.clarification_required == item.data["clarification_required"])
+                    if 'preference_profile' in item.data:
+                        guard = item.data['preference_profile']
+                        try:
+                            linked = ProfileRegistry(self.runtime)._view(db, guard['tag_id'])
+                            usable = usable and linked.revision == guard['revision'] and linked.state == guard['state']
+                        except MemoryFailure as error:
+                            if error.code != 'profile_not_found':
+                                raise
+                            usable = usable and guard['state'] == 'missing'
                 if item.kind == "reviewed_experience":
                     current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
                     usable = current.state == "enabled" and current.revision == item.data["revision"]

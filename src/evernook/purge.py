@@ -151,6 +151,9 @@ class PurgeWorkflow:
                             (source_id, run_id, state, datetime.now(timezone.utc).isoformat()))
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_results_v1'").fetchone():
                     db.execute("DELETE FROM consolidation_results_v1 WHERE run_id=?", (run_id,))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='preference_update_receipts_v1'").fetchone():
+                    db.execute('DELETE FROM preference_update_receipts_v1 WHERE candidate_id IN '
+                        '(SELECT id FROM fact_candidates_v1 WHERE run_id=?)', (run_id,))
                 db.execute("DELETE FROM fact_candidates_v1 WHERE run_id=?", (run_id,))
                 db.execute("DELETE FROM candidate_runs_v1 WHERE id=?", (run_id,))
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_decisions_v1'").fetchone():

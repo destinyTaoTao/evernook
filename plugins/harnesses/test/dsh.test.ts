@@ -165,6 +165,62 @@ test('native dsh lifecycle defers consolidation during provider work and resumes
   } finally { await handle.dispose(); }
 });
 
+test('native dsh next-turn provider uses admitted preferences and excludes their suppressed profile and fact', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { consolidation: true });
+  t.after(() => host.close());
+  const handle = await host.create('automatic-preferences-dsh');
+  t.after(() => handle.dispose());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-m', 'evernook.cli', command, '--config', host.config.config, '--access', owner],
+      { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 4096, deep_tokens: 8192, profile_tokens: 1000,
+    fact_keys: [['user', 'preference:answer_verbosity']] });
+  await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+  host.config.memoryBudget!.memoryTokens = 4096;
+  const settings = cli('preference-update-status').settings;
+  cli('preference-update-configure', { enabled: true, admitted_processor: settings.rules_processor });
+  cli('scheduler-configure', { paused: false, max_trigger_seconds: 10 });
+  handle.agent.followup(user('automatic-preference', '我偏好简短回答。'));
+  await handle.agent.whenIdle();
+  const deadline = Date.now() + 30000;
+  let tags = cli('profile-summary').tags;
+  while (!tags.length && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 200)); tags = cli('profile-summary').tags;
+  }
+  assert.equal(tags.length, 1);
+  function payload() {
+    const request = adapter.requests.at(-1)!;
+    const blocks = request.messages.flatMap(message => message.content).filter(block => block.type === 'text')
+      .filter(block => block.text.includes('untrusted_memory_context'));
+    assert.equal(blocks.length, 1);
+    return JSON.parse(blocks[0].text.slice(blocks[0].text.indexOf('{'))) as {
+      items: { kind: string; data: { label?: string; fact?: { text: string } | null } }[];
+      coverage: { lexical: { state: string } };
+    };
+  }
+  handle.agent.followup(user('current-instruction', '合成：本轮请用表格，当前指令优先。'));
+  await handle.agent.whenIdle();
+  assert.ok(payload().items.some(item => item.kind === 'profile' && item.data.label === '我偏好简短回答。'));
+  assert.ok(payload().items.some(item => item.kind === 'facts' && item.data.fact?.text === '我偏好简短回答。'));
+  assert.equal(payload().coverage.lexical.state, 'not_built');
+  assert.match(JSON.stringify(adapter.requests.at(-1)), /本轮请用表格/);
+  handle.agent.followup(user('suppress-preference', '合成：确认抑制这个回答偏好画像。'));
+  await handle.agent.whenIdle();
+  cli('profile-decide', { request_id: 'suppress-automatic-preference', tag_id: tags[0].tag_id,
+    expected_revision: tags[0].revision, action: 'suppress',
+    confirmation_id: host.memory.status(handle.agent.session.id).latest_input!.message_id });
+  handle.agent.followup(user('after-suppression', '合成：继续当前聊天。'));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  assert.equal(payload().items.some(item => item.kind === 'profile' && item.data.label === '我偏好简短回答。'), false);
+  assert.equal(payload().items.some(item => item.kind === 'facts' && item.data.fact?.text === '我偏好简短回答。'), false);
+  assert.doesNotMatch(JSON.stringify(adapter.requests), /mcp-access-(owner|consolidation)/);
+});
+
 test('native dsh cancellation and provider failure release foreground activity without disposing the session', async t => {
   for (const canceled of [true, false]) {
     const adapter = new Synthetic();

@@ -1,8 +1,8 @@
 """Explicit consolidation workflow: raw jobs to review-queue drafts. No scheduler, no auto-acceptance.
 
 The auto tier marks whitelisted topic/navigation_summary drafts `merged`, but nothing consumes those
-rows yet — they remain queue entries; navigation/experience integration is later work. Only the
-profile_tag auto path has a live consumer (confirmed tags reach the must-read profile summary)."""
+rows yet — they remain queue entries; navigation/experience integration is later work. Generic
+profile proposals remain drafts; automatic_preferences owns admitted profile publication."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -14,7 +14,7 @@ import json
 import sqlite3
 import time
 
-from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan
+from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, PREFERENCE_CATEGORIES
 from .models import Access, MemoryFailure
 from .profile import ProfileDecision, ProfileDraft, ProfileRegistry
 from .runtime import MemoryRuntime, _identifier, _json
@@ -24,9 +24,10 @@ from .safety import credential_signal
 CONSOLIDATION_KINDS = ("profile_tag", "topic", "navigation_summary")
 CONSOLIDATION_TIERS = ("manual", "review", "auto")
 # Low-risk merge universe: tiers may narrow the whitelist below but never widen it, so facts,
-# experience, persona and non-interest profile categories can never skip user confirmation.
+# experience and persona can never skip user confirmation. Preference publication separately
+# requires source, conflict and pinned-rule admission checks.
 LOW_RISK_KINDS = ("topic", "navigation_summary")
-LOW_RISK_PROFILE_CATEGORIES = ("interest",)
+LOW_RISK_PROFILE_CATEGORIES = PREFERENCE_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,8 @@ class ConsolidationWorkflow:
         if row is None:
             return "review", {"kinds": set(LOW_RISK_KINDS), "profile_categories": set(LOW_RISK_PROFILE_CATEGORIES)}
         whitelist = json.loads(row["whitelist"])
-        return str(row["tier"]), {"kinds": set(whitelist["kinds"]), "profile_categories": set(whitelist["profile_categories"])}
+        return str(row["tier"]), {"kinds": set(whitelist["kinds"]),
+            "profile_categories": {'general_interest' if item == 'interest' else item for item in whitelist['profile_categories']}}
 
     def configure(self, access: Access, *, tier: str, kinds: tuple[str, ...] | None = None,
                   profile_categories: tuple[str, ...] | None = None) -> dict[str, object]:
@@ -105,10 +107,11 @@ class ConsolidationWorkflow:
             kinds = LOW_RISK_KINDS
         if profile_categories is None:
             profile_categories = LOW_RISK_PROFILE_CATEGORIES
-        if (not isinstance(kinds, tuple) or any(item not in LOW_RISK_KINDS for item in kinds)
+        if (not isinstance(kinds, tuple) or any(not isinstance(item, str) or item not in LOW_RISK_KINDS for item in kinds)
                 or not isinstance(profile_categories, tuple)
-                or any(item not in LOW_RISK_PROFILE_CATEGORIES for item in profile_categories)):
+                or any(not isinstance(item, str) or item not in (*LOW_RISK_PROFILE_CATEGORIES, 'interest') for item in profile_categories)):
             raise MemoryFailure("invalid_consolidation_whitelist")
+        profile_categories = tuple('general_interest' if item == 'interest' else item for item in profile_categories)
         whitelist = _json({"kinds": sorted(set(kinds)), "profile_categories": sorted(set(profile_categories))})
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -263,6 +266,11 @@ class ConsolidationWorkflow:
         lease = db.execute('SELECT token,expires FROM scheduler_lease_v1 WHERE id=1').fetchone()
         if lease is None or lease[0] != token or float(lease[1]) <= time.time():
             raise MemoryFailure('scheduler_time_budget')
+        paused = db.execute('SELECT paused FROM scheduler_settings_v1 WHERE id=1').fetchone()
+        if paused is not None and paused[0]:
+            raise MemoryFailure('scheduler_paused')
+        if db.execute('SELECT 1 FROM scheduler_foreground_v1 WHERE active_until>? LIMIT 1', (time.time(),)).fetchone():
+            raise MemoryFailure('scheduler_foreground')
 
     def _complete(self, access: Access, run_id: str, token: str | None,
                   drafts: tuple[ConsolidationDraft, ...], *, scheduler_token: str | None = None) -> ConsolidationResult:
@@ -304,10 +312,8 @@ class ConsolidationWorkflow:
                         f"consolidation-{candidate_id}", f"consol-{candidate_id[:32]}", 0, "propose",
                         ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources)))
                     proposal_id = proposal.tag_id
-                    if tier == "auto" and draft.category in whitelist["profile_categories"]:
-                        self.profile._decide(db, ProfileDecision(
-                            f"consolidation-auto-{candidate_id}", proposal.tag_id, 1, "auto_confirm"))
-                        state = "merged"
+                    # Generic proposals lack admitted preference provenance. Only the
+                    # qualified preference workflow may publish a confirmed profile.
                 elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
                     state = "merged"
                 db.execute("INSERT INTO consolidation_drafts_v1 VALUES (?,?,?,?,?,?,?,?,?,?,?)",

@@ -98,6 +98,7 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
       });
     }] });
   await resources.reload();
+  assert.deepEqual(resources.getExtensions().errors, []);
   const model = { ...faux.getModel(), provider: 'evernook-memory', api: durable ? 'evernook-durable-pi-v1' : 'evernook-buffered-pi-v1' };
   const { session } = await createAgentSession({ cwd: root, agentDir: join(root, 'pi-agent'), modelRuntime: runtime,
     resourceLoader: resources, settingsManager: settings, noTools: tools.length || maintained ? 'builtin' : 'all',
@@ -149,6 +150,53 @@ test('native pi lifecycle gates background work and reload catches up without ch
   const resumed = await host.consolidation().status();
   assert.equal(resumed.foreground_sessions, 0);
   assert.ok(Number(resumed.session_marks) > 0);
+});
+
+test('native pi provider uses admitted preferences and trusted suppression excludes profile and fact after reload', async t => {
+  const host = await boot('合成偏好回复。', [], undefined, true, false, true, false, { consolidation: true });
+  t.after(() => host.close());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-m', 'evernook.cli', command, '--config', host.paths.config, '--access', owner],
+      { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  const saved = JSON.parse(await readFile(host.memoryConfig.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 4096, deep_tokens: 8192, profile_tokens: 1000,
+    fact_keys: [['user', 'preference:answer_verbosity']] });
+  await writeFile(host.memoryConfig.contextConfig!, JSON.stringify(saved));
+  host.memoryConfig.memoryBudget!.memoryTokens = 4096;
+  cli('preference-update-configure', { enabled: true,
+    admitted_processor: cli('preference-update-status').settings.rules_processor });
+  cli('scheduler-configure', { paused: false, max_trigger_seconds: 10 });
+  await host.session.prompt('我偏好简短回答。');
+  const deadline = Date.now() + 30000;
+  let tags = cli('profile-summary').tags;
+  while (!tags.length && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 200)); tags = cli('profile-summary').tags;
+  }
+  assert.equal(tags.length, 1);
+  function payload() {
+    const memory = host.requests.at(-1)!.messages.filter(message => message.role === 'user')
+      .flatMap(message => typeof message.content === 'string' ? [message.content]
+        : message.content.filter(block => block.type === 'text').map(block => block.text))
+      .filter(text => text.includes('untrusted_memory_context'));
+    assert.equal(memory.length, 1);
+    return JSON.parse(memory[0]) as { items: { kind: string; data: { label?: string; fact?: { text: string } | null } }[];
+      coverage: { lexical: { state: string } } };
+  }
+  await host.session.prompt('合成：本轮请用表格，当前指令优先。');
+  assert.ok(payload().items.some(item => item.kind === 'profile' && item.data.label === '我偏好简短回答。'));
+  assert.ok(payload().items.some(item => item.kind === 'facts' && item.data.fact?.text === '我偏好简短回答。'));
+  assert.equal(payload().coverage.lexical.state, 'not_built');
+  assert.match(JSON.stringify(host.requests.at(-1)), /本轮请用表格/);
+  const review = await host.propose({ kind: 'profile', tag_id: tags[0].tag_id, action: 'suppress' });
+  await host.session.prompt(review.confirm_command);
+  assert.equal(host.outcomes.at(-1)?.state, 'completed');
+  await host.restart();
+  await host.session.prompt('合成：重载后继续当前聊天。');
+  assert.equal(payload().items.some(item => item.kind === 'profile' && item.data.label === '我偏好简短回答。'), false);
+  assert.equal(payload().items.some(item => item.kind === 'facts' && item.data.fact?.text === '我偏好简短回答。'), false);
+  assert.doesNotMatch(JSON.stringify(host.requests), /mcp-access-(owner|consolidation|maintenance)/);
 });
 
 test('pi durable text publishes only committed prefixes before the full answer is saved and survives reload', async () => {

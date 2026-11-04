@@ -247,8 +247,12 @@ class SchedulerLifecycleTests(unittest.TestCase):
         purge.purge(self.access, PurgeDecision(preview.request_id, confirmation))
         self.assertEqual(self.scheduler.status(self.access).pending, 1)
         self.scheduler.trigger(self.access, reason='startup', provider=provider)
-        tags = ProfileRegistry(self.runtime).summary(self.access).tags
-        self.assertEqual(sum(any(span.message_id == ids[0] for span in tag.draft.sources) for tag in tags), 1)
+        # M58-20 retains legacy, unadmitted interest proposals as drafts.
+        rows = [row for row in workflow.queue(self.access).rows
+            if row.kind == 'profile_tag' and any(span.message_id == ids[0] for span in row.sources)]
+        self.assertEqual(len(rows), 1)
+        assert rows[0].proposal_id is not None
+        self.assertEqual(ProfileRegistry(self.runtime).read(self.access, rows[0].proposal_id).state, 'draft')
 
 
 if __name__ == "__main__":

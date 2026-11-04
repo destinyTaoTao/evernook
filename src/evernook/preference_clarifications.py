@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
+import sqlite3
 
 from .candidates import PREFERENCE_CATEGORIES
 from .facts import FactDecision, FactRecord, FactRegistry
@@ -58,6 +59,13 @@ class PreferenceClarifications:
     def open(self, access: Access, request: OpenClarification) -> PreferenceClarification:
         """The trusted caller establishes that these two statements concern one conflicting preference."""
         self.runtime._require_scope(access, "accept", "preference_clarification_open")
+        with self.runtime._connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            result = self._open(db, request)
+            db.execute('COMMIT')
+            return result
+
+    def _open(self, db: sqlite3.Connection, request: OpenClarification) -> PreferenceClarification:
         if not isinstance(request, OpenClarification):
             raise MemoryFailure("invalid_preference_clarification")
         for value in (request.subject_id, request.predicate, request.profile_tag_id, request.candidate_id, request.confirmation_id):
@@ -66,35 +74,32 @@ class PreferenceClarifications:
             raise MemoryFailure("invalid_preference_clarification")
         clarification_id = self._id("dispute", request.subject_id, request.predicate, request.profile_tag_id, request.candidate_id)
         processor = PREFERENCE_CLARIFICATION_PROCESSOR + clarification_id
-        with self.runtime._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            incoming, _ = self.facts._candidate(db, request.candidate_id)
-            if incoming.preference_category not in PREFERENCE_CATEGORIES or incoming.disputed:
-                raise MemoryFailure("preference_candidate_required")
-            view = self.facts._query_snapshot(db, request.subject_id, request.predicate)
-            profile = self.profiles._view(db, request.profile_tag_id)
-            if any(clarification_id in row.resolves for row in self.facts._rows(db, request.subject_id, request.predicate)):
-                raise MemoryFailure("preference_clarification_resolved")
-            existing = next((row for row in view.disputes if row.fact_id == clarification_id), None)
-            if existing is not None:
-                if (existing.confirmation_id != request.confirmation_id or existing.revision != request.expected_fact_revision + 1
-                        or profile.record is None or profile.state != "draft" or profile.revision != request.expected_profile_revision + 1
-                        or profile.record.draft.processor_version != processor or view.fact is None):
-                    raise MemoryFailure("preference_clarification_conflict")
-                return PreferenceClarification(clarification_id, "pending", existing, profile.record)
-            if view.clarification_required:
-                raise MemoryFailure("preference_clarification_pending")
-            if (view.fact is None or profile.state != "confirmed" or profile.record is None
-                    or profile.record.draft.sources != view.fact.sources):
-                raise MemoryFailure("preference_source_mismatch")
-            expected_category = "interest" if incoming.preference_category == "general_interest" else "preference"
-            if profile.record.draft.category != expected_category or incoming.text == view.fact.text:
-                raise MemoryFailure("preference_conflict_required")
-            disputed = self.facts._decide(db, FactDecision(clarification_id, request.subject_id, request.predicate,
-                request.candidate_id, request.confirmation_id, request.expected_fact_revision, "disputed"))
-            proposed = self.profiles._decide(db, ProfileDecision(self._id("draft", clarification_id), request.profile_tag_id,
-                request.expected_profile_revision, "revise", ProfileDraft(expected_category, incoming.text, 1.0, incoming.sources, processor)))
-            db.execute("COMMIT")
+        incoming, _ = self.facts._candidate(db, request.candidate_id)
+        if incoming.preference_category not in PREFERENCE_CATEGORIES or incoming.disputed:
+            raise MemoryFailure("preference_candidate_required")
+        view = self.facts._query_snapshot(db, request.subject_id, request.predicate)
+        profile = self.profiles._view(db, request.profile_tag_id)
+        if any(clarification_id in row.resolves for row in self.facts._rows(db, request.subject_id, request.predicate)):
+            raise MemoryFailure("preference_clarification_resolved")
+        existing = next((row for row in view.disputes if row.fact_id == clarification_id), None)
+        if existing is not None:
+            if (existing.confirmation_id != request.confirmation_id or existing.revision != request.expected_fact_revision + 1
+                    or profile.record is None or profile.state != "draft" or profile.revision != request.expected_profile_revision + 1
+                    or profile.record.draft.processor_version != processor or view.fact is None):
+                raise MemoryFailure("preference_clarification_conflict")
+            return PreferenceClarification(clarification_id, "pending", existing, profile.record)
+        if view.clarification_required:
+            raise MemoryFailure("preference_clarification_pending")
+        if (view.fact is None or profile.state != "confirmed" or profile.record is None
+                or profile.record.draft.sources != view.fact.sources):
+            raise MemoryFailure("preference_source_mismatch")
+        expected_category = "interest" if incoming.preference_category == "general_interest" else "preference"
+        if profile.record.draft.category != expected_category or incoming.text == view.fact.text:
+            raise MemoryFailure("preference_conflict_required")
+        disputed = self.facts._decide(db, FactDecision(clarification_id, request.subject_id, request.predicate,
+            request.candidate_id, request.confirmation_id, request.expected_fact_revision, "disputed"))
+        proposed = self.profiles._decide(db, ProfileDecision(self._id("draft", clarification_id), request.profile_tag_id,
+            request.expected_profile_revision, "revise", ProfileDraft(expected_category, incoming.text, 1.0, incoming.sources, processor)))
         return PreferenceClarification(clarification_id, "pending", disputed, proposed)
 
     def resolve(self, access: Access, request: ResolveClarification) -> PreferenceClarification:

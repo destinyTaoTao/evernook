@@ -1,5 +1,7 @@
 # M58-17 离线三类偏好草案
 
+M58-20 的独立有限规则发布/冲突控制见[自动偏好契约](automatic-preferences-v1.md)。本页的模型 extract-preferences 入口仍只生成候选；规则处理器复用完整来源校验，并额外把有限字面否定保留为审查/冲突证据，不自动接纳否定。
+
 公开接口为 `evernook.preferences.PreferenceProcessor(runtime, backend).process(access, source_ids, timeout=120, cancel=None)`，backend 复用既有 `ExtractorBackend` / 固定本地 `LocalQwen`。可信本地 CLI：
 
 ```text

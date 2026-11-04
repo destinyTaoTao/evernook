@@ -44,7 +44,11 @@ class PreferenceProcessor(ExtractionProcessor):
         return self._version
 
     @staticmethod
-    def _drafts(selection: object, sources: tuple[ExtractionSource, ...]) -> tuple[CandidateDraft, ...]:
+    def _classify(text: str) -> str | None:
+        return _category(text)
+
+    @classmethod
+    def _drafts(cls, selection: object, sources: tuple[ExtractionSource, ...]) -> tuple[CandidateDraft, ...]:
         drafts = ExtractionProcessor._drafts(selection, sources)
         originals = {item.message.receipt.message_id: item.message.event.text for item in sources}
         result = []
@@ -55,7 +59,7 @@ class PreferenceProcessor(ExtractionProcessor):
             # A selected substring must not discard quote/negation/high-risk context.
             if span.start != 0 or draft.text != originals[span.message_id]:
                 continue
-            category = _category(draft.text)
+            category = cls._classify(draft.text)
             if category is not None:
                 result.append(replace(draft, preference_category=category))
         return tuple(result)

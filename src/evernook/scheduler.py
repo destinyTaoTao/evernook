@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import math
@@ -12,6 +12,7 @@ import time
 
 from .candidates import CandidateLease
 from .consolidation import CONSOLIDATION_KINDS, ConsolidationDraft, ConsolidationWorkflow
+from .automatic_preferences import PreferenceUpdate, PreferenceUpdates
 from .models import Access, LexicalStatus, MemoryFailure
 from .runtime import MemoryRuntime, _identifier, _RECALLABLE, _time
 
@@ -49,6 +50,7 @@ class SchedulerStatus:
     foreground_sessions: int = 0
     covered_messages: int = 0
     failure_reasons: dict[str, int] = field(default_factory=dict)
+    preference_updates: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ class SchedulerTick:
     run_ids: tuple[str, ...]
     processed: int
     remaining: int
+    preference_updates: tuple[PreferenceUpdate, ...] = ()
 
 
 def extractive_provider(lease: CandidateLease) -> tuple[ConsolidationDraft, ...]:
@@ -170,7 +173,8 @@ class ConsolidationScheduler:
             return SchedulerStatus(settings.paused, settings.max_sources_per_run, settings.max_runs_per_trigger,
                 processed, marks, reasons, int(backlog[0]), oldest, self.runtime._lexical_status(db),
                 settings.min_pending, settings.idle_seconds, settings.max_trigger_seconds,
-                foreground_sessions=self._foreground_count(db), covered_messages=covered, failure_reasons=failures)
+                foreground_sessions=self._foreground_count(db), covered_messages=covered, failure_reasons=failures,
+                preference_updates=PreferenceUpdates(self.runtime)._status(db))
 
     @staticmethod
     def _foreground_count(db: sqlite3.Connection) -> int:
@@ -228,12 +232,14 @@ class ConsolidationScheduler:
                        (token, time.time() + ttl))
             db.execute("COMMIT")
         try:
-            return self._trigger(access, reason=reason, provider=provider, scheduler_token=token)
+            updates: list[PreferenceUpdate] = []
+            result = self._trigger(access, reason=reason, provider=provider, scheduler_token=token, preference_updates=updates)
+            return replace(result, preference_updates=tuple(updates))
         finally:
             with self.runtime._connection() as db:
                 db.execute("DELETE FROM scheduler_lease_v1 WHERE id=1 AND token=?", (token,))
 
-    def _trigger(self, access: Access, *, reason: str, scheduler_token: str,
+    def _trigger(self, access: Access, *, reason: str, scheduler_token: str, preference_updates: list[PreferenceUpdate],
                  provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]] | None = None) -> SchedulerTick:
         """Bounded consolidation pass over unprocessed pending raw jobs; idempotent and crash-resumable.
 
@@ -262,7 +268,10 @@ class ConsolidationScheduler:
             # Old versions skipped whole mixed batches without a reason. Recheck those sources;
             # new per-source reasons and verified empty results make this a one-time recovery.
             db.execute("DELETE FROM scheduler_progress_v1 WHERE state='skipped'")
-            if reason != "manual" and self._remaining(db) < settings.min_pending:
+            preferences = PreferenceUpdates(self.runtime)
+            promotions = preferences._pending(db, sources_limit * runs_limit)
+            raw_ready = reason == 'manual' or self._remaining(db) >= settings.min_pending
+            if not raw_ready and not promotions:
                 db.execute("COMMIT")
                 return SchedulerTick(reason, "threshold", (), 0, self._remaining(db))
             if reason == "idle" and settings.idle_seconds:
@@ -272,7 +281,7 @@ class ConsolidationScheduler:
                 if time.time() - last_activity < settings.idle_seconds:
                     db.execute("COMMIT")
                     return SchedulerTick(reason, "idle_wait", (), 0, self._remaining(db))
-            candidates = db.execute(f"""SELECT messages.id,messages.event,messages.receipt FROM messages JOIN jobs ON jobs.message_id=messages.id
+            candidates = [] if not raw_ready else db.execute(f"""SELECT messages.id,messages.event,messages.receipt FROM messages JOIN jobs ON jobs.message_id=messages.id
                 WHERE {_PENDING_SOURCES} ORDER BY messages.received, messages.id LIMIT ?""",
                 (sources_limit * runs_limit,)).fetchall()
             completed_runs: list[str] = []
@@ -284,6 +293,7 @@ class ConsolidationScheduler:
                     tuple(row['id'] for row in candidates))]
             db.execute("COMMIT")
         source_ids: list[str] = []
+        preference_ids: list[str] = []
         progress: list[tuple[str, str, str]] = []
         for row in candidates:
             message = self.runtime._stored(row)
@@ -298,6 +308,8 @@ class ConsolidationScheduler:
                 skip_reason = "empty_source"
             if skip_reason is None:
                 source_ids.append(str(row["id"]))
+                if message.event.role == 'user' and PreferenceUpdates.classify_statement(message.event.text) is not None:
+                    preference_ids.append(str(row['id']))
             else:
                 progress.append((str(row["id"]), "", "skipped:" + skip_reason))
         run_ids: list[str] = []
@@ -310,6 +322,39 @@ class ConsolidationScheduler:
             if interrupted:
                 raise MemoryFailure("scheduler_" + interrupted)
             return drafts
+        for message_id in preference_ids:
+            interrupted = self._interruption(deadline, scheduler_token)
+            if interrupted:
+                return SchedulerTick(reason, interrupted, (), 0, self._remaining_count([]))
+            try:
+                report = preferences.process(access, (message_id,), timeout=min(120, max(0.001, deadline - time.monotonic())),
+                    scheduler_token=scheduler_token)
+            except MemoryFailure as error:
+                if error.code in {'scheduler_foreground', 'scheduler_paused', 'scheduler_time_budget'}:
+                    return SchedulerTick(reason, error.code.removeprefix('scheduler_'), (), 0, self._remaining_count([]))
+                raise
+            if report.error_code == 'extraction_timeout':
+                return SchedulerTick(reason, 'time_budget', (), 0, self._remaining_count([]))
+            if report.error_code is not None or not report.runs or any(run.state != 'succeeded' for run in report.runs):
+                raise MemoryFailure('preference_processing_failed')
+            preference_updates.extend(report.updates)
+        for candidate_id in promotions[:max(0, sources_limit * runs_limit - len(candidates))]:
+            interrupted = self._interruption(deadline, scheduler_token)
+            if interrupted:
+                return SchedulerTick(reason, interrupted, (), 0, self._remaining_count([]))
+            try:
+                preference_updates.append(preferences.apply(access, candidate_id, scheduler_token=scheduler_token, deadline=deadline))
+            except MemoryFailure as error:
+                if error.code in {'stale_source', 'candidate_not_found'}:
+                    with self.runtime._connection() as db:
+                        db.execute('BEGIN IMMEDIATE')
+                        self.workflow._scheduler_fence(db, scheduler_token)
+                        db.execute("UPDATE preference_update_receipts_v1 SET state='source_unavailable' WHERE candidate_id=?", (candidate_id,))
+                        db.execute('COMMIT')
+                    continue
+                if error.code in {'scheduler_foreground', 'scheduler_paused', 'scheduler_time_budget'}:
+                    return SchedulerTick(reason, error.code.removeprefix('scheduler_'), (), 0, self._remaining_count([]))
+                raise
         # A prior window may have committed assets just before losing its progress write.
         # Recover those exact durable source sets before a new arrival can change grouping.
         for run_id in completed_runs:

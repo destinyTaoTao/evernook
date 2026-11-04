@@ -51,10 +51,10 @@ class ConsolidationTierTests(unittest.TestCase):
                                               confidence=0.8),))
         row = result.drafts[0]
         self.assertEqual(row.state, "pending_review")
-        profile = ProfileRegistry(self.runtime).read(self.access, row.proposal_id)  # type: ignore[arg-type]
+        profile = ProfileRegistry(self.runtime).read(self.access, row.proposal_id)
         self.assertEqual(profile.state, "draft")
 
-    def test_auto_tier_merges_whitelisted_interest_tags_and_topics_only(self) -> None:
+    def test_auto_tier_merges_topics_but_keeps_unadmitted_profile_proposals_as_drafts(self) -> None:
         self.workflow.configure(self.access, tier="auto")
         interest = self.source("合成：用户说喜欢观鸟")
         preference = self.source("合成：用户说偏好深色界面")
@@ -65,16 +65,17 @@ class ConsolidationTierTests(unittest.TestCase):
             ConsolidationDraft("topic", "观鸟装备话题", (topic,), confidence=0.6),
         ))
         states = {row.label: (row.state, row.proposal_id) for row in result.drafts}
-        self.assertEqual(states["喜欢观鸟"][0], "merged")
+        self.assertEqual(states["喜欢观鸟"][0], "pending_review")
         self.assertEqual(states["偏好深色界面"][0], "pending_review")
         self.assertEqual(states["观鸟装备话题"][0], "merged")
-        merged = ProfileRegistry(self.runtime).read(self.access, states["喜欢观鸟"][1])  # type: ignore[arg-type]
-        self.assertEqual(merged.state, "confirmed")
-        self.assertIsNone(merged.record.confirmation_id)  # type: ignore[union-attr]
-        still_draft = ProfileRegistry(self.runtime).read(self.access, states["偏好深色界面"][1])  # type: ignore[arg-type]
+        merged = ProfileRegistry(self.runtime).read(self.access, states["喜欢观鸟"][1])
+        self.assertEqual(merged.state, "draft")
+        assert merged.record is not None
+        self.assertIsNone(merged.record.confirmation_id)
+        still_draft = ProfileRegistry(self.runtime).read(self.access, states["偏好深色界面"][1])
         self.assertEqual(still_draft.state, "draft")
         summary = ProfileRegistry(self.runtime).summary(self.access)
-        self.assertEqual([tag.draft.label for tag in summary.tags], ["喜欢观鸟"])
+        self.assertEqual(summary.tags, ())
 
     def test_manual_tier_proposes_nothing_and_whitelist_can_narrow(self) -> None:
         self.workflow.configure(self.access, tier="manual")
@@ -124,7 +125,9 @@ class ConsolidationTierTests(unittest.TestCase):
         self.assertEqual(self.workflow.configure(self.worker, tier="review")["tier"], "review")
         configured = self.workflow.configure(self.access, tier="auto", kinds=("navigation_summary",))
         self.assertEqual(configured, {"tier": "auto", "kinds": ["navigation_summary"],
-                                      "profile_categories": ["interest"]})
+                                      "profile_categories": ["general_interest", "response_style", "technical_tool"]})
+        legacy = self.workflow.configure(self.access, tier='auto', profile_categories=('interest',))
+        self.assertEqual(legacy['profile_categories'], ['general_interest'])
 
     def test_cli_configure_end_to_end(self) -> None:
         process = subprocess.run([sys.executable, "-m", "evernook.cli", "consolidation-configure",
@@ -134,7 +137,7 @@ class ConsolidationTierTests(unittest.TestCase):
         result = json.loads(process.stdout.decode("utf-8"))
         self.assertEqual(process.returncode, 0, process.stderr)
         self.assertEqual(result["result"]["tier"], "auto")
-        self.assertEqual(result["result"]["profile_categories"], ["interest"])
+        self.assertEqual(result["result"]["profile_categories"], ["general_interest", "response_style", "technical_tool"])
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 对应 [#77](https://github.com/destinyTaoTao/evernook/issues/77)。dsh/pi 显式配置 `consolidation: { access: <独立工作身份的绝对路径>, pollMs?: 5000 }` 后，启动、轮次完成、会话结束及空闲轮询调用同一 `ConsolidationScheduler`。不安装系统任务、不修改已安装宿主配置；默认不启用宿主后台工作。
 
-普通宿主身份必须恰有 capture/recall；私有工作身份必须有 recall/maintain/accept，且 client_id 与访问文件均不同。后者只由可信适配器启动的固定 CLI 使用，不注册模型工具，也不进入 provider 消息。当前默认 provider 只产生低置信度、带原文证据的 topic 审查草案；三类偏好生成和自动接纳属于后续 #78。
+普通宿主身份必须恰有 capture/recall；私有工作身份必须有 recall/maintain/accept，且 client_id 与访问文件均不同。后者只由可信适配器启动的固定 CLI 使用，不注册模型工具，也不进入 provider 消息。主题 provider 产生低置信度、有原文证据的 topic 草案；#78 额外接入[三类有限规则草案/受准入控制的发布](automatic-preferences-v1.md)，默认规则未准入。
 
 前台开始先中止本宿主在途工作，再通过可信 MCP `evernook_v1_host_activity` 写入活动租约；该操作只要求 capture，recall 模式不提供。`session/active/ttl_seconds` 严格校验，租约属于当前 client_id，不能清除其他客户端活动。宿主为所有并行会话维护一个聚合租约，每10秒续期30秒；API允许1–120秒。活动同步失败时暂停本宿主后台触发，原文采集继续。核心在开始处理和 provider 返回时重新检查全库前台租约及暂停状态；现有事务提交不异步打断。
 
