@@ -365,10 +365,24 @@ class MemoryRuntime:
             raise MemoryFailure("idempotency_material_unavailable") from None
         if len(self._fingerprint_key) != 32:
             raise MemoryFailure("idempotency_material_unavailable")
+        ledger_id = hmac.digest(self._fingerprint_key, b"evernook-ledger-identity-v1", hashlib.sha256).hex()
         with self._connection() as db:
+            # A complete current ledger needs only a read snapshot; migrations still take the writer lock.
+            db.execute("BEGIN")
             version = int(db.execute("PRAGMA user_version").fetchone()[0])
             if version not in (0, 1, 2, 3, 4, 5):
                 raise MemoryFailure("unsupported_storage_version")
+            required = {"messages", "message_time", "jobs", "important", "changes", "visibility",
+                        "source_context", "captures", "attachments", "ledger_identity_v1",
+                        "text_streams_v1", "text_stream_chunks_v1"}
+            present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','index')")}
+            if version == 5 and required <= present and db.execute("PRAGMA journal_mode").fetchone()[0] == "wal":
+                stored_id = db.execute("SELECT ledger_id FROM ledger_identity_v1 WHERE id=1").fetchone()
+                if stored_id is not None:
+                    if not hmac.compare_digest(str(stored_id[0]), ledger_id):
+                        raise MemoryFailure("ledger_identity_mismatch")
+                    return
+            db.execute("ROLLBACK")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS messages (
@@ -398,7 +412,6 @@ class MemoryRuntime:
                 COMMIT;""")
             # A non-secret, key-bound ledger identity travels with ordinary snapshots; the
             # idempotency key itself remains outside archives and is never copied into them.
-            ledger_id = hmac.digest(self._fingerprint_key, b"evernook-ledger-identity-v1", hashlib.sha256).hex()
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS ledger_identity_v1 (id INTEGER PRIMARY KEY CHECK(id=1), ledger_id TEXT NOT NULL)")
             db.execute("INSERT OR IGNORE INTO ledger_identity_v1 VALUES (1,?)", (ledger_id,))
