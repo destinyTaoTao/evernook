@@ -118,7 +118,8 @@ def main() -> int:
                 total = sum(row["private_bytes"] for row in processes)
                 peak = max(peak, total)
                 samples += 1
-                log.write(json.dumps({"elapsed_ms": (tick - started) * 1000, "private_bytes": total, "processes": processes}) + "\n")
+                log.write(json.dumps({"elapsed_ms": (tick - started) * 1000,
+                    "observed_at_unix_ms": time.time() * 1000, "private_bytes": total, "processes": processes}) + "\n")
                 log.flush()
                 time.sleep(max(0, .25 - (time.perf_counter() - tick)))
         code = child.poll() if stop_reason else child.wait()

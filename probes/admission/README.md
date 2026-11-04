@@ -139,5 +139,24 @@ receipts remain separate. `python probes/admission/test_monitor.py -v` verifies 
 descendant termination and the stop-file path with real short-lived Windows processes.
 
 Public Core regression for the new vector count is in `tests/contracts/test_semantic.py`.
+
+## One-prefill native memory attribution (#86)
+
+From the checkout root, with an existing external output parent and the same pinned model
+profile/captured synthetic provider request:
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+C:\myProject\evernook\.venv\Scripts\python.exe probes/admission/monitor.py --output E:\lab\prefill-monitor-01 --max-seconds 35 -- node --expose-gc plugins/harnesses/probes/prefill-resources.ts E:\models\qwen-profile.json E:\lab\captured-request.json E:\lab\prefill-01 baseline
+```
+
+Run `no-prepack` or `no-logits-fetch` in fresh processes/output directories to change one
+variable. These are diagnostic interventions, not usable provider settings or admission
+samples. The probe captures real prepared feeds before inference, stops that wrapper with
+an intentional diagnostic error, then invokes one native prefill directly. Expected capture
+diagnostics may appear in stderr. It emits native ORT profiles, output hashes and staged
+memory ownership markers. No answer or reliable stream is produced. `monitor.py` adds Unix
+observation timestamps to correlate 250ms process samples with the stable phase windows.
+See [measured attribution and limitations](../../docs/reports/m58-followup-86-prefill-attribution.md).
 These experiment scripts use actual APIs and SDKs for measurement; synthetic or component
 success does not establish real daily use, physical power-loss safety or model admission.
