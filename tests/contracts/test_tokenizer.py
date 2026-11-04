@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import ctypes
+from ctypes import wintypes
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -53,6 +56,29 @@ class LocalTokenizerTests(unittest.TestCase):
         with self.assertRaises(MemoryFailure):
             counter.count("hello")
 
+    def test_scoped_counter_reuses_real_worker_and_keeps_integrity_checks(self) -> None:
+        from evernook.tokenizer import LocalTokenCounter
+
+        counter = LocalTokenCounter.from_file(self.config)
+        children: list[subprocess.Popen[str]] = []
+        original = subprocess.Popen
+        def spawn(arguments: list[str], **options: Any) -> subprocess.Popen[str]:
+            child: subprocess.Popen[str] = original(arguments, **options)
+            children.append(child)
+            return child
+        with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn):
+            with counter.session(timeout=2) as scoped:
+                self.assertEqual(scoped.counter_id, counter.counter_id)
+                self.assertEqual(scoped.count("hello world"), 2)
+                self.assertEqual(scoped.count("你好"), 1)
+                self.assertEqual(scoped.count(""), 0)
+                self.assertEqual(len(children), 1)
+                self.assertIsNone(children[0].poll())
+                self.tokenizer.write_text('{}', encoding="utf-8")
+                with self.assertRaises(MemoryFailure):
+                    scoped.count("hello")
+            self.assertIsNotNone(children[0].poll())
+
     def test_cancellation_reaps_the_running_local_counter_child(self) -> None:
         from evernook.tokenizer import LocalTokenCounter
 
@@ -62,7 +88,7 @@ class LocalTokenizerTests(unittest.TestCase):
         original = subprocess.Popen
         cancel = counter.cancel
         def spawn(_arguments: object, **options: Any) -> subprocess.Popen[str]:
-            child = original([sys.executable, "-c", "import sys,time; sys.stdin.read(); time.sleep(30)"], **options)
+            child = original([str(counter.node), "-e", "process.stdin.resume(); setInterval(()=>{},1000)"], **options)
             children.append(child)
             timer = threading.Timer(0.2, cancel.set)
             self.addCleanup(timer.cancel)
@@ -73,6 +99,99 @@ class LocalTokenizerTests(unittest.TestCase):
                 counter.count("hello")
         self.assertEqual(len(children), 1)
         self.assertIsNotNone(children[0].poll())
+
+    def test_scoped_timeout_and_cancellation_reap_a_nonresponsive_worker(self) -> None:
+        from evernook.tokenizer import LocalTokenCounter
+
+        for canceling in (False, True):
+            counter = LocalTokenCounter.from_file(self.config)
+            flag = threading.Event()
+            counter.cancel = flag if canceling else None
+            children: list[subprocess.Popen[str]] = []
+            original = subprocess.Popen
+            def spawn(_arguments: object, **options: Any) -> subprocess.Popen[str]:
+                child: subprocess.Popen[str] = original(
+                    [str(counter.node), "-e", "process.stdin.resume(); setInterval(()=>{},1000)"], **options)
+                children.append(child)
+                return child
+            timer = threading.Timer(.05, flag.set)
+            with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn):
+                if canceling:
+                    timer.start()
+                try:
+                    with counter.session(timeout=.2 if not canceling else 2) as scoped:
+                        with self.assertRaisesRegex(MemoryFailure, "context_canceled" if canceling else "tokenizer_unavailable"):
+                            scoped.count("hello")
+                finally:
+                    timer.cancel()
+                    if canceling:
+                        timer.join()
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll())
+
+    def test_host_build_owns_one_worker_and_releases_it_before_returning(self) -> None:
+        from evernook import Event, MemoryRuntime, Source, initialize
+        from evernook.host_context import HostContext
+        from evernook.semantic import SemanticRecall
+        from evernook.tokenizer import LocalTokenCounter
+
+        config, access = initialize(self.root / "owned-runtime", client_id="test", entry="test")
+        runtime = MemoryRuntime(config)
+        for number in range(6):
+            runtime.submit(access, Event(Source("test", "synthetic", "main", str(number)),
+                "user", number, None, "complete", "hello world " * 8))
+        context_file = self.root / "owned-context.json"
+        context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(self.config),
+            "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
+                       "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
+        host = HostContext(runtime, SemanticRecall(runtime), context_file)
+        children: list[subprocess.Popen[str]] = []
+        original = subprocess.Popen
+        def spawn(arguments: list[str], **options: Any) -> subprocess.Popen[str]:
+            child: subprocess.Popen[str] = original(arguments, **options)
+            children.append(child)
+            return child
+        with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn):
+            result = host.build(access, "hello", model_id="synthetic-local", max_tokens=256,
+                as_of="2026-11-04T00:00:00Z", mode="normal", timeout=5)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+        self.assertEqual(LocalTokenCounter.from_file(self.config).count(result.payload), result.used_tokens)
+
+    def test_owner_process_exit_closes_the_scoped_worker_input(self) -> None:
+        parent = self.root / "owner.py"
+        parent.write_text('''import os,sys,subprocess
+from unittest.mock import patch
+from pathlib import Path
+from evernook.tokenizer import LocalTokenCounter
+original=subprocess.Popen
+children=[]
+def spawn(*args,**kwargs):
+ child=original(*args,**kwargs); children.append(child.pid); return child
+with patch('evernook.tokenizer.subprocess.Popen',side_effect=spawn):
+ with LocalTokenCounter.from_file(Path(sys.argv[1])).session(timeout=2) as scoped:
+  assert scoped.count('hello')==1
+  print(children[0],flush=True)
+  os._exit(0)
+''', encoding="utf-8")
+        result = subprocess.run([sys.executable, str(parent), str(self.config)], capture_output=True,
+            text=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
+            env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src")))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        worker_pid = int(result.stdout.strip())
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x100000, False, worker_pid)
+        if handle:
+            try:
+                self.assertEqual(kernel.WaitForSingleObject(handle, 2000), 0)
+            finally:
+                kernel.CloseHandle(handle)
+        else:
+            self.assertEqual(ctypes.get_last_error(), 87)  # Already exited: invalid process ID.
 
     def test_host_context_uses_saved_policy_model_binding_and_request_ceiling(self) -> None:
         from evernook import MemoryRuntime, initialize

@@ -62,6 +62,7 @@ class HostContext:
             raise MemoryFailure("invalid_context_request")
         effective = replace(policy, normal_tokens=min(policy.normal_tokens, max_tokens),
             deep_tokens=min(policy.deep_tokens, max_tokens), pinned_tokens=min(policy.pinned_tokens, max_tokens))
-        return ContextBuilder(self.runtime, self.recall, effective, counter).build(
-            access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
-            query_omitted=len(query) > 256, cancel=cancel)
+        with counter.session(timeout=timeout) as scoped:
+            return ContextBuilder(self.runtime, self.recall, effective, scoped).build(
+                access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
+                query_omitted=len(query) > 256, cancel=cancel)
