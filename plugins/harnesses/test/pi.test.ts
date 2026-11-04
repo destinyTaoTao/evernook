@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -28,7 +29,7 @@ const output = process.env.EVERNOOK_TEST_OUTPUT;
 if (!python || !output) throw new Error('Set external synthetic EVERNOOK_TEST_PYTHON and EVERNOOK_TEST_OUTPUT');
 const checkout = resolve(import.meta.dirname, '../../..');
 
-async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false, durable = false, lifecycle: { consolidation?: boolean } = {}) {
+async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readonly ToolDefinition[] = [], systemHistory?: string, budgeted = false, contextImage = false, maintained = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'pi-native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; c,a=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); p=c.parent/'mcp-access-pi.json'; pair_client(c,client_id='synthetic-pi',entry='pi',access_path=p,scopes=('capture','recall')); print(json.dumps({'config':str(c),'access':str(p)}))";
@@ -72,7 +73,7 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   const runtime = await ModelRuntime.create({ authPath: join(root, 'pi-auth.json'), modelsPath: null,
     allowModelNetwork: false, refreshOnCreate: false });
   runtime.registerNativeProvider(faux.provider);
-  const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const settings = SettingsManager.inMemory({ compaction: { enabled: false, ...(lifecycle.compaction ? { keepRecentTokens: 64, reserveTokens: 1000 } : {}) }, retry: { enabled: false } });
   let memory: Awaited<ReturnType<typeof installPiMemory>> | undefined;
   let context: ExtensionContext | undefined;
   const rawChecks: boolean[] = [];
@@ -85,6 +86,7 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
     extensionFactories: [async pi => {
       memory = await installPiMemory(pi, memoryConfig);
+      pi.on('session_start', (_event, ctx) => { context = ctx; });
       pi.on('context', (event, ctx) => {
         context = ctx;
         if (contextImage) return { messages: [...event.messages, { role: 'user' as const,
@@ -100,10 +102,12 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
   await resources.reload();
   assert.deepEqual(resources.getExtensions().errors, []);
   const model = { ...faux.getModel(), provider: 'evernook-memory', api: durable ? 'evernook-durable-pi-v1' : 'evernook-buffered-pi-v1' };
-  const { session } = await createAgentSession({ cwd: root, agentDir: join(root, 'pi-agent'), modelRuntime: runtime,
+  const openSession = (manager: SessionManager) => createAgentSession({ cwd: root, agentDir: join(root, 'pi-agent'), modelRuntime: runtime,
     resourceLoader: resources, settingsManager: settings, noTools: tools.length || maintained ? 'builtin' : 'all',
-    model, sessionManager: SessionManager.create(root, join(root, 'pi-sessions')) });
-  return { root, paths, faux, rows, requests, rawChecks, session, memoryConfig, fixture,
+    model, sessionManager: manager });
+  let { session } = await openSession(SessionManager.create(root, join(root, 'pi-sessions')));
+  if (lifecycle.compaction) await session.bindExtensions({ onError() {} });
+  return { root, paths, faux, rows, requests, rawChecks, get session() { return session; }, memoryConfig, fixture,
     reviews, outcomes,
     maintenance() { assert.ok(memory?.maintenance); return memory.maintenance; },
     consolidation() { assert.ok(memory?.consolidation); return memory.consolidation; },
@@ -112,6 +116,16 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
       assert.ok(memory?.maintenance && context); return memory.maintenance.propose(context.sessionManager.getSessionId(), proposal, signal);
     },
     async restart() { await session.reload(); },
+    async fork(beforeStart?: (parentFile: string) => Promise<void>) {
+      const file = session.sessionManager.getSessionFile(); assert.ok(file);
+      const manager = SessionManager.forkFrom(file, root, join(root, 'pi-sessions'));
+      await beforeStart?.(file);
+      await memory?.close(); session.dispose(); await resources.reload();
+      ({ session } = await openSession(manager));
+      await session.bindExtensions({ onError() {} });
+      assert.ok(memory && context); await memory.rescan(context);
+    },
+    async work() { assert.ok(memory); return memory.work(session.sessionManager.getSessionId()); },
     status() { assert.ok(memory && context); return memory.status(context.sessionManager.getSessionId()); },
     async settings() { assert.ok(memory); return memory.settings(); },
     setInspect(value: (signal?: AbortSignal) => void | Promise<void>) { inspect = value; },
@@ -121,6 +135,454 @@ async function boot(reply = '合成 pi 回复🙂\r\n37.50元。', tools: readon
     async close() { await memory?.close(); session.dispose(); },
   };
 }
+
+test('native pi compaction persists sourced work across repeated extension reloads and preserves the current instruction', async t => {
+  const summary = '## Goal\n合成：完成账本导出\n## Progress\n已完成列定义，尚未验证文件。\n## Next Steps\n核对导出列名。\n## Critical Context\n合成路径 ledger.csv；摘要不是写盘证明。';
+  const host = await boot(summary, [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成原始任务：导出账本，金额保持两位小数。');
+  await host.session.prompt('合成：先核对字段。'.repeat(100));
+  await host.session.compact();
+  const work = await host.work();
+  assert.ok(work);
+  assert.equal(work.state, 'unknown');
+  assert.equal(work.goal_role, 'initial_user_request');
+  assert.match(work.goal.text ?? '', /金额保持两位小数/);
+  assert.match(JSON.stringify(work.progress), /Critical Context/);
+  for (let index = 0; index < 2; index++) {
+    await host.restart();
+    await host.rescan();
+    assert.equal((await host.work())?.checkpoint_id, work.checkpoint_id);
+  }
+  await host.session.prompt('合成当前指令：暂停导出，先回答列名。');
+  const request = host.requests.at(-1)!;
+  assert.match(JSON.stringify(request), /合成当前指令：暂停导出，先回答列名/);
+  assert.match(JSON.stringify(request), /untrusted_work_continuation/);
+  assert.doesNotMatch(JSON.stringify(request), /The conversation history before this point was compacted/);
+});
+
+test('native pi rejects a continuation invalidated during final request counting and excludes it on the next request', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：导出账本。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  host.faux.setResponses([context => {
+    host.requests.push(structuredClone(context));
+    return fauxAssistantMessage('## Progress\n合成旧进展-PI79\n## Next Steps\n核对列名。');
+  }]);
+  await host.session.compact();
+  host.faux.setResponses(Array.from({ length: 4 }, () => context => {
+    host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成普通回复。');
+  }));
+  const work = await host.work();
+  assert.ok(work?.progress[0]);
+  const count = host.memoryConfig.memoryBudget!.countRequest;
+  let changed = false;
+  host.memoryConfig.memoryBudget!.countRequest = request => {
+    if (!changed) {
+      changed = true;
+      execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-race','main','confirm'),'user',1,None,'complete','合成用户确认：撤回旧摘要。')); r.change(a,Change('suppress-pi-summary',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+        host.paths.config, work.progress[0].message_id], { cwd: checkout });
+    }
+    return count(request);
+  };
+  const before = host.requests.length;
+  await host.session.prompt('合成：现在仅回答列名。');
+  assert.equal(host.requests.length, before);
+  assert.equal(host.status().error_code, 'continuation_changed');
+  host.memoryConfig.memoryBudget!.countRequest = count;
+  await host.session.prompt('合成：重新仅回答列名。');
+  assert.equal(host.requests.length, before + 1);
+  assert.doesNotMatch(JSON.stringify(host.requests.at(-1)), /合成旧进展-PI79/);
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi summary remains dependent on its separately saved provider output', async t => {
+  const host = await boot('合成：摘要输出。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：整理字段。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  await host.session.compact();
+  const entry = host.session.sessionManager.getBranch().findLast(item => item.type === 'compaction');
+  assert.ok(entry?.type === 'compaction');
+  const details = entry.details as { evernook_work_v1: { outputs: import('../src/client.ts').Source[] } };
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const raw = await client.call<{ receipt: { message_id: string } }>('read_source', { source: details.evernook_work_v1.outputs[0] });
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-output','main','confirm'),'user',1,None,'complete','合成用户确认：撤回摘要输出。')); r.change(a,Change('suppress-pi-output',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+    host.paths.config, raw.receipt.message_id], { cwd: checkout });
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi file fork retains parent source controls and another paired entry reads the same work', async t => {
+  const host = await boot('合成：字段检查。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成父来源：金额必须两位小数。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  await host.session.compact();
+  const parent = await host.work(); assert.ok(parent);
+  const previousSession = host.session.sessionManager.getSessionId();
+  const parentFile = host.session.sessionManager.getSessionFile(); assert.ok(parentFile);
+  await host.fork();
+  assert.notEqual(host.session.sessionManager.getSessionId(), previousSession);
+  assert.equal((await host.work())?.checkpoint_id, parent.checkpoint_id);
+  assert.equal((await host.work())?.goal.message_id, parent.goal.message_id);
+  await host.session.prompt('合成：分叉后的新问题。');
+  await writeFile(parentFile, (await readFile(parentFile, 'utf8')).split('\n')[0] + '\n');
+  await host.restart(); await host.rescan();
+  assert.equal((await host.work())?.goal.message_id, parent.goal.message_id);
+  const access = join(host.root, 'memory/mcp-access-dsh.json');
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; pair_client(Path(sys.argv[1]),client_id='synthetic-dsh',entry='dsh',access_path=Path(sys.argv[2]),scopes=('capture','recall'))", host.paths.config, access], { cwd: checkout });
+  const other = new MemoryClient({ ...host.memoryConfig, entry: 'dsh', access });
+  await other.connect(); t.after(() => other.close());
+  const cross = await other.call<import('../src/client.ts').WorkView>('continuation_current', { task_id: parent.task_id, branch_id: parent.branch_id });
+  assert.equal(cross.checkpoint_id, parent.checkpoint_id);
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-fork','main','confirm'),'user',1,None,'complete','合成用户确认：撤回父来源。')); r.change(a,Change('suppress-pi-parent',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+    host.paths.config, parent.goal.message_id!], { cwd: checkout });
+  await host.rescan();
+  assert.equal((await host.work())?.state, 'source_unavailable');
+  await host.session.prompt('合成当前：仅列出列名。');
+  assert.doesNotMatch(JSON.stringify(host.requests.at(-1)), /合成父来源：金额必须两位小数/);
+  await host.fork();
+  assert.equal((await host.work())?.state, 'source_unavailable');
+  const afterNested = await other.recall('合成父来源：金额必须两位小数');
+  assert.equal(afterNested.hits.filter(hit => hit.evidence.role === 'user').length, 0);
+});
+
+test('native pi tree navigation keeps abandoned and active work on their own checkpoint paths', async t => {
+  const host = await boot('合成：字段检查。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：旧任务整理字段。');
+  const forkPoint = host.session.sessionManager.getLeafId(); assert.ok(forkPoint);
+  await host.session.prompt('合成：旧分支继续检查。'.repeat(100));
+  await host.session.compact();
+  const old = await host.work(); assert.ok(old && old.goal.text);
+  const oldCompact = host.session.sessionManager.getBranch().findLast(item => item.type === 'compaction'); assert.ok(oldCompact);
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const span = (item: import('../src/client.ts').WorkView['goal']) => ({ message_id: item.message_id,
+    state_version: item.state_version, content_version: item.content_version, representation: item.representation,
+    start: item.start, end: item.end, expected_text: item.text });
+  await client.call('continuation_save', { request_id: 'synthetic-abandon-old-pi-work', draft: {
+    task_id: old.task_id, branch_id: old.branch_id, expected_revision: old.revision,
+    anchor_id: old.progress[0].message_id, goal: span(old.goal), progress: old.progress.map(span), pending: [],
+    state: 'abandoned', goal_role: old.goal_role, expires_at: old.expires_at, consumed_checkpoints: [old.checkpoint_id] } });
+  assert.equal((await host.work())?.state, 'abandoned');
+  await host.session.prompt('合成：废弃分支不再继续摘要。'.repeat(40));
+  const beforeAbandoned = host.requests.length;
+  await assert.rejects(host.session.compact(), /cancel/i);
+  assert.equal(host.requests.length, beforeAbandoned);
+  await host.session.navigateTree(forkPoint, { summarize: false });
+  assert.equal(await host.work(), null);
+  await host.session.prompt('合成当前新任务：列名按字母排序。'.repeat(40));
+  await host.session.compact();
+  const active = await host.work(); assert.ok(active);
+  assert.notEqual(active.branch_id, old.branch_id);
+  assert.equal(active.state, 'unknown');
+  const activeCompact = host.session.sessionManager.getBranch().findLast(item => item.type === 'compaction'); assert.ok(activeCompact);
+  await host.session.navigateTree(oldCompact.id, { summarize: false });
+  assert.equal((await host.work())?.state, 'abandoned');
+  assert.deepEqual((await host.work())?.progress, []);
+  await host.session.navigateTree(activeCompact.id, { summarize: false });
+  assert.equal((await host.work())?.checkpoint_id, active.checkpoint_id);
+});
+
+test('native pi excludes a suppressed source still retained beside the compaction checkpoint', async t => {
+  const host = await boot('合成：普通字段回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：导出表格。');
+  await host.session.prompt('合成保留原文-KEEP92：这个来源随后撤回。'.repeat(100));
+  await host.session.compact();
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const recalled = await client.recall('合成保留原文-KEEP92');
+  const hit = recalled.hits.find(item => item.evidence.role === 'user'); assert.ok(hit);
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-kept','main','confirm'),'user',1,None,'complete','合成用户确认：撤回保留原文。')); r.change(a,Change('suppress-pi-kept',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+    host.paths.config, hit.evidence.message_id], { cwd: checkout });
+  const before = host.requests.length;
+  await host.session.prompt('合成当前：现在只回答列名。');
+  assert.equal(host.requests.length, before + 1);
+  assert.doesNotMatch(JSON.stringify(host.requests.at(-1)), /合成保留原文-KEEP92/);
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi budgeted tool round trip remains usable and compaction depends on the saved tool output', async t => {
+  const tool: ToolDefinition = { name: 'synthetic_columns', label: 'Synthetic columns', description: 'Return synthetic columns',
+    parameters: Type.Object({ amount: Type.Number() }), async execute() {
+      return { content: [{ type: 'text', text: '合成工具原文-TOOL93：amount,date' }], details: {} };
+    } };
+  const host = await boot('合成：已核对字段。', [tool], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：查询列名。');
+  assert.equal(host.requests.length, 2);
+  assert.equal(host.status().error_code, undefined);
+  await host.session.prompt('合成：继续核对字段。'.repeat(100));
+  await host.session.compact();
+  assert.ok(await host.work());
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const recalled = await client.recall('合成工具原文-TOOL93', 32);
+  const hit = recalled.hits.find(item => item.evidence.role === 'tool' && item.evidence.source.event.startsWith('tool-result:'));
+  assert.ok(hit);
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-tool','main','confirm'),'user',1,None,'complete','合成用户确认：撤回工具输出。')); r.change(a,Change('suppress-pi-tool',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+    host.paths.config, hit.evidence.message_id], { cwd: checkout });
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi counts complete long-summary payloads and reports tiny-budget omissions with ordinary deep reads', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：整理表格。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  const counts: number[] = [];
+  const original = host.memoryConfig.memoryBudget!.countRequest;
+  host.memoryConfig.memoryBudget!.countRequest = request => { const used = original(request); counts.push(used); return used; };
+  const summary = '## Goal\n合成账本\n## Progress\n' + 'hello world '.repeat(1000) + '\n## Next Steps\n核对列名。\n## Critical Context\n原文保留。';
+  host.faux.setResponses([context => { host.requests.push(structuredClone(context)); return fauxAssistantMessage(summary); }]);
+  await host.session.compact();
+  const work = await host.work(); assert.ok(work?.progress[0]);
+  const saved = JSON.parse(await readFile(host.memoryConfig.contextConfig!, 'utf8'));
+  saved.policy.normal_tokens = 128;
+  await writeFile(host.memoryConfig.contextConfig!, JSON.stringify(saved));
+  host.memoryConfig.memoryBudget!.memoryTokens = 256;
+  host.faux.setResponses([context => { host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成普通回复。'); }]);
+  await host.session.prompt('合成当前：只回答列名。');
+  const payload = host.requests.at(-1)!.messages.filter(message => message.role === 'user')
+    .flatMap(message => typeof message.content === 'string' ? [message.content] : message.content.filter(item => item.type === 'text').map(item => item.text))
+    .find(text => text.includes('untrusted_memory_context'));
+  assert.ok(payload);
+  const tokens = host.fixture!.target.encode(payload, { add_special_tokens: false }).ids.length;
+  assert.ok(tokens <= 256);
+  assert.equal(host.status().context?.provider_payload_tokens, tokens);
+  assert.ok(host.status().context?.degraded.includes('context_envelope_over_budget'));
+  assert.match(payload, /omitted|deep_fetch/);
+  assert.ok(counts.length >= 2);
+  assert.ok(counts.every(used => used + 1000 <= 20000));
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const originalSource = await client.read(work.progress[0].message_id);
+  assert.equal(originalSource.event.text, summary);
+  assert.equal((await host.settings()).host?.memory_tokens, 256);
+});
+
+test('native pi links a text-bearing tool-call message before the tool captures the current history', async t => {
+  const tool: ToolDefinition = { name: 'synthetic_columns', label: 'Synthetic columns', description: 'Return synthetic columns',
+    parameters: Type.Object({ amount: Type.Number() }), async execute() {
+      return { content: [{ type: 'text', text: '合成：amount,date' }], details: {} };
+    } };
+  const host = await boot('合成普通回复。', [tool], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  host.faux.setResponses([context => {
+    host.requests.push(structuredClone(context));
+    const first = fauxAssistantMessage(fauxToolCall(tool.name, { amount: 37.5 }), { stopReason: 'toolUse' });
+    first.content.unshift({ type: 'text', text: '合成：现在查询列名。' });
+    return first;
+  }, context => { host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成：查询结束。'); }]);
+  await host.session.prompt('合成：查询列名。');
+  assert.equal(host.requests.length, 2);
+  assert.equal(host.status().error_code, undefined);
+  assert.match(JSON.stringify(host.requests.at(-1)), /合成：现在查询列名/);
+});
+
+test('native pi auxiliary compaction screens protected originals without a default-provider fallback', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('password=synthetic-pi-compaction-123').catch(() => {});
+  assert.equal(host.requests.length, 0);
+  await host.session.prompt('合成：后续安全问题。'.repeat(100));
+  const before = host.requests.length;
+  assert.equal(before, 1);
+  await assert.rejects(host.session.compact(), /cancel/i);
+  assert.equal(host.requests.length, before);
+  assert.doesNotMatch(JSON.stringify(host.requests), /synthetic-pi-compaction-123/);
+  assert.equal(await host.work(), null);
+});
+
+test('native pi auxiliary compaction enforces the complete request and output reserve before target dispatch', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：整理表格。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  const original = host.memoryConfig.memoryBudget!.countRequest;
+  let counted = false;
+  host.memoryConfig.memoryBudget!.countRequest = request => {
+    assert.match(JSON.stringify(request.context), /<conversation>/);
+    const used = original(request);
+    host.memoryConfig.memoryBudget!.contextWindow = used + host.memoryConfig.memoryBudget!.outputReserveTokens - 1;
+    counted = true;
+    return used;
+  };
+  const before = host.requests.length;
+  await assert.rejects(host.session.compact(), /cancel/i);
+  assert.equal(counted, true);
+  assert.equal(host.requests.length, before);
+  assert.equal(host.status().error_code, 'host_context_window_exceeded');
+});
+
+test('native pi repeated compaction bounds visible inputs rather than unrelated accumulated session metadata', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：整理表格。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  await host.session.compact();
+  const first = await host.work(); assert.ok(first);
+  for (let index = 0; index < 260; index++) host.session.sessionManager.appendSessionInfo('synthetic-metadata-' + index);
+  await host.session.prompt('合成：继续核对列名。'.repeat(100));
+  await host.session.compact();
+  const next = await host.work(); assert.ok(next);
+  assert.notEqual(next.checkpoint_id, first.checkpoint_id);
+  assert.equal(next.state, 'unknown');
+});
+
+test('native pi refuses a fork whose initial inherited source cannot be proved from the ancestor', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成原始来源-ANCESTOR94。');
+  const before = host.requests.length;
+  await assert.rejects(host.fork(async parent => {
+    const original = await readFile(parent, 'utf8');
+    await writeFile(parent, original.split('\n')[0] + '\n');
+  }), /continuation_origin_unavailable/);
+  await host.session.prompt('合成当前：保持受限。').catch(() => {});
+  assert.equal(host.requests.length, before);
+});
+
+test('native pi later compaction excludes the abandoned-branch summary already excluded from ordinary context', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：共享初始任务。'.repeat(100));
+  const point = host.session.sessionManager.getLeafId(); assert.ok(point);
+  await host.session.prompt('合成：废弃路径进展。'.repeat(100));
+  host.faux.setResponses([context => {
+    host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成旧分支摘要-BRANCH95');
+  }]);
+  const navigated = await host.session.navigateTree(point, { summarize: true });
+  assert.equal(navigated.cancelled, false);
+  assert.ok(navigated.summaryEntry);
+  host.faux.setResponses(Array.from({ length: 4 }, () => context => {
+    host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成当前路径摘要。');
+  }));
+  await host.session.prompt('合成当前任务：只核对列名。'.repeat(100));
+  assert.doesNotMatch(JSON.stringify(host.requests.at(-1)), /合成旧分支摘要-BRANCH95/);
+  const before = host.requests.length;
+  await host.session.compact();
+  assert.ok(host.requests.length > before);
+  assert.doesNotMatch(JSON.stringify(host.requests.slice(before)), /合成旧分支摘要-BRANCH95/);
+  assert.equal((await host.work())?.state, 'unknown');
+});
+
+test('native pi auxiliary dispatch validates the exact previous work consumed before its inner capture', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  host.memoryConfig.memoryBudget!.memoryTokens = 4096;
+  await host.session.prompt('合成：整理表格。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  host.faux.setResponses([context => {
+    host.requests.push(structuredClone(context)); return fauxAssistantMessage('## Progress\n合成旧辅助摘要-AUX96\n## Next Steps\n继续核对。');
+  }]);
+  await host.session.compact();
+  const previous = await host.work(); assert.ok(previous?.progress[0]);
+  for (let index = 0; index < 24; index++) host.session.sessionManager.appendMessage({ role: 'user',
+    content: '合成：待压缩的独立原生输入 ' + index, timestamp: Date.now() });
+  const source = { entry: 'pi', session: host.session.sessionManager.getSessionId(), branch: 'work', event: 'work-input:'
+    + createHash('sha256').update(JSON.stringify([host.session.sessionManager.getLeafId(), previous.checkpoint_id])).digest('hex') };
+  const script = `import json,sys,time
+from pathlib import Path
+from evernook import pair_client,MemoryRuntime,Event,Source,Change
+c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c)
+source=Source(**json.loads(sys.argv[2])); print('ready',flush=True); deadline=time.monotonic()+20
+while r.read_source(a,source) is None:
+ if time.monotonic()>deadline: raise RuntimeError('synthetic proof timeout')
+ time.sleep(0.001)
+confirmation=r.submit(a,Event(Source('owner','synthetic-pi-aux-race','main','confirm'),'user',1,None,'complete','合成用户确认：撤回辅助摘要。'))
+r.change(a,Change('suppress-pi-aux-race',sys.argv[3],1,'suppress',confirmation.message_id,'synthetic confirmation'))
+print('suppressed',flush=True)
+`;
+  const worker = spawn(python!, ['-u', '-c', script, host.paths.config, JSON.stringify(source), previous.progress[0].message_id],
+    { cwd: checkout, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (worker.exitCode === null) worker.kill(); });
+  let output = '';
+  let ready!: () => void;
+  const initialized = new Promise<void>(resolve => { ready = resolve; });
+  worker.stdout.on('data', chunk => { output += String(chunk); if (output.includes('ready')) ready(); });
+  const exited = new Promise<void>((resolve, reject) => {
+    worker.once('error', reject);
+    worker.once('exit', code => code === 0 ? resolve() : reject(new Error('synthetic owner worker failed')));
+  });
+  await Promise.race([initialized, exited.then(() => { throw new Error('synthetic owner exited before ready'); })]);
+  host.faux.setResponses([context => { host.requests.push(structuredClone(context)); return fauxAssistantMessage('合成新摘要。'); }]);
+  const before = host.requests.length;
+  const result = await host.session.compact().then(() => null, error => error);
+  await exited;
+  assert.match(output, /suppressed/);
+  assert.equal(host.requests.length, before);
+  assert.match(String(result), /cancel/i);
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi durable compaction binds committed stream originals and restores after reload', async t => {
+  const host = await boot('合成可靠摘要🙂。', [], undefined, true, false, false, true, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成：整理账本。');
+  await host.session.prompt('合成：核对字段。'.repeat(100));
+  await host.session.compact();
+  const work = await host.work(); assert.ok(work);
+  assert.equal(work.state, 'unknown');
+  assert.match(JSON.stringify(work.progress), /合成可靠摘要/);
+  await host.restart(); await host.rescan();
+  assert.equal((await host.work())?.checkpoint_id, work.checkpoint_id);
+  const stream = (await host.streams()).streams[0]; assert.ok(stream);
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const page = await client.readStream(stream); assert.ok(page.final_message_id);
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-durable','main','confirm'),'user',1,None,'complete','合成用户确认：撤回可靠原文。')); r.change(a,Change('suppress-pi-durable',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+    host.paths.config, page.final_message_id], { cwd: checkout });
+  assert.equal((await host.work())?.state, 'source_unavailable');
+});
+
+test('native pi first compaction revalidates actual input sources changed by the final counter', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成第一次压缩原文-AUX97。');
+  await host.session.prompt('合成：检查字段。'.repeat(100));
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const hit = (await client.recall('合成第一次压缩原文-AUX97')).hits.find(item => item.evidence.role === 'user'); assert.ok(hit);
+  const original = host.memoryConfig.memoryBudget!.countRequest;
+  let changed = false;
+  host.memoryConfig.memoryBudget!.countRequest = request => {
+    if (!changed) {
+      changed = true;
+      execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-first-aux','main','confirm'),'user',1,None,'complete','合成用户确认：撤回压缩原文。')); r.change(a,Change('suppress-pi-first-aux',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+        host.paths.config, hit.evidence.message_id], { cwd: checkout });
+    }
+    return original(request);
+  };
+  const before = host.requests.length;
+  const result = await host.session.compact().then(() => null, error => error);
+  assert.equal(changed, true);
+  assert.equal(host.requests.length, before);
+  assert.match(String(result), /cancel/i);
+  assert.equal(await host.work(), null);
+});
+
+test('native pi ordinary dispatch also rechecks a retained original changed by final counting', async t => {
+  const host = await boot('合成普通回复。', [], undefined, true, false, false, false, { compaction: true });
+  t.after(() => host.close());
+  await host.session.prompt('合成普通历史原文-RAW98。');
+  const client = new MemoryClient(host.memoryConfig); await client.connect(); t.after(() => client.close());
+  const hit = (await client.recall('合成普通历史原文-RAW98')).hits.find(item => item.evidence.role === 'user'); assert.ok(hit);
+  const original = host.memoryConfig.memoryBudget!.countRequest;
+  let changed = false;
+  host.memoryConfig.memoryBudget!.countRequest = request => {
+    if (!changed) {
+      changed = true;
+      execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-pi-raw-race','main','confirm'),'user',1,None,'complete','合成用户确认：撤回历史原文。')); r.change(a,Change('suppress-pi-raw-race',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))",
+        host.paths.config, hit.evidence.message_id], { cwd: checkout });
+    }
+    return original(request);
+  };
+  const before = host.requests.length;
+  await host.session.prompt('合成当前：仅核对列名。');
+  assert.equal(host.requests.length, before);
+  host.memoryConfig.memoryBudget!.countRequest = original;
+  await host.session.prompt('合成当前：重新核对列名。');
+  assert.equal(host.requests.length, before + 1);
+  assert.doesNotMatch(JSON.stringify(host.requests.at(-1)), /合成普通历史原文-RAW98/);
+});
 
 test('native pi lifecycle gates background work and reload catches up without changing actor scopes', async t => {
   const host = await boot('合成：前台 pi 输出', [], undefined, false, false, false, false, { consolidation: true });

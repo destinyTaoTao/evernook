@@ -48,4 +48,4 @@ settings().host.compaction 披露后端是否存在、公开数值/布尔配置�
 
 启用本可选表后，任务状态进入认证控制 head、归档控制重放及运行库发布比较。旧记录必须与 live 完全一致，然后才补入最新不可变元数据；新增原文是否完整继续独立检查，不能用元数据充当原文。未使用本功能时不改变旧控制 head。旧快照不能恢复出已经废弃的当前任务；来源控制不完整时继续保留审查限制。
 
-验证覆盖公开 Python、真实 stdio、实际 dsh compaction/partial region/fork/resume、真实 provider 请求和本地 tokenizer。使用合成 provider 与数据，不能作为真实模型概括/回答质量、桌面安装、其他插件组合、系统睡眠/断网、物理掉电、规模或 p95 结论。pi 的压缩续接接线属于 #80；源日志及已交付宿主副本继续按既有残留边界处理。
+验证覆盖公开 Python、真实 stdio、实际 dsh compaction/partial region/fork/resume、真实 provider 请求和本地 tokenizer。使用合成 provider 与数据，不能作为真实模型概括/回答质量、桌面安装、其他插件组合、系统睡眠/断网、物理掉电、规模或 p95 结论。pi 的压缩续接接线见 [#80契约](pi-work-continuation-v1.md)；源日志及已交付宿主副本继续按既有残留边界处理。

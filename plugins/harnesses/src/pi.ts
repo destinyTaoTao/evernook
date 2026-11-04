@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { Type, createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
   type Model, type SimpleStreamOptions, type TranscriptContext } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory, SessionEntry, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { MemoryClient, safeHistory, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source } from './client.ts';
+import { MemoryClient, safeHistory, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source, type WorkView } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { createMaintenance, type MaintenanceConfig, type MaintenanceProposal } from './maintenance.ts';
 import { durableText } from './durable-text.ts';
 import { piTextFrames } from './pi-text.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
+import { compact } from '@earendil-works/pi-coding-agent';
+import { PiWork } from './pi-work.ts';
+import { renderWork, sourceSnapshot } from './work-continuation.ts';
+import { assertProtectedHistoryExcluded } from './client.ts';
 
 export interface PiConfig extends MemoryConfig {
   streamMode?: 'buffered' | 'durable_text';
@@ -130,12 +134,15 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     return connecting;
   }
   await connection();
+  const work = budget ? new PiWork(connection, config.entry) : undefined;
+  const lastAttempts = new Map<string, Source>();
+  const messageAttempts = new WeakMap<object, Source>();
   let current: ExtensionContext | undefined;
   let blocked = false;
   const sessions = new Map<string, { seen: Set<string>; inputs: Map<string, Receipt>; protectedTexts: Set<string>; resumed: boolean }>();
   const disposers: (() => void)[] = [];
   const controllers = new Set<AbortController>();
-  const contextStatus = new Map<string, Omit<ContextBundle, 'payload'>>();
+  const contextStatus = new Map<string, Omit<ContextBundle, 'payload'> & { provider_payload_tokens?: number }>();
   const contextErrors = new Map<string, string>();
   const streamTiming = new Map<string, { first_delta_to_publication_ms: number; request_to_publication_ms: number }>();
   let maintenance: Awaited<ReturnType<typeof createMaintenance>> | undefined;
@@ -166,10 +173,19 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       state.seen.add('header');
     }
     const entries = ctx.sessionManager.getEntries();
+    await work?.reconcileOrigins(ctx);
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index];
       if (state.seen.has(entry.id)) continue;
       const branch = 'parent:' + (entry.parentId ?? 'root');
+      if (work && entry.type === 'message' && entry.message.role === 'assistant') {
+        const attempt = messageAttempts.get(entry.message);
+        if (attempt) {
+          const origin = work.origin(ctx, entry, index);
+          await memory.remember({ source: work.source(ctx, entry, index, 'stream-link'), role: 'system',
+            sequence: origin.index, occurred_at: null, completion: 'complete', text: stable({ mode: streamMode, source: attempt }) });
+        }
+      }
       if (entry.type === 'message') {
         const message = entry.message;
         if (message.role === 'user' || (message.role === 'assistant' && streamMode === 'buffered') || message.role === 'toolResult') {
@@ -178,6 +194,11 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
           const event = source(ctx, branch, `native:${entry.id}`, message.role === 'toolResult' ? 'tool' : message.role,
             textOf(message.content), index, entry.timestamp, message.role === 'assistant' ? completion(message)
               : message.role === 'toolResult' && message.isError ? 'failed' : 'complete');
+          if (work) {
+            const origin = work.origin(ctx, entry, index);
+            event.source = work.source(ctx, entry, index, 'native');
+            event.sequence = origin.index;
+          }
           if (event.completion !== 'complete') event.protected_source = true;
           const receipt = await memory.remember(event);
           if (message.role === 'user') {
@@ -191,6 +212,12 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
         }
       }
       const audit = source(ctx, branch, `audit:${entry.id}`, 'system', stable(entry), index, entry.timestamp);
+      if (work) {
+        const origin = work.origin(ctx, entry, index);
+        audit.source = work.source(ctx, entry, index, 'audit');
+        audit.sequence = origin.index;
+        audit.text = stable(origin.entry);
+      }
       if (entry.type === 'message' && entry.message.role !== 'user') audit.protected_source = true;
       await memory.remember(audit);
       state.seen.add(entry.id);
@@ -198,6 +225,8 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     const branch = ctx.sessionManager.getBranch();
     const latest = branch.toReversed().find((entry): entry is Extract<SessionEntry, { type: 'message' }> =>
       entry.type === 'message' && entry.message.role === 'user');
+    for (const text of await work?.unavailableHistory(ctx) ?? []) state.protectedTexts.add(text);
+    await work?.capture(ctx);
     return { state, latest, receipt: latest ? state.inputs.get(latest.id) : undefined };
   }
 
@@ -225,9 +254,49 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
   }
   disposers.push(pi.on('session_start', async (_event, ctx) => {
     current = ctx; blocked = false; await connection();
+    await work?.reconcileOrigins(ctx);
     if (maintenanceOptions && !maintenance) maintenance = await createMaintenance(maintenanceRoute, maintenanceOptions);
     if (consolidationOptions && !consolidation) consolidation = await createConsolidation(consolidationRoute, consolidationOptions);
   }));
+  disposers.push(pi.on('message_end', async (event, ctx) => {
+    if (!work) return;
+    const attempt = lastAttempts.get(ctx.sessionManager.getSessionId());
+    if (!attempt || event.message.role !== 'assistant') return;
+    messageAttempts.set(event.message, attempt);
+    lastAttempts.delete(ctx.sessionManager.getSessionId());
+  }));
+  disposers.push(pi.on('session_before_compact', async (event, ctx) => {
+    if (!work || !budget || !config.contextConfig) return;
+    current = ctx;
+    if (ctx.model?.provider !== providerId) return { cancel: true };
+    try {
+      await capture(ctx);
+      const previous = await work.current(ctx.sessionManager.getSessionId());
+      if (event.preparation.previousSummary && (!previous || !['unknown', 'in_progress', 'completed'].includes(previous.state))) {
+        throw new Error('evernook:continuation_source_unavailable');
+      }
+      const counter = loadTargetCounter(config.contextConfig);
+      const input = await work.prepare(ctx, event.preparation.previousSummary ? previous : null);
+      const outputs: Source[] = [];
+      const result = await compact({ ...event.preparation,
+        messagesToSummarize: event.preparation.messagesToSummarize.filter(message => message.role !== 'branchSummary' && message.role !== 'compactionSummary'),
+        turnPrefixMessages: event.preparation.turnPrefixMessages.filter(message => message.role !== 'branchSummary' && message.role !== 'compactionSummary'),
+        previousSummary: event.preparation.previousSummary && previous
+          ? JSON.stringify(renderWork(previous, Math.floor(budget.memoryTokens / 2), text => counter.count(text))) : undefined },
+        proxy, undefined, undefined, event.customInstructions, event.signal, ctx.thinkingLevel,
+        (model, context, options) => streamMemory(model, context, options,
+          { outputs, expectedWork: JSON.stringify(previous ?? null), input, consumed: event.preparation.previousSummary ? previous : null }));
+      return { compaction: { ...result, details: { ...(result.details && typeof result.details === 'object' ? result.details : {}),
+        evernook_work_v1: { input, outputs, mode: streamMode } } } };
+    } catch (error) {
+      const session = ctx.sessionManager.getSessionId();
+      if (!contextErrors.has(session)) contextErrors.set(session, errorCode(error));
+      ctx.ui.notify('EverNook: compaction evidence or budget was not verified; compaction cancelled.', 'warning');
+      return { cancel: true };
+    }
+  }));
+  disposers.push(pi.on('session_compact', async (_event, ctx) => { current = ctx; await capture(ctx); }));
+  disposers.push(pi.on('session_tree', async (_event, ctx) => { current = ctx; await capture(ctx); }));
   disposers.push(pi.on('before_agent_start', async (_event, ctx) => {
     if (ctx.model?.provider !== providerId) { blocked = true; ctx.abort(); return; }
     await consolidation?.turnStarted(ctx.sessionManager.getSessionId());
@@ -253,7 +322,8 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       const message = captured.latest.message;
       if (message.role !== 'user') throw new Error('evernook:authentic_input_unavailable');
       const query = Array.from(textOf(message.content)).slice(0, 256).join('');
-      const safe = safeHistory(event.messages, textOf(message.content), captured.state.protectedTexts);
+      const nativeMessages = budget ? event.messages.filter(message => message.role !== 'compactionSummary' && message.role !== 'branchSummary') : event.messages;
+      const safe = safeHistory(nativeMessages, textOf(message.content), captured.state.protectedTexts);
       if (budget) {
         blocked = false;
         notifyResumed(ctx, captured.state);
@@ -291,7 +361,8 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     }
   }));
 
-  function streamMemory(_model: Model<Api>, transcript: TranscriptContext, options?: SimpleStreamOptions) {
+  function streamMemory(_model: Model<Api>, transcript: TranscriptContext, options?: SimpleStreamOptions,
+      auxiliary?: { outputs: Source[]; expectedWork: string; input: Source; consumed: WorkView | null }) {
     const requestStarted = performance.now();
     let publishedText = '';
     const output = createAssistantMessageEventStream();
@@ -302,16 +373,18 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     if (requestSession) { contextErrors.delete(requestSession); streamTiming.delete(requestSession); }
     void (async () => {
       const ctx = current;
-      if (!ctx || blocked || ctx.model?.provider !== providerId) throw new Error('evernook:protected_profile_required');
+      if (!ctx || (!auxiliary && blocked) || ctx.model?.provider !== providerId) throw new Error('evernook:protected_profile_required');
       signal.throwIfAborted();
       const memory = await connection();
       const captured = await capture(ctx);
       if (!captured.receipt) throw new Error('evernook:authentic_input_unavailable');
       if (!captured.receipt.original_saved || !captured.latest) throw new Error('evernook:protected_input_not_saved');
-      await maintenance?.confirm(ctx.sessionManager.getSessionId(), captured.receipt.message_id, signal);
+      if (!auxiliary) await maintenance?.confirm(ctx.sessionManager.getSessionId(), captured.receipt.message_id, signal);
       const input = captured.latest.message;
       if (input.role !== 'user') throw new Error('evernook:authentic_input_unavailable');
-      const safe = safeHistory(transcript.messages, textOf(input.content), captured.state.protectedTexts);
+      if (auxiliary) assertProtectedHistoryExcluded(transcript, captured.state.protectedTexts);
+      const safe = auxiliary ? { messages: transcript.messages, omitted: 0 }
+        : safeHistory(transcript.messages, textOf(input.content), captured.state.protectedTexts);
       if (safe.messages.some(message => hasImage(message.content))) throw new Error('evernook:unsupported_native_image');
       let requestContext: TranscriptContext = { ...transcript, messages: safe.messages };
       let outputTokens = options?.maxTokens;
@@ -319,23 +392,56 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
         if (config.target.api === 'pi-virtual') throw new Error('evernook:unsupported_budget_model');
         const counter = loadTargetCounter(config.contextConfig);
         if (counter.modelId !== config.target.id) throw new Error('evernook:tokenizer_model_mismatch');
-        const bundle = await memory.context(textOf(input.content), config.target.id, budget.memoryTokens, new Date().toISOString(), signal);
+        const continuation = await work?.current(ctx.sessionManager.getSessionId());
+        if (auxiliary && JSON.stringify(continuation ?? null) !== auxiliary.expectedWork) throw new Error('evernook:continuation_changed');
+        const bundle = auxiliary ? undefined : await memory.context(textOf(input.content), config.target.id,
+          continuation ? Math.floor(budget.memoryTokens / 2) : budget.memoryTokens, new Date().toISOString(), signal);
         signal.throwIfAborted();
-        if (counter.counterId !== bundle.counter_id || counter.count(bundle.payload) !== bundle.used_tokens
-            || bundle.used_tokens > bundle.token_limit || bundle.token_limit > budget.memoryTokens) throw new Error('evernook:invalid_token_counter');
-        const { payload: _, ...metadata } = bundle;
-        contextStatus.set(ctx.sessionManager.getSessionId(), metadata);
-        if (bundle.payload) requestContext = { ...requestContext, messages: [...requestContext.messages,
-          { role: 'user', content: [{ type: 'text', text: bundle.payload }], timestamp: Date.now() }] };
+        if (bundle && (counter.counterId !== bundle.counter_id || counter.count(bundle.payload) !== bundle.used_tokens
+            || bundle.used_tokens > bundle.token_limit || bundle.token_limit > budget.memoryTokens)) throw new Error('evernook:invalid_token_counter');
+        if (bundle) {
+          const { payload: _, ...metadata } = bundle;
+          contextStatus.set(ctx.sessionManager.getSessionId(), metadata);
+          let payload = bundle.payload;
+          if (continuation) {
+            const envelope = payload ? JSON.parse(payload) : { kind: 'untrusted_memory_context', items: [], degraded: bundle.degraded };
+            for (let limit = Math.floor(budget.memoryTokens / 2); limit >= 16; limit = Math.floor(limit / 2)) {
+              envelope.work = renderWork(continuation, limit, text => counter.count(text));
+              payload = JSON.stringify(envelope);
+              if (counter.count(payload) <= budget.memoryTokens) break;
+              payload = '';
+            }
+            if (!payload) throw new Error('evernook:continuation_budget_too_small');
+          }
+          if (payload) requestContext = { ...requestContext, messages: [...requestContext.messages,
+            { role: 'user', content: [{ type: 'text', text: payload }], timestamp: Date.now() }] };
+          contextStatus.set(ctx.sessionManager.getSessionId(), { ...metadata, provider_payload_tokens: payload ? counter.count(payload) : 0 });
+        }
         outputTokens = Math.min(outputTokens ?? budget.outputReserveTokens, budget.outputReserveTokens, config.target.maxTokens);
         if (!Number.isSafeInteger(outputTokens) || outputTokens < 1) throw new Error('evernook:invalid_host_config');
         const used = budget.countRequest({ model: config.target, context: requestContext, options: { ...options, maxTokens: outputTokens } });
         if (!Number.isSafeInteger(used) || used < 1) throw new Error('evernook:invalid_token_counter');
+        if (auxiliary) {
+          try {
+            await sourceSnapshot(memory, auxiliary.input);
+            const checked = await work?.prepare(ctx, auxiliary.consumed);
+            if (JSON.stringify(checked) !== JSON.stringify(auxiliary.input)) throw new Error('evernook:continuation_changed');
+          } catch { throw new Error('evernook:continuation_changed'); }
+        } else {
+          const refreshed = await capture(ctx);
+          if (refreshed.latest?.id !== captured.latest.id) throw new Error('evernook:continuation_changed');
+          assertProtectedHistoryExcluded(requestContext, refreshed.state.protectedTexts);
+        }
+        if (JSON.stringify(await work?.current(ctx.sessionManager.getSessionId())) !== JSON.stringify(continuation)) {
+          throw new Error('evernook:continuation_changed');
+        }
         if (used + budget.outputReserveTokens > Math.min(budget.contextWindow, config.target.contextWindow)) throw new Error('evernook:host_context_window_exceeded');
       }
       signal.throwIfAborted();
       const attempt = randomUUID();
       const event = source(ctx, 'attempt:' + attempt, 'display:' + attempt, 'assistant', '', 0, new Date().toISOString());
+      if (auxiliary) auxiliary.outputs.push(event.source);
+      else lastAttempts.set(ctx.sessionManager.getSessionId(), event.source);
       await memory.remember({ ...event, source: { ...event.source, event: 'start:' + attempt },
         role: 'system', text: stable({ kind: streamMode === 'durable_text' ? 'evernook_pi_text_stream_v1' : 'assistant_attempt_started', attempt }), completion: 'partial' });
       if (streamMode === 'durable_text') {
@@ -533,6 +639,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     await active?.close();
   }));
   return { model: proxy, capture, get maintenance() { return maintenance; }, get consolidation() { return consolidation; },
+    work(sessionId: string) { return work?.current(sessionId) ?? Promise.resolve(null); },
     async streams(sessionId: string, offset = 0) {
       const memory = await connection();
       const page = await memory.streamAttempts('evernook_pi_text_stream_v1', config.entry, sessionId, offset);
@@ -543,10 +650,12 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
     status(sessionId: string) { return { context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
       stream_mode: streamMode, stream_timing: streamTiming.get(sessionId),
       consolidation: consolidation?.snapshot(),
-      context: contextStatus.get(sessionId), error_code: contextErrors.get(sessionId) }; },
+      context: contextStatus.get(sessionId), error_code: contextErrors.get(sessionId), work_error: work?.error(sessionId) }; },
     async settings() {
       const memory = await connection();
-      return memory.call<{ context: { configured: boolean; saved_policy?: Record<string, unknown>; recommended_policy?: Record<string, unknown> } }>('status', {});
+      const state = await memory.call<{ context: { configured: boolean; saved_policy?: Record<string, unknown>; recommended_policy?: Record<string, unknown> } }>('status', {});
+      return { ...state, host: budget ? { memory_tokens: budget.memoryTokens, context_window: budget.contextWindow,
+        output_reserve_tokens: budget.outputReserveTokens, continuation_ttl_seconds: 604800, continuation_source_limit: 256 } : null };
     },
     async rescan(ctx: ExtensionContext) { sessions.get(ctx.sessionManager.getSessionId())?.seen.clear(); await capture(ctx); },
     async close() {

@@ -1,5 +1,7 @@
 # T25 pi 原生适配增量
 
+#80 增加预算模式下的原生压缩/重载、文件fork与树路径任务续接；来源、限额及验证边界见[pi续接契约](pi-work-continuation-v1.md)。
+
 对应 [#26](https://github.com/destinyTaoTao/evernook/issues/26)。固定 `@earendil-works/pi-coding-agent` / `pi-ai` `1.4.0`、Node `24.11.x`，复用 `plugins/harnesses` 的可信 MCP 连接与同一 Python 账本。此增量是显式选择的 SDK 接线能力，未修改日常 pi 配置或宣称桌面安装验收。
 
 ## 专用 SDK profile

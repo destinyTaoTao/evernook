@@ -20,6 +20,8 @@ dsh `memoryBudget` 由可信宿主提供 `provider`、`modelId`、`memoryTokens`
 
 ## pi 复用与取消
 
+#80 将同一计数/来源约束接入原生压缩辅助调用和有来源续接；合并 payload 的计数、遗漏与原文回取见[pi续接契约](pi-work-continuation-v1.md)。
+
 pi 同样通过 `contextConfig` 和 `memoryBudget` 显式启用。保存策略、目标 tokenizer、事实与可见性检查完全复用同一核心；它在最终 provider 包装入口构造临时用户数据消息，不将注入片段写回原生用户历史。`countRequest` 接收 `{model, context, options}`，必须按真实目标 provider 的封装计数；输出额度与窗口还受物理目标 `Model` 的限制。`pi-virtual` 会在计数后切换物理路由，因此此模式明确拒绝。纯文本限制在最终 transcript 再次检查，其他扩展后加的图片也拒绝。
 
 pi `.settings()` 暴露推荐和保存策略，`.status(sessionId)` 暴露上次构造元数据及当前错误码。窗口不足、非法配置、取消等不会被伪装成成功或空召回。两个入口均可用独立 `capture/recall` 身份共享最新普通证据，保留来源/分支与幂等语义。
