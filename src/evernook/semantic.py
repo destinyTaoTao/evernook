@@ -12,7 +12,7 @@ import threading
 import time
 
 from .embedding import EmbeddingBackend, EmbeddingSpace, unit_vector
-from .models import Access, LexicalStatus, MemoryFailure, SearchHit, SearchSpan
+from .models import Access, LexicalStatus, MemoryFailure, SearchHit, SearchPage, SearchSpan
 from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _time
 
 
@@ -326,6 +326,14 @@ class SemanticRecall:
                 raise MemoryFailure("recall_timeout")
             return left
         budget()
+        def literal(*, mode: str = "lexical", since: str | None = None, until: str | None = None) -> SearchPage:
+            try:
+                return self.runtime.search(access, query, mode=mode, since=since, until=until,
+                                           limit=100, timeout=budget(), cancel=cancel)
+            except MemoryFailure as failure:
+                if failure.code in {"search_timeout", "search_canceled"}:
+                    raise MemoryFailure(failure.code.replace("search_", "recall_", 1)) from None
+                raise
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         if type(recent_target_chars) is not int or not 1 <= recent_target_chars <= 1048576:
@@ -335,14 +343,14 @@ class SemanticRecall:
         if type(min_similarity) not in (int, float) or not math.isfinite(min_similarity) or not -1 <= min_similarity <= 1:
             raise MemoryFailure("invalid_similarity")
         # Core validation and protected-query refusal happen before any model invocation.
-        lexical = self.runtime.search(access, query, limit=100)
+        lexical = literal()
         budget()
-        exact = self.runtime.search(access, query, mode="exact", limit=100)
+        exact = literal(mode="exact")
         instant = as_of if as_of is not None else datetime.now(timezone.utc).isoformat()
         since, expanded, chars, window_limited = self._recent(access, instant, recent_target_chars, recent_days, check=budget)
         # until is exclusive; one microsecond includes the reference instant in this channel.
         until = (datetime.fromtimestamp(_time(instant), timezone.utc) + timedelta(microseconds=1)).isoformat()
-        recent_lexical = self.runtime.search(access, query, since=since, until=until, limit=100)
+        recent_lexical = literal(since=since, until=until)
         channels: dict[str, list[SearchHit]] = {"exact": list(exact.hits), "lexical": list(lexical.hits),
                                                "recent_lexical": list(recent_lexical.hits)}
         degraded = [reason for reason in (lexical.fallback_reason, exact.fallback_reason) if reason is not None]

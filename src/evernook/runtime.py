@@ -1,18 +1,20 @@
 """Versioned local text ledger. Transport adapters call these same checked operations."""
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import secrets
 import sqlite3
 import tempfile
+import threading
 import time
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
@@ -453,6 +455,7 @@ class MemoryRuntime:
         # including fault-injection scenarios. Rows that are written remain append-only.
         try:
             with self._connection() as db:
+                db.execute("PRAGMA busy_timeout=0")
                 db.execute("BEGIN IMMEDIATE")
                 _audit_schema(db)
                 _prune_audit(db)
@@ -510,15 +513,33 @@ class MemoryRuntime:
         return access
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, check: Callable[[], object] | None = None) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
+        interrupted: list[MemoryFailure] = []
         try:
-            connection = sqlite3.connect(self.root / "memory.sqlite3", timeout=self._timeout, isolation_level=None)
+            if check is not None:
+                check()
+            connection = sqlite3.connect(self.root / "memory.sqlite3", timeout=0 if check else self._timeout, isolation_level=None)
             connection.row_factory = sqlite3.Row
+            if check is not None:
+                def progress() -> int:
+                    try:
+                        check()
+                        return 0
+                    except MemoryFailure as failure:
+                        interrupted.append(failure)
+                        return 1
+                connection.set_progress_handler(progress, 1000)
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA synchronous=FULL")
             yield connection
+            if interrupted:
+                raise interrupted[0]
+            if check is not None:
+                check()
         except sqlite3.Error as error:
+            if interrupted:
+                raise interrupted[0] from None
             code = getattr(error, "sqlite_errorcode", 0) & 255
             raise MemoryFailure({sqlite3.SQLITE_BUSY: "storage_busy", sqlite3.SQLITE_LOCKED: "storage_busy", sqlite3.SQLITE_FULL: "storage_full"}.get(code, "storage_unavailable")) from None
         finally:
@@ -1037,8 +1058,22 @@ class MemoryRuntime:
             return self._attachment_data(db, message_id, info) if info is not None and info.saved else None
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
-               until: str | None = None, limit: int = 10, offset: int = 0) -> SearchPage:
+               until: str | None = None, limit: int = 10, offset: int = 0, timeout: float = 30,
+               cancel: threading.Event | None = None) -> SearchPage:
         self._require_scope(access, "recall", "search")
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
+            raise MemoryFailure("invalid_timeout")
+        if cancel is not None and not isinstance(cancel, threading.Event):
+            raise MemoryFailure("invalid_cancel")
+        deadline = time.monotonic() + timeout
+        def budget() -> float:
+            if cancel is not None and cancel.is_set():
+                raise MemoryFailure("search_canceled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MemoryFailure("search_timeout")
+            return remaining
+        budget()
         if (not isinstance(query, str) or not query.strip() or len(query) > 256
                 or not isinstance(mode, str) or mode not in {"exact", "lexical"}):
             raise MemoryFailure("invalid_query")
@@ -1054,7 +1089,7 @@ class MemoryRuntime:
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
             raise MemoryFailure("invalid_time_range")
-        with self._connection() as db:
+        with self._connection(check=budget) as db:
             db.execute("BEGIN")
             status = self._lexical_status(db)
             base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
@@ -1067,23 +1102,28 @@ class MemoryRuntime:
             try:
                 condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({_LEXICAL_INDEXED}))" if used_index else ""
                 hits = self._search_hits(db, base + condition + order,
-                    parameters + (query_expression(words),) if used_index else parameters, words, limit, offset)
+                    parameters + (query_expression(words),) if used_index else parameters, words, limit, offset, check=budget)
             except sqlite3.Error:
+                budget()
                 if not used_index:
                     raise
                 used_index, reason = False, "index_unavailable"
                 status = replace(status, state="unavailable", indexed_messages=0,
                                  pending_messages=status.source_messages, indexed_watermark=None)
-                hits = self._search_hits(db, base + order, parameters, words, limit, offset)
+                hits = self._search_hits(db, base + order, parameters, words, limit, offset, check=budget)
+            budget()
             return SearchPage(tuple(hits[:limit]), offset + limit if len(hits) > limit else None, status, used_index, reason)
 
     def _search_hits(self, db: sqlite3.Connection, sql: str, parameters: tuple[object, ...],
-                     words: tuple[str, ...], limit: int, offset: int) -> list[SearchHit]:
+                     words: tuple[str, ...], limit: int, offset: int,
+                     check: Callable[[], object] | None = None) -> list[SearchHit]:
         hits: list[SearchHit] = []
         found = 0
         for row in db.execute(sql, parameters):
+            if check is not None:
+                check()
             message = self._stored(row)
-            spans = matching_spans(message.event.text, words)
+            spans = matching_spans(message.event.text, words, check=check)
             if not spans:
                 continue
             if found >= offset:

@@ -31,7 +31,15 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         self.parameters = StdioServerParameters(command=sys.executable,
             args=["-m", "evernook.mcp_server", "--config", str(self.config), "--access", str(self.access_path),
                   "--profile", "trusted-host"],
-            cwd=str(Path(__file__).resolve().parents[2]))
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env={"PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")})
+
+    async def test_search_timeout_is_an_explicit_failure_not_an_empty_result(self) -> None:
+        async with Client(self.parameters, read_timeout_seconds=10) as client:
+            result = await client.call_tool("evernook_v1_search", {"query": "synthetic", "timeout": 1e-9})
+            self.assertTrue(result.is_error)
+            assert result.structured_content is not None
+            self.assertEqual(result.structured_content["error"]["code"], "search_timeout")
 
     async def test_capture_identity_can_mark_host_activity_but_recall_profile_cannot(self) -> None:
         from evernook.scheduler import ConsolidationScheduler

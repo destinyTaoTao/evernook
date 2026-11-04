@@ -113,6 +113,7 @@ class Search(ListMessages):
     query: str
     mode: str = "lexical"
     limit: int = 10
+    timeout: float = 30
 
 
 class Mark(Arguments):

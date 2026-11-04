@@ -53,6 +53,15 @@ class ContextTests(unittest.TestCase):
         return ContextBuilder(self.runtime, self.recall, policy or self.policy, self.counter).build(self.access, query,
             as_of=self.as_of, mode="normal", timeout=20, **kwargs)
 
+    def test_large_unindexed_scan_timeout_is_disclosed_as_incomplete_context(self) -> None:
+        self.save("合成原文" * 80000)
+        result = ContextBuilder(self.runtime, self.recall, self.policy, self.counter).build(
+            self.access, "不存在", as_of=self.as_of, mode="normal", timeout=.01)
+        self.assertFalse(result.complete)
+        self.assertIn("recall_timeout", result.degraded)
+        self.assertEqual(result.evidence_count, 0)
+        self.assertIn("recall_timeout", result.payload)
+
     def test_whole_payload_budget_preserves_pin_priority_and_reports_omitted_evidence(self) -> None:
         pin, _ = self.pin("合成：每轮必读的数字37.50元🙂")
         for index in range(4):

@@ -43,8 +43,10 @@ path-resolution failure remains unexplained. #81/#82 model, scale and OS admissi
 Additional bounded integration: five public constructor/read calls overlapped actual FTS and
 pinned MiniLM refreshes on five synthetic originals. Two refreshes published two real vectors
 each; all five original reads matched, with no reader or maintenance errors. Receipt:
-`maintenance-smoke-01.json`. The capture step preceded this overlap; concurrent capture is
-covered separately by the WAL-lifetime diagnostic, not claimed as part of this model run.
+`maintenance-smoke-01.json`. The capture step preceded this first overlap. A second bounded
+run (`concurrent-maintenance-02.json`) overlapped eight successful real captures, progressing
+FTS/pinned-MiniLM maintenance and five exact new-reader results, with no errors. The earlier
+WAL-marker diagnostic alone does not establish actual concurrent capture.
 
 Standards review: no required changes; one nonblocking reminder to keep the readiness object
 list synchronized with schema installation. Spec review: known writer-lock repair supported;

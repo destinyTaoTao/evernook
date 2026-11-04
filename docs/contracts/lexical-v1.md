@@ -4,7 +4,9 @@
 
 ## 查询与证据
 
-`MemoryRuntime.search(access, query, mode="lexical", since=None, until=None, limit=10, offset=0)`，同时可通过 [MCP](mcp-v1.md) 的 `evernook_v1_search` 调用。
+`MemoryRuntime.search(access, query, mode="lexical", since=None, until=None, limit=10, offset=0, timeout=30, cancel=None)`，同时可通过 [MCP](mcp-v1.md) 的 `evernook_v1_search` 调用（不传进程内 cancel 事件）。
+
+`timeout` 为有限的正秒数，最多 120 秒；进程内调用可传 `threading.Event` 取消。SQL VM 与原文归一化扫描共同检查预算，超时/取消明确返回 `search_timeout` / `search_canceled`，不把未扫描历史当成完整空结果，不返回不稳定的半页。正常完成仍保留原时间过滤、来源验证与 offset 分页语义。语义召回沿用剩余预算并映射为 `recall_timeout` / `recall_canceled`；上下文披露不完整。审计写入仍尽力而为，忙锁不等待；普通写入的事务与等待策略不变。这是协作式检查，不是任意 OS 阻塞下的硬实时保证。
 
 - `query` 是严格 UTF-8 的非空白字符串，最多 256 个 Unicode code point。`exact` 匹配整个归一化短语，包含其中空白；`lexical` 按空白分出字面词项，所有词项均须匹配，不做语言学分词、同义词或语义推断。
 - 归一化 v1 将每个基础 code point 及其后连续非零 combining-class 字符作为一组，分别执行 NFKD 与 casefold；支持已回归的中英文、大小写、全半角数字、组合重音和展开字符。它不是完整的 Unicode 扩展字素分段或任意语言的规范等价保证。

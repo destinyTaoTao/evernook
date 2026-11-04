@@ -1,5 +1,5 @@
 """Versioned lexical normalization; original text and code point coordinates stay authoritative."""
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import unicodedata
 
 from .models import SearchSpan
@@ -13,33 +13,66 @@ NORMALIZATION_VERSION = 1
 NORMALIZATION_IDENTITY = NORMALIZATION_VERSION * 1_000_000 + int(unicodedata.unidata_version.replace(".", ""))
 
 
-def _pieces(text: str) -> Iterator[tuple[str, int, int]]:
+def _normalized_piece(text: str, check: Callable[[], object] | None) -> str:
+    if len(text) <= 1024:
+        return unicodedata.normalize("NFKD", text).casefold()
+    # Stable canonical ordering avoids an uninterruptible quadratic reorder of a long mark run.
+    output: list[str] = []
+    marks: dict[int, list[str]] = {}
+    def flush() -> None:
+        for key in sorted(marks):
+            output.extend(marks[key])
+        marks.clear()
+    for position, char in enumerate(text):
+        if check is not None and position % 1024 == 0:
+            check()
+        for decomposed in unicodedata.normalize("NFKD", char):
+            combining = unicodedata.combining(decomposed)
+            if combining:
+                marks.setdefault(combining, []).append(decomposed)
+            else:
+                flush()
+                output.append(decomposed)
+    flush()
+    if check is not None:
+        check()
+    return "".join(output).casefold()
+
+
+def _pieces(text: str, check: Callable[[], object] | None = None) -> Iterator[tuple[str, int, int]]:
     start = 0
     for position, char in enumerate(text):
+        if check is not None and position % 1024 == 0:
+            check()
         if position and not unicodedata.combining(char):
-            yield unicodedata.normalize("NFKD", text[start:position]).casefold(), start, position
+            yield _normalized_piece(text[start:position], check), start, position
             start = position
     if text:
-        yield unicodedata.normalize("NFKD", text[start:]).casefold(), start, len(text)
+        yield _normalized_piece(text[start:], check), start, len(text)
 
 
 def normalize(text: str) -> str:
     return "".join(piece for piece, _, _ in _pieces(text))
 
 
-def matching_spans(text: str, words: tuple[str, ...]) -> tuple[SearchSpan, ...]:
+def matching_spans(text: str, words: tuple[str, ...], *,
+                   check: Callable[[], object] | None = None) -> tuple[SearchSpan, ...]:
     pieces: list[str] = []
     starts: list[int] = []
     ends: list[int] = []
-    for piece, start, end in _pieces(text):
+    for piece, start, end in _pieces(text, check):
         pieces.append(piece)
         starts.extend([start] * len(piece))
         ends.extend([end] * len(piece))
     normalized = "".join(pieces)
     matches: dict[tuple[int, int], SearchSpan] = {}
     for word in words:
+        if check is not None:
+            check()
         position = normalized.find(word)
         while position >= 0:
+            if check is not None:
+                check()
             start, end = starts[position], ends[position + len(word) - 1]
             original = text[start:end]
             if normalize(original) == word:

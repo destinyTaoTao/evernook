@@ -9,6 +9,8 @@ from typing import Any
 from unittest.mock import patch
 import sqlite3
 import tempfile
+import time
+import unicodedata
 import unittest
 
 from evernook import Change, Event, MemoryFailure, MemoryRuntime, Source, initialize
@@ -23,6 +25,77 @@ class SearchTests(unittest.TestCase):
         self.event = Event(Source("test", "session", "main", "1"), "user", 1,
                            "2021-02-03T10:20:30+08:00", "complete", "甲🙂e\u0301乙，乌龙茶37.50元。")
         self.receipt = self.runtime.submit(self.access, self.event)
+
+    def test_expired_or_canceled_search_never_reports_complete_empty_history(self) -> None:
+        cancel = ThreadEvent()
+        cancel.set()
+        with self.assertRaisesRegex(MemoryFailure, "search_canceled"):
+            self.runtime.search(self.access, "不存在", cancel=cancel)
+        with self.assertRaisesRegex(MemoryFailure, "search_timeout"):
+            self.runtime.search(self.access, "不存在", timeout=1e-9)
+
+    def test_deadline_interrupts_normalization_of_a_large_unindexed_original(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "session", "main", "large"),
+            "user", 2, None, "complete", "合成原文" * 80000))
+        started = time.monotonic()
+        with self.assertRaisesRegex(MemoryFailure, "search_timeout"):
+            self.runtime.search(self.access, "未匹配", timeout=.01)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(self.runtime.status(self.access).messages, 2)
+
+    def test_cancellation_during_large_fallback_scan_stops_without_mutating_originals(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "session", "main", "cancel-large"),
+            "user", 2, None, "complete", "合成原文" * 80000))
+        cancel = ThreadEvent()
+        from threading import Timer
+        timer = Timer(.01, cancel.set)
+        timer.start()
+        try:
+            started = time.monotonic()
+            with self.assertRaisesRegex(MemoryFailure, "search_canceled"):
+                self.runtime.search(self.access, "未匹配", cancel=cancel)
+            self.assertLess(time.monotonic() - started, 1)
+        finally:
+            timer.cancel()
+            timer.join()
+        self.assertEqual(self.runtime.status(self.access).messages, 2)
+
+    def test_sql_vm_work_is_interrupted_and_next_query_can_still_read_original(self) -> None:
+        real_connect = sqlite3.connect
+
+        class BusyConnection(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("SELECT messages.event,messages.receipt"):
+                    super().execute("WITH RECURSIVE work(x) AS (VALUES(0) UNION ALL "
+                                    "SELECT x+1 FROM work WHERE x<10000000) SELECT sum(x) FROM work").fetchone()
+                return super().execute(sql, parameters)
+
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["factory"] = BusyConnection
+            connection: sqlite3.Connection = real_connect(*args, **kwargs)
+            return connection
+
+        with patch("sqlite3.connect", connect):
+            started = time.monotonic()
+            with self.assertRaisesRegex(MemoryFailure, "search_timeout"):
+                self.runtime.search(self.access, "茶", timeout=.02)
+            self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(self.runtime.search(self.access, "茶").hits[0].message_id, self.receipt.message_id)
+
+    def test_long_combining_run_cannot_hold_query_past_its_budget(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "session", "main", "combining-run"),
+            "user", 2, None, "complete", "a" + "\u0315\u0300" * 40000))
+        started = time.monotonic()
+        with self.assertRaisesRegex(MemoryFailure, "search_timeout"):
+            self.runtime.search(self.access, "not-present", timeout=.02)
+        self.assertLess(time.monotonic() - started, .5)
+
+    def test_long_group_normalization_matches_the_pinned_unicode_database(self) -> None:
+        from evernook.lexical import normalize
+
+        for prefix in ("", "ﬃ", "각", "A"):
+            text = prefix + "\u0315\u0300\u0345\u0344" * 600
+            self.assertEqual(normalize(text), unicodedata.normalize("NFKD", text).casefold())
 
     def test_short_chinese_number_and_emoji_exact_queries_return_verified_source_spans(self) -> None:
         for query, start, end in [("茶", 8, 9), ("乌龙", 6, 8), ("乌龙茶", 6, 9), ("37.50", 9, 14), ("🙂", 1, 2)]:
