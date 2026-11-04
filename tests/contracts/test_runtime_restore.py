@@ -20,6 +20,41 @@ class RuntimeRestoreTests(unittest.TestCase):
         self.config, self.access = initialize(self.root / "source", client_id="source", entry="test", allow_archive_review=True)
         self.runtime = MemoryRuntime(self.config)
 
+    def test_revoked_automatic_processor_cannot_return_through_an_older_snapshot(self) -> None:
+        from evernook.automatic_preferences import PreferenceUpdates
+        from evernook.runtime_restore import publish_replayed_runtime
+
+        updates = PreferenceUpdates(self.runtime)
+        processor = updates.settings(self.access).rules_processor
+        updates.configure(self.access, enabled=True, admitted_processor=processor)
+        self.runtime.export_archive(self.access, self.root / "admitted")
+        updates.configure(self.access, enabled=True, admitted_processor=None)
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        replay_archive_controls(self.runtime, self.access, self.root / "admitted", self.root / "review", checkpoint=checkpoint)
+        with self.assertRaisesRegex(MemoryFailure, "archive_evidence_incomplete"):
+            publish_replayed_runtime(self.runtime, self.access, self.root / "review", self.root / "bad-runtime",
+                checkpoint=checkpoint, client_id="restored", entry="test")
+        self.assertFalse((self.root / "bad-runtime").exists())
+
+        self.runtime.export_archive(self.access, self.root / "revoked")
+        replay_archive_controls(self.runtime, self.access, self.root / "revoked", self.root / "current-review", checkpoint=checkpoint)
+        config, owner = publish_replayed_runtime(self.runtime, self.access, self.root / "current-review", self.root / "good-runtime",
+            checkpoint=checkpoint, client_id="restored", entry="test")
+        restored = PreferenceUpdates(MemoryRuntime(config)).settings(owner)
+        self.assertTrue(restored.enabled)
+        self.assertIsNone(restored.admitted_processor)
+
+    def test_automatic_admission_revocation_stales_the_previous_control_checkpoint(self) -> None:
+        from evernook.automatic_preferences import PreferenceUpdates
+
+        updates = PreferenceUpdates(self.runtime)
+        processor = updates.settings(self.access).rules_processor
+        updates.configure(self.access, enabled=True, admitted_processor=processor)
+        previous = capture_control_checkpoint(self.runtime, self.access)
+        updates.configure(self.access, enabled=True, admitted_processor=None)
+        current = capture_control_checkpoint(self.runtime, self.access)
+        self.assertNotEqual(current.control_head, previous.control_head)
+
     def test_stream_chunks_survive_verified_publication_and_newer_chunk_blocks_stale_snapshot(self) -> None:
         from evernook.runtime_restore import publish_replayed_runtime
         request = self.runtime.submit(self.access, Event(Source("test", "stream", "main", "input"), "user", 0, None, "complete", "合成请求"))
