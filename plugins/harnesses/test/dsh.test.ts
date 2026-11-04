@@ -13,11 +13,14 @@ import AgentRegistry from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local';
 import LlmRuntime, { LlmAdapter, MessageId, ToolCallId, freezeMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session';
+import SessionStore, { SessionId, SessionLogOffset, buildForkSeed } from '@deepseek-ai/dsh-session';
 import * as persistence from '@deepseek-ai/dsh-session-persistence-jsonl';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools';
+import TokenMeter from '@deepseek-ai/dsh-token-meter';
+import BasicCompaction, { type BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic';
+import type { CompactionResult } from '@deepseek-ai/dsh-compaction';
 import { installMemory } from '../src/dsh.ts';
 import type { Config } from '../src/dsh.ts';
 import { Tokenizer } from '@huggingface/tokenizers';
@@ -63,7 +66,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -78,6 +81,11 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
   await ctx.plugin(persistence, { root: join(root, 'sessions'), compression: 'none' }).await();
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
+  if (lifecycle.compaction) {
+    await ctx.plugin(TokenMeter).await();
+    await ctx.plugin(BasicCompaction, { auto: false, maxTokens: 512, headroomTokens: 512,
+      ...(typeof lifecycle.compaction === 'object' ? lifecycle.compaction : {}) }).await();
+  }
   ctx.llm.registerAdapter(['synthetic'], adapter);
   const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
   if (lifecycle.consolidation) {
@@ -109,6 +117,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
     config.memoryBudget = { provider: 'synthetic', modelId: 'local-test', memoryTokens: 512,
       contextWindow: 20000, outputReserveTokens: 1000,
       countRequest: request => counter.encode(JSON.stringify({ messages: request.messages, system: request.system, tools: request.tools }), { add_special_tokens: false }).ids.length };
+    if (lifecycle.compaction) config.memoryBudget.memoryTokens = 2048;
   }
   const memory = await installMemory(ctx, config);
   const errors: unknown[] = [];
@@ -124,6 +133,330 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const sessionId = SessionId('work-' + 'a'.repeat(205));
+  const handle = await host.create(sessionId);
+  const goal = '合成任务：迁移查询模块，保留接口，最后运行契约回归。';
+  adapter.reply = 'synthetic implementation progress '.repeat(500);
+  handle.agent.followup(user('work-goal', goal));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  adapter.reply = '## Primary Request and Intent\n- 迁移查询模块，保留接口。\n## Current Work\n- 实现已保存。\n## Pending Jobs\n- 运行契约回归。\n## Next Step\n- 运行测试。';
+  const compacted = await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  assert.ok(compacted);
+  await host.memory.capture(handle.agent.session);
+  const work = await host.memory.work(sessionId);
+  assert.ok(work, JSON.stringify(host.memory.status(sessionId)));
+  assert.equal(work.state, 'unknown', 'a model summary cannot prove task completion');
+  assert.equal(work.goal.text, goal);
+  assert.match(JSON.stringify(work.progress), /实现已保存/);
+  assert.match(JSON.stringify(work.pending), /契约回归/);
+  const id = work.checkpoint_id;
+  await handle.dispose();
+  await host.memory.close();
+  const memory = await installMemory(host.ctx, host.config);
+  t.after(() => memory.close());
+  await memory.rescan(sessionId);
+  assert.equal((await memory.work(sessionId))?.checkpoint_id, id);
+  const resumed = await host.ctx.agents.resume({ resumeSessionId: sessionId,
+    agentOptions: { provider: 'synthetic', model: 'local-test' } });
+  t.after(() => resumed.dispose());
+  adapter.reply = '合成：继续运行回归。';
+  const current = '当前指令：只列出尚未完成的回归，不修改代码。';
+  resumed.agent.followup(user('work-continue', current));
+  await resumed.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  const request = adapter.requests.at(-1)!;
+  const serialized = JSON.stringify(request);
+  assert.match(serialized, /untrusted_work_continuation/);
+  assert.ok(serialized.includes(id));
+  assert.ok(serialized.includes(current));
+  assert.doesNotMatch(serialized, /Treat the captured context as established background/);
+  assert.ok(host.config.memoryBudget!.countRequest(request) + host.config.memoryBudget!.outputReserveTokens <= host.config.memoryBudget!.contextWindow);
+});
+
+test('native auxiliary compaction cannot bypass protected-history screening or the full request window', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const handle = await host.create('protected-compaction');
+  t.after(() => handle.dispose());
+  const secret = 'password=synthetic-compaction-history-123';
+  handle.agent.followup(user('protected-before-compact', secret));
+  await handle.agent.whenIdle();
+  assert.equal(adapter.requests.length, 0);
+  adapter.reply = 'synthetic safe work '.repeat(500);
+  const safe = '合成安全任务：继续核对接口与回归。';
+  handle.agent.followup(user('safe-before-compact', safe));
+  await handle.agent.whenIdle();
+  adapter.reply = '## Current Work\n- 合成安全进展。\n## Pending Jobs\n- 运行回归。';
+  await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  const auxiliary = adapter.requests.filter(request => request.purpose === 'compaction');
+  assert.equal(auxiliary.length, 1);
+  assert.ok(!JSON.stringify(auxiliary).includes(secret));
+  for await (const _ of host.ctx.llm.stream({ provider: 'synthetic', model: 'local-test', purpose: 'compaction',
+    sessionId: handle.agent.session.id, maxTokens: 512, messages: [
+      { role: 'user', content: [{ type: 'text', text: secret }] },
+      { role: 'user', content: [{ type: 'text', text: safe }] },
+    ] })) { /* A bounded auxiliary request may continue with the safe turn. */ }
+  assert.ok(!JSON.stringify(adapter.requests.at(-1)).includes(secret));
+  const before = adapter.requests.length;
+  await assert.rejects(async () => {
+    for await (const _ of host.ctx.llm.stream({ provider: 'synthetic', model: 'local-test', purpose: 'compaction',
+      sessionId: handle.agent.session.id, maxTokens: 1000, messages: [
+        { role: 'user', content: [{ type: 'text', text: safe }] },
+        { role: 'user', content: [{ type: 'text', text: 'oversized request '.repeat(15000) }] },
+      ] })) { /* Drain only if admission incorrectly succeeds. */ }
+  }, /host_context_window_exceeded/);
+  assert.equal(adapter.requests.length, before);
+});
+
+test('a native fork retains original checkpoint controls and cannot recreate a suppressed parent goal', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const parent = await host.create('work-parent');
+  t.after(() => parent.dispose());
+  const goal = '合成旧目标：修复紫藤查询接口。';
+  adapter.reply = 'synthetic parent progress '.repeat(500);
+  parent.agent.followup(user('fork-goal', goal));
+  await parent.agent.whenIdle();
+  adapter.reply = '## Current Work\n- 紫藤接口待检查。\n## Pending Jobs\n- 运行回归。';
+  await host.ctx.compaction.compactNow(parent.agent, new AbortController().signal);
+  await host.memory.capture(parent.agent.session);
+  await host.ctx.sessions.flush(parent.agent.session);
+  const stored = await host.ctx.sessionPersistence.open(parent.agent.session.id, 'read');
+  const contents = await stored.read();
+  await stored.close();
+  const child = await host.ctx.agents.create({ sessionId: SessionId('work-child'),
+    seed: buildForkSeed(contents.events, contents.events.at(-1)!.seq), inheritedEventCount: SessionLogOffset(contents.events.length),
+    meta: { cwd: host.root, parentSession: parent.agent.session.id, isSeeded: true },
+    agentOptions: { provider: 'synthetic', model: 'local-test' } });
+  t.after(() => child.dispose());
+  await host.memory.capture(child.agent.session);
+  const inherited = await host.memory.work(child.agent.session.id);
+  assert.ok(inherited, JSON.stringify(host.memory.status(child.agent.session.id)));
+  assert.equal(inherited.goal.text, goal);
+  const target = (await host.memory.work(parent.agent.session.id))!.goal.message_id;
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-control','main','confirm'),'user',1,None,'complete','合成用户确认：不再召回旧目标。')); r.change(a,Change('suppress-parent-goal',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))", host.config.config, target], { cwd: checkout });
+  adapter.reply = '合成：仅核对状态。';
+  child.agent.followup(user('child-current', '当前指令：仅核对来源控制状态。'));
+  await child.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  assert.equal((await host.memory.work(child.agent.session.id))?.state, 'source_unavailable');
+  assert.ok(!JSON.stringify(adapter.requests.at(-1)).includes('紫藤'));
+});
+
+test('a source invalidated during final request counting cannot enter the resumed provider', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const handle = await host.create('work-race');
+  t.after(() => handle.dispose());
+  adapter.reply = 'synthetic work race '.repeat(500);
+  handle.agent.followup(user('race-goal', '合成旧目标：迁移雪松模块。'));
+  await handle.agent.whenIdle();
+  adapter.reply = '## Current Work\n- 雪松模块已迁移。\n## Pending Jobs\n- 运行回归。';
+  await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  await host.memory.capture(handle.agent.session);
+  const target = (await host.memory.work(handle.agent.session.id))!.goal.message_id;
+  const counter = host.config.memoryBudget!.countRequest;
+  let armed = true;
+  host.config.memoryBudget!.countRequest = request => {
+    if (armed && JSON.stringify(request).includes('untrusted_work_continuation')) {
+      armed = false;
+      execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-race','main','confirm'),'user',1,None,'complete','合成用户确认：不再召回旧目标。')); r.change(a,Change('suppress-race-goal',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))", host.config.config, target], { cwd: checkout });
+    }
+    return counter(request);
+  };
+  const before = adapter.requests.length;
+  handle.agent.followup(user('race-next', '当前指令：仅核对来源状态。'));
+  await handle.agent.whenIdle();
+  assert.equal(armed, false);
+  assert.equal(adapter.requests.length, before + 1);
+  assert.deepEqual(host.errors, []);
+  assert.ok(!JSON.stringify(adapter.requests.at(-1)).includes('雪松'));
+  assert.match(JSON.stringify(adapter.requests.at(-1)), /source_unavailable/);
+});
+
+test('over-budget continuation fields disclose source ranges and remain available through ordinary deep reads', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const handle = await host.create('work-budget');
+  t.after(() => handle.dispose());
+  adapter.reply = 'synthetic completed stage '.repeat(500);
+  handle.agent.followup(user('work-long-goal', '合成原始任务：保留所有原文。\n' + 'original task detail '.repeat(1000)));
+  await handle.agent.whenIdle();
+  adapter.reply = ['Primary Request and Intent', 'Key Technical Concepts', 'Files and Code', 'Errors and Fixes',
+    'Pending Jobs', 'Current Work', 'Next Step', 'Critical Context']
+    .map(title => '## ' + title + '\n- ' + 'synthetic engineering detail '.repeat(60)).join('\n');
+  await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  await host.memory.capture(handle.agent.session);
+  const work = await host.memory.work(handle.agent.session.id);
+  assert.ok(work);
+  assert.ok(work.pending.length);
+  adapter.reply = '合成：仅返回状态与来源。';
+  handle.agent.followup(user('work-budget-next', '当前只需要状态与遗漏来源。'));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  const request = adapter.requests.at(-1)!;
+  const section = request.messages.flatMap(message => message.role === 'user' && message.source
+    && 'form' in message.source && message.source.form === 'snapshot' ? message.source.sections : [])
+    .find(section => section.name === 'evernook-evidence');
+  assert.ok(section);
+  const payload = JSON.parse(section.text);
+  const restored = payload.items.find((item: { kind: string }) => item.kind === 'work_continuation').data;
+  const omitted = restored.omitted.find((item: { field?: string; fields?: string[] }) => item.field === 'progress' || item.fields?.includes('progress'));
+  assert.ok(omitted);
+  assert.equal(omitted.reason, 'token_budget');
+  assert.equal(omitted.message_id, work.progress[0].message_id);
+  assert.ok(restored.progress.length < work.progress.length);
+  const reader = new MemoryClient(host.config);
+  await reader.connect();
+  try {
+    const original = await reader.read(omitted.message_id);
+    const excerpt = Array.from(original.event.text).slice(omitted.start, omitted.end).join('');
+    assert.ok(work.progress.some(item => item.start >= omitted.start && item.end <= omitted.end && excerpt.includes(item.text)));
+  } finally { await reader.close(); }
+  assert.ok(host.target!.encode(section.text, { add_special_tokens: false }).ids.length <= host.config.memoryBudget!.memoryTokens);
+  assert.ok(host.config.memoryBudget!.countRequest(request) + host.config.memoryBudget!.outputReserveTokens <= host.config.memoryBudget!.contextWindow);
+  const before = adapter.requests.length;
+  host.config.memoryBudget!.memoryTokens = 256;
+  const tiny = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  tiny.policy.normal_tokens = 128;
+  await writeFile(host.config.contextConfig!, JSON.stringify(tiny));
+  handle.agent.followup(user('work-minimum-budget', '当前指令：仅返回状态，不猜测遗漏。'));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  assert.equal(adapter.requests.length, before + 1);
+  assert.ok((host.memory.status(handle.agent.session.id).context?.provider_payload_tokens ?? Infinity) <= 256);
+  assert.ok(host.memory.status(handle.agent.session.id).context?.degraded.includes('context_envelope_over_budget'));
+});
+
+test('a later partial compaction inherits sources from the earlier continuation actually supplied to its summarizer', async t => {
+  const adapter = new Synthetic();
+  adapter.toolOnce = true;
+  const host = await boot(adapter, true, false, { compaction: true });
+  t.after(() => host.close());
+  host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic continuation source',
+    parameters: { amount: { type: 'number' } }, execute: async () => [{ type: 'text', text: '合成工具旧结论：采用南星方案。' }] }));
+  const handle = await host.create('work-consumption');
+  t.after(() => handle.dispose());
+  adapter.reply = 'synthetic first progress '.repeat(400);
+  handle.agent.followup(user('consumption-goal', '合成任务：核对工具结果并继续工作。'));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  adapter.reply = '## Current Work\n- 南星方案待复核。\n## Pending Jobs\n- 运行回归。';
+  const first = await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  assert.ok(first);
+  await host.memory.capture(handle.agent.session);
+  const earlier = await host.memory.work(handle.agent.session.id);
+  assert.ok(earlier);
+  adapter.reply = 'synthetic later progress '.repeat(400);
+  handle.agent.followup(user('partial-start', '合成局部任务：核对项目说明。'));
+  await handle.agent.whenIdle();
+  await host.ctx.sessions.flush(handle.agent.session);
+  const stored = await host.ctx.sessionPersistence.open(handle.agent.session.id, 'read');
+  const contents = await stored.read();
+  await stored.close();
+  const start = contents.events.find(event => event.type === 'user/message' && String(event.data.id) === 'partial-start');
+  const end = contents.events.findLast(event => event.type === 'assistant/message');
+  assert.ok(start && end);
+  adapter.reply = '## Current Work\n- 续接中的南星方案仍待复核；已核对项目说明。\n## Pending Jobs\n- 运行回归。';
+  const results: CompactionResult[] = [];
+  const stop = host.ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
+    if (agent === handle.agent && !results.length) {
+      results.push(await host.ctx.compaction.compactRegion(start.seq, end.seq, agent, signal));
+      adapter.reply = '合成：局部续接已保存。';
+    }
+    return next();
+  });
+  handle.agent.followup(user('trigger-partial', '合成当前指令：继续检查局部任务。'));
+  await handle.agent.whenIdle();
+  stop();
+  assert.deepEqual(host.errors, []);
+  assert.equal(results.length, 1);
+  const second = results[0];
+  const oldNode = contents.events.find(event => event.type === 'user/message'
+    && event.data.source.kind === 'compact-checkpoint' && event.data.source.compactionId === first.compactionId);
+  assert.ok(oldNode);
+  assert.ok(!second.shadowedSeqs.includes(oldNode.seq));
+  assert.ok(JSON.stringify(adapter.requests.filter(request => request.purpose === 'compaction').at(-1)).includes(earlier.checkpoint_id));
+  await host.memory.capture(handle.agent.session);
+  assert.notEqual((await host.memory.work(handle.agent.session.id))?.checkpoint_id, earlier.checkpoint_id);
+  const tool = host.rows().find(row => row.event.role === 'tool' && row.event.text.includes('合成工具旧结论'));
+  assert.ok(tool);
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime,Event,Source,Change; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); r=MemoryRuntime(c); confirmation=r.submit(a,Event(Source('owner','synthetic-consumption','main','confirm'),'user',1,None,'complete','合成用户确认：不再召回旧工具结果。')); r.change(a,Change('suppress-consumed-tool',sys.argv[2],1,'suppress',confirmation.message_id,'synthetic confirmation'))", host.config.config, tool.receipt.message_id], { cwd: checkout });
+  assert.equal((await host.memory.work(handle.agent.session.id))?.state, 'source_unavailable');
+});
+
+test('changed task intent is retained as untrusted work while the initial user request is explicitly labelled', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { compaction: true });
+  t.after(() => host.close());
+  const handle = await host.create('work-intent');
+  t.after(() => handle.dispose());
+  adapter.reply = 'synthetic earlier task '.repeat(400);
+  handle.agent.followup(user('initial-intent', '合成初始请求：核对旧接口。'));
+  await handle.agent.whenIdle();
+  handle.agent.followup(user('changed-intent', '旧接口任务结束；当前任务改为检查银杉新模块，然后运行类型检查。'));
+  await handle.agent.whenIdle();
+  adapter.reply = '## Primary Request and Intent\n- 当前任务是检查银杉新模块；旧接口任务已结束。\n## Current Work\n- 新模块实现待核对。\n## Pending Jobs\n- 运行类型检查。\n## Critical Context\n- 当前用户要求只处理新模块。';
+  await host.ctx.compaction.compactNow(handle.agent, new AbortController().signal);
+  await host.memory.capture(handle.agent.session);
+  const work = await host.memory.work(handle.agent.session.id);
+  assert.ok(work);
+  assert.equal(work.goal_role, 'initial_user_request');
+  assert.equal(work.goal.text, '合成初始请求：核对旧接口。');
+  assert.match(JSON.stringify(work.progress), /当前任务是检查银杉新模块/);
+  assert.match(JSON.stringify(work.progress), /当前用户要求只处理新模块/);
+  assert.equal(work.state, 'unknown', 'generated intent cannot certify completion');
+  adapter.reply = '合成：仅列新模块待办。';
+  handle.agent.followup(user('intent-current', '当前指令：只按新模块目标列待办。'));
+  await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  const request = JSON.stringify(adapter.requests.at(-1));
+  assert.match(request, /initial_user_request/);
+  assert.match(request, /当前任务是检查银杉新模块/);
+  assert.match(request, /只按新模块目标列待办/);
+});
+
+test('the saved native compaction policy controls actual pressure triggers and reports the selected limits', async () => {
+  class Windowed extends Synthetic {
+    override async resolveModel(provider: string, model: string, signal?: AbortSignal) {
+      return { ...await super.resolveModel(provider, model, signal), context: { contextWindow: 20000 } };
+    }
+  }
+  for (const auto of [false, true]) {
+    const adapter = new Windowed();
+    const policy = { auto, thresholdRatio: 0.2, retainTokens: 0, headroomTokens: 512, maxTokens: 512 };
+    const host = await boot(adapter, true, true, { compaction: policy });
+    const handle = await host.create('native-policy-' + auto);
+    adapter.inspect = request => { adapter.reply = request.purpose === 'compaction'
+      ? '## Current Work\n- 合成进展。\n## Pending Jobs\n- 运行回归。' : 'synthetic policy progress '.repeat(400); };
+    try {
+      handle.agent.followup(user('policy-first', '合成任务：验证配置。 ' + 'task policy evidence '.repeat(1000)));
+      await handle.agent.whenIdle();
+      handle.agent.followup(user('policy-next', '合成当前指令：继续回归。'));
+      await handle.agent.whenIdle();
+      assert.deepEqual(host.errors, []);
+      assert.equal(adapter.requests.some(request => request.purpose === 'compaction'), auto);
+      const settings = await host.memory.settings();
+      assert.equal(settings.host?.compaction.base_policy.auto, auto);
+      assert.equal(settings.host?.compaction.base_policy.thresholdRatio, 0.2);
+      assert.equal(settings.host?.compaction.base_policy.maxTokens, 512);
+      assert.equal(settings.host?.compaction.trigger_measurement, 'native_backend');
+      assert.equal(settings.host?.context_window, 20000);
+      assert.equal(settings.host?.output_reserve_tokens, 1000);
+      for (const request of adapter.requests) assert.ok(host.config.memoryBudget!.countRequest(request) + 1000 <= 20000);
+    } finally { await handle.dispose(); await host.close(); }
+  }
+});
 
 test('native dsh lifecycle defers consolidation during provider work and resumes after the turn', async t => {
   const adapter = new Synthetic();

@@ -10,7 +10,7 @@
 
 `counter.json` 必须包含 `schema_version: 1`、绝对路径 `node`、`package_dir`、`tokenizer_file`、`config_file`，以及 `model_id`、`tokenizer_sha256`、`config_sha256`。`package_dir` 是可信安装的 `@huggingface/tokenizers` **0.2.0** 目录；两份模型文件分别为目标模型的 `tokenizer.json` 与 `tokenizer_config.json`，以真实 SHA-256 固定。模型和运行设置放在 checkout 外，启动不下载资源。分词库需支持所选 tokenizer；不支持、资产变化或计数失败时明确失败，没有字符估算回退。计数身份绑定模型、文件散列和库版本。
 
-dsh `memoryBudget` 由可信宿主提供 `provider`、`modelId`、`memoryTokens`、`contextWindow`、`outputReserveTokens` 和同步 `countRequest(request: GenerateOptions): number`。该回调必须按对应 provider 的实际聊天模板、工具声明与请求封装使用真实目标 tokenizer 计数；它不是 SDK 自带的通用计数器。没有可靠的 provider framing counter 时不能启用此模式。输出额度受预留额度限制；已知模型窗口与配置窗口取较小值。宿主历史或模板占满窗口时，在调用 provider 前报 `host_context_window_exceeded`，本票不自动压缩宿主历史。
+dsh `memoryBudget` 由可信宿主提供 `provider`、`modelId`、`memoryTokens`、`contextWindow`、`outputReserveTokens` 和同步 `countRequest(request: GenerateOptions): number`。该回调必须按对应 provider 的实际聊天模板、工具声明与请求封装使用真实目标 tokenizer 计数；它不是 SDK 自带的通用计数器。没有可靠的 provider framing counter 时不能启用此模式。输出额度受预留额度限制；已知模型窗口与配置窗口取较小值。宿主历史或模板占满窗口时，在调用 provider 前报 `host_context_window_exceeded`。#79 协作既有原生压缩 backend，辅助 compaction 调用也受完整计数/屏蔽约束；工作检查点与遗漏规则见[续接契约](work-continuation-v1.md)。
 
 核心计数覆盖完整序列化 payload。宿主使用同一固定资产独立复算，并计入 SDK runtime-context 包装；最终请求仅保留与本轮内容匹配的一份 EverNook section，其余宿主 section 保留。旧记忆快照不会继续挤占额度或携带失效画像。文件先转换为 SDK 的实际 handle 文本，工具使用完整当前声明，避免后续历史工具更新投影改变计数。文本模型图片占位可按 SDK 投影计数；未知或图片模型的图片请求返回 `budgeted_image_request_unsupported`，尚不声明多模态预算支持。输出仍经过既有完整保存屏障；可靠分块流式另见后续票据。
 

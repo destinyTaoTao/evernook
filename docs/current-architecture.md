@@ -56,6 +56,7 @@ flowchart TB
 | [evaluation.py](../src/evernook/evaluation.py) | 哈希绑定评测集、保存/检索/时态公共 API 基线与五分项评分；维护者委派 AI 逐条复核已记录，人工/AI 状态分开，模型/硬件准入仍待完成 |
 | [preferences.py](../src/evernook/preferences.py) | 显式离线三类有来源偏好草案、完整陈述保守识别、策略身份与任务复用；模型入口只产草案，真实模型质量仍待准入 |
 | [automatic_preferences.py](../src/evernook/automatic_preferences.py) | 独立可信身份中的三类有限规则、显式代码身份准入、原子事实/画像发布和有界草案晋升；否定只作冲突/审查，模型仍未准入；[契约](contracts/automatic-preferences-v1.md) |
+| [continuations.py](../src/evernook/continuations.py) | 任务分支检查点、原文版本/消费依赖、过期/废弃过滤与恢复控制；真实dsh压缩/分叉/重载协作；[契约](contracts/work-continuation-v1.md) |
 | [preference_clarifications.py](../src/evernook/preference_clarifications.py) | 可信本地原子争议/画像暂停与一次用户澄清，显式保留旧值或接纳更正/变化；不自动推断语义冲突或宿主用户意图 |
 | [backup.py](../src/evernook/backup.py) | 显式认证加密快照、恢复材料及保留；恢复仍需审查 |
 | [protected.py](../src/evernook/protected.py)、[vault_local.py](../src/evernook/vault_local.py) | 显式加密 Event 收件、可恢复关联与本地主口令单次显示；无自动宿主分流 |
@@ -176,7 +177,7 @@ flowchart TD
 | R1 可靠底座 | 原文/重要交代/变更/有限附件；普通归档、显式加密备份/恢复材料/保留；可信检查点下的控制重放及独立运行库发布 | 实际宿主切换、独立盘/调度/RPO/RTO正式验收 |
 | R2 事实与时态 | 候选租约与失效过滤；本地候选摘录；显式事实/纠错/变化/计划/争议与知识时点；伴侣事实类别（重要日子/里程碑/心情） | 模型质量准入、自动抽取调度/合并、主体解析与复杂时间回填 |
 | R3 召回与沉淀 | 字面/本地语义/自适应近期；完整预算构造器及 dsh/pi 目标 tokenizer 模式；可补跑摘录导航；经验草案/审查；沉淀草案档位与收窄白名单；进程内会话/空闲触发调度（宿主显式调用） | 真实目标部署及宿主空闲探测接线、生成式摘要质量、语义争议传播、索引迁移/规模性能 |
-| R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消回归 | 日常安装、多插件/分支/压缩全验收、桌宠目标、升级/系统离线与长期运行 |
+| R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消，dsh压缩/分叉/重载续接 | pi压缩续接、日常安装、多插件全验收、桌宠目标、升级/系统离线与长期运行 |
 | 独立安全与质量 | 有限分流/ACL；加密Event收件、本地主口令单次显示；普通来源确认删除与派生清理 | 自动分流/附件、IPC逐次授权、WTS锁定、轮换/恢复/泄露治理、受保护/备份删除与正式质量集 |
 
 MCP 默认十个查询工具，可信宿主模式十七项，包含有限 capture/capture_stream 及可靠文本 capture_chunk/read_stream（显式 contextConfig 另加 context）；候选/事实/经验接纳、彻底删除、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。

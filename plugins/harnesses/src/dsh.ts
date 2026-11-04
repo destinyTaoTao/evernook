@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import { isAgentLoopRequest, projectImagesForTextModel, projectToolUpdates, contentHasImage,
-  type RequestMessage, type ContentBlock, type StreamChunk, type GenerateOptions } from '@deepseek-ai/dsh-llm';
+  LlmError, CONTEXT_WINDOW_EXCEEDED_CODE, type RequestMessage, type ContentBlock, type StreamChunk, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { joinContextSections } from '@deepseek-ai/dsh-system-prompt';
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session-persistence';
 import type {} from '@deepseek-ai/dsh-system-prompt';
-import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source } from './client.ts';
+import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source, type WorkView } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { durableText } from './durable-text.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
+import { DshWork } from './dsh-work.ts';
+import { renderWork } from './work-continuation.ts';
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
@@ -39,15 +41,21 @@ function textOf(message: { content: readonly { type: string; text?: string }[] }
   return message.content.filter(block => block.type === 'text').map(block => block.text ?? '').join('');
 }
 
-function currentMemoryOnly(messages: RequestMessage[], currentPayload: string): RequestMessage[] {
+function currentMemoryOnly(messages: RequestMessage[], currentPayload: string, replaceLatest = false): RequestMessage[] {
   let retained = false;
   const result: RequestMessage[] = [];
   for (const message of [...messages].reverse()) {
     const source = message.source;
     if (message.role === 'user' && source && 'form' in source && source.form === 'snapshot'
         && source.sections.some(section => section.name === 'evernook-evidence')) {
-      if (!retained && currentPayload && source.sections.some(section => section.name === 'evernook-evidence'
-          && section.text === currentPayload)) { retained = true; result.push(message); continue; }
+      if (!retained && currentPayload && (replaceLatest || source.sections.some(section => section.name === 'evernook-evidence'
+          && section.text === currentPayload))) {
+        retained = true;
+        const sections = source.sections.filter(section => section.name !== 'evernook-evidence');
+        sections.push({ name: 'evernook-evidence', text: currentPayload });
+        result.push({ ...message, source: { ...source, sections }, content: [{ type: 'text', text: joinContextSections(sections) }] });
+        continue;
+      }
       const sections = source.sections.filter(section => section.name !== 'evernook-evidence');
       if (sections.length) result.push({ ...message, source: { ...source, sections },
         content: [{ type: 'text', text: joinContextSections(sections) }] });
@@ -77,6 +85,7 @@ export async function installMemory(ctx: Context, config: Config) {
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
   const client = new MemoryClient(config);
   await client.connect();
+  const work = budget ? new DshWork(client, config.entry) : undefined;
   let consolidation: Awaited<ReturnType<typeof createConsolidation>> | undefined;
   try { if (config.consolidation) consolidation = await createConsolidation(config, config.consolidation); }
   catch (error) { await client.close(); throw error; }
@@ -88,6 +97,34 @@ export async function installMemory(ctx: Context, config: Config) {
   const excludedHistory = new Map<string, number>();
   const contextStatus = new Map<string, Omit<ContextBundle, 'payload'> & { provider_payload_tokens: number }>();
   const currentPayloads = new Map<string, string>();
+  const admittedDispatches = new WeakSet<GenerateOptions>();
+  const workSnapshots = new Map<string, string>();
+  const lineages = new Map<string, { cut: number; session: string }[]>();
+
+  async function originFor(header: Session['header'], inherited: number) {
+    const id = String(header.id);
+    let links = lineages.get(id);
+    if (!links) {
+      links = [];
+      const visited = new Set([id]);
+      let parent = header.parentSession;
+      let cut = inherited;
+      while (parent && cut) {
+        if (visited.has(String(parent)) || links.length >= 64) throw new Error('evernook:native_lineage_invalid');
+        visited.add(String(parent));
+        links.push({ cut, session: String(parent) });
+        const handle = await ctx.sessionPersistence.open(parent, 'read');
+        try { cut = Math.min(cut, handle.inheritedEventCount); parent = handle.header.parentSession; }
+        finally { await handle.close(); }
+      }
+      lineages.set(id, links);
+    }
+    return (seq: number) => {
+      let origin = id;
+      for (const link of links) { if (seq >= link.cut) break; origin = link.session; }
+      return origin;
+    };
+  }
 
   async function attachmentsOf(content: readonly ContentBlock[]): Promise<Attachment[]> {
     const result: Attachment[] = [];
@@ -117,24 +154,26 @@ export async function installMemory(ctx: Context, config: Config) {
     }
     return result;
   }
-  async function saveInput(value: Event, content: readonly ContentBlock[]) {
+  async function saveInput(value: Event, content: readonly ContentBlock[], captureSession = value.source.session) {
     const receipt = await client.capture(value, 'message', await attachmentsOf(content));
-    captureGaps.set(value.source.session, [...new Set([...(captureGaps.get(value.source.session) ?? []), ...receipt.gaps])]);
+    captureGaps.set(captureSession, [...new Set([...(captureGaps.get(captureSession) ?? []), ...receipt.gaps])]);
     if (!receipt.message.original_saved) {
-      const texts = protectedTexts.get(value.source.session) ?? new Set<string>();
+      const texts = protectedTexts.get(captureSession) ?? new Set<string>();
       texts.add(value.text);
-      protectedTexts.set(value.source.session, texts);
+      protectedTexts.set(captureSession, texts);
     }
     return receipt.message;
   }
 
-  async function ingest(header: Session['header'], events: readonly SessionEvent[]) {
+  async function ingest(header: Session['header'], events: readonly SessionEvent[], inherited = 0) {
     const sessionId = String(header.id);
+    const origin = await originFor(header, inherited);
     await client.remember(event(config, sessionId, 'header-v4', 'system', stable(header), 0, header.createdAt));
     let last = latest.get(sessionId);
     const consumed = new Set<string>();
     const calls = new Map<string, string>();
     for (const record of events) {
+      const recordSession = origin(record.seq);
       if (record.type === 'tool/call') calls.set(String(record.data.callId), record.data.name);
       if (record.type === 'agent/inbox/spliced') {
         for (let index = 0; index < record.data.inserted.length; index++) {
@@ -143,34 +182,34 @@ export async function installMemory(ctx: Context, config: Config) {
           consumed.add(String(message.id));
           if (record.seq <= (through.get(sessionId) ?? -1)) continue;
           const text = textOf(message);
-          const receipt = await saveInput(event(config, sessionId, `input:${record.seq}:${index}`, 'user', text, record.seq, record.time), message.content);
+          const receipt = await saveInput(event(config, recordSession, `input:${record.seq}:${index}`, 'user', text, record.seq, record.time), message.content, sessionId);
           last = { text, receipt };
         }
       }
       if (record.type === 'user/message' && record.data.source.kind === 'user' && !consumed.has(String(record.data.id))) {
         if (record.seq <= (through.get(sessionId) ?? -1)) continue;
         const text = textOf(record.data);
-        const receipt = await saveInput(event(config, sessionId, `input:${record.seq}`, 'user', text, record.seq, record.time), record.data.content);
+        const receipt = await saveInput(event(config, recordSession, `input:${record.seq}`, 'user', text, record.seq, record.time), record.data.content, sessionId);
         last = { text, receipt };
       }
       if (record.seq <= (through.get(sessionId) ?? -1)) continue;
       // Reliable text is authoritative in the core stream. Reimporting native partial settlements
       // would turn failed/truncated prefixes into independent ordinary assistant answers.
       if (record.type === 'assistant/message' && streamMode === 'buffered') {
-        await client.remember(event(config, sessionId, `assistant:${record.seq}`, 'assistant', textOf(record.data.message),
+        await client.remember(event(config, recordSession, `assistant:${record.seq}`, 'assistant', textOf(record.data.message),
           record.seq, record.time, record.data.interrupted ? 'partial' : 'complete'));
       }
       if (record.type === 'tool/call' || record.type === 'tool/result') {
         if (!last) throw new Error('evernook:tool_input_unavailable');
         const tool = record.type === 'tool/call' ? record.data.name : calls.get(String(record.data.message.toolCallId));
         if (!tool) throw new Error('evernook:tool_call_unavailable');
-        const value = event(config, sessionId, `tool:${record.seq}`, 'tool',
+        const value = event(config, recordSession, `tool:${record.seq}`, 'tool',
           record.type === 'tool/call' ? record.data.arguments : textOf(record.data.message), record.seq, record.time,
           record.type === 'tool/result' && record.data.message.isError ? 'failed' : 'complete');
         await client.capture(value, record.type === 'tool/call' ? 'tool_call' : 'tool_result',
           record.type === 'tool/result' ? await attachmentsOf(record.data.message.content) : [], last.receipt.message_id, tool);
       }
-      const audit = event(config, sessionId, `event:${record.seq}`, 'system', stable(record), record.seq, record.time);
+      const audit = event(config, recordSession, `event:${record.seq}`, 'system', stable(record), record.seq, record.time);
       // Compact attempted streams may split sensitive fields; the native output barrier preserves
       // screened raw frames separately, so uncertain duplicate audit streams stay projection-only.
       if (record.type === 'assistant/message' || record.type === 'assistant/attempt') audit.protected_source = true;
@@ -178,10 +217,68 @@ export async function installMemory(ctx: Context, config: Config) {
     }
     if (last) latest.set(sessionId, last);
     through.set(sessionId, events.at(-1)?.seq ?? -1);
+    await work?.capture(header, events, origin);
   }
   async function capture(session: Session) {
     await ctx.sessions.flush(session);
-    await ingest(session.header, session.snapshotEvents());
+    await ingest(session.header, session.snapshotEvents(), session.inheritedEventCount);
+  }
+
+  async function budgetedPayload(sessionId: string, input: string, signal?: AbortSignal) {
+    if (!budget || !config.contextConfig) throw new Error('evernook:invalid_host_config');
+    const target = loadTargetCounter(config.contextConfig);
+    if (target.modelId !== budget.modelId) throw new Error('evernook:tokenizer_model_mismatch');
+    let allowance = budget.memoryTokens;
+    const continuation = await work?.current(sessionId);
+    workSnapshots.set(sessionId, JSON.stringify(continuation ?? null));
+    const restored = continuation ? renderWork(continuation, Math.floor(budget.memoryTokens / 2), text => target.count(text)) : null;
+    if (restored) allowance -= target.count(JSON.stringify(restored));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const bundle = await client.context(input, budget.modelId, allowance, new Date().toISOString(), signal);
+      signal?.throwIfAborted();
+      if (bundle.counter_id !== target.counterId || target.count(bundle.payload) !== bundle.used_tokens
+          || bundle.used_tokens > bundle.token_limit || bundle.token_limit > allowance) throw new Error('evernook:invalid_token_counter');
+      let payload = bundle.payload;
+      if (restored) {
+        const combined: { items: unknown[] } = payload ? JSON.parse(payload)
+          : { kind: 'untrusted_memory_context', items: [], degraded: bundle.degraded,
+            omitted_count: bundle.omitted.length };
+        combined.items.push({ kind: 'work_continuation', evidence_id: continuation!.checkpoint_id, data: restored });
+        payload = JSON.stringify(combined);
+      }
+      const section = { name: 'evernook-evidence', text: payload, interpolate: false };
+      const framed = payload ? target.count(joinContextSections([section])) : 0;
+      if (framed <= budget.memoryTokens) {
+        const { payload: _, ...metadata } = bundle;
+        contextStatus.set(sessionId, { ...metadata, provider_payload_tokens: framed });
+        currentPayloads.set(sessionId, payload);
+        return section;
+      }
+      allowance -= framed - budget.memoryTokens + 16;
+      if (allowance < 128) break;
+    }
+    throw new Error('evernook:memory_payload_over_budget');
+  }
+
+  function nativeCompactionSettings() {
+    const backend = ctx.get('compaction');
+    const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
+    const config = backend && 'config' in backend && object(backend.config) ? backend.config : {};
+    const publicLimits = (value: unknown) => {
+      const result: Record<string, number | boolean> = {};
+      if (!object(value)) return result;
+      for (const key of ['auto', 'thresholdRatio', 'headroomTokens', 'retainRatio', 'retainTokens', 'maxTokens',
+        'compactionRetries', 'maxOverflowRetries']) {
+        const item = value[key];
+        if (typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) result[key] = item;
+      }
+      return result;
+    };
+    const override = Array.isArray(config.modelPolicies) ? config.modelPolicies.find(value => object(value)
+      && value.provider === budget?.provider && value.model === budget?.modelId) : undefined;
+    return { available: Boolean(backend), base_policy: publicLimits(config), target_override: publicLimits(override),
+      trigger_measurement: 'native_backend', hard_budget_counter: 'host_target_tokenizer',
+      checkpoint_ttl_seconds: 7 * 86400, checkpoint_source_limit: 512 };
   }
 
   disposers.push(ctx.on('system-prompt/assemble', async (assembly, context, next) => {
@@ -199,27 +296,10 @@ export async function installMemory(ctx: Context, config: Config) {
     }
     if (!input.receipt.original_saved) throw new Error('evernook:protected_input_not_saved');
     if (budget && config.contextConfig) {
-      const target = loadTargetCounter(config.contextConfig);
-      if (target.modelId !== budget.modelId || context.agent.options.model !== budget.modelId
+      if (context.agent.options.model !== budget.modelId
           || context.agent.options.provider !== budget.provider) throw new Error('evernook:tokenizer_model_mismatch');
-      let allowance = budget.memoryTokens;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const bundle = await client.context(input.text, budget.modelId, allowance, new Date().toISOString(), context.signal);
-        context.signal?.throwIfAborted();
-        if (bundle.counter_id !== target.counterId || target.count(bundle.payload) !== bundle.used_tokens
-            || bundle.used_tokens > bundle.token_limit || bundle.token_limit > allowance) throw new Error('evernook:invalid_token_counter');
-        const section = { name: 'evernook-evidence', text: bundle.payload, interpolate: false };
-        const framed = target.count(joinContextSections([section]));
-        if (framed <= budget.memoryTokens) {
-          const { payload: _, ...metadata } = bundle;
-          contextStatus.set(String(context.agent.session.id), { ...metadata, provider_payload_tokens: framed });
-          currentPayloads.set(String(context.agent.session.id), bundle.payload);
-          return bundle.payload ? { ...result, contexts: [...result.contexts, section] } : result;
-        }
-        allowance -= framed - budget.memoryTokens + 16;
-        if (allowance < 128) break;
-      }
-      throw new Error('evernook:memory_payload_over_budget');
+      const section = await budgetedPayload(String(context.agent.session.id), input.text, context.signal);
+      return section.text ? { ...result, contexts: [...result.contexts, section] } : result;
     }
     const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32);
     context.signal?.throwIfAborted();
@@ -259,25 +339,49 @@ export async function installMemory(ctx: Context, config: Config) {
   disposers.push(ctx.on('agent/turn-stopping', async ({ agent }) => { await capture(agent.session); }));
   // The pinned SDK emits turn/end in its finally path, including cancellation and errors.
   disposers.push(ctx.on('session/event', (session, value) => {
+    work?.observe(String(session.id), value);
     if (value.type === 'turn/end') void consolidation?.turnEnded(String(session.id));
   }));
   disposers.push(ctx.on('agent/disposed', ({ agent }) => { void consolidation?.sessionEnded(String(agent.session.id)); }));
   disposers.push(ctx.on('llm/stream', async function* (options, next) {
-    if (!isAgentLoopRequest(options) || !options.sessionId) {
+    // prepareCall re-enters this waterfall with the exact screened request object.
+    if (admittedDispatches.delete(options)) { yield* next(); return; }
+    const auxiliary = !isAgentLoopRequest(options) && options.purpose === 'compaction' && Boolean(budget);
+    if ((!isAgentLoopRequest(options) && !auxiliary) || !options.sessionId) {
       yield* next();
       return;
     }
     const sessionId = String(options.sessionId);
+    if (auxiliary) {
+      const session = ctx.sessions.get(options.sessionId);
+      if (session) await capture(session);
+    }
+    let workSnapshot = workSnapshots.get(sessionId);
     const input = latest.get(sessionId);
     if (!input?.receipt.original_saved) throw new Error('evernook:protected_input_not_saved');
+    if (auxiliary) await client.read(input.receipt.message_id, options.signal);
     const safe = safeHistory(options.messages, input.text, protectedTexts.get(sessionId) ?? new Set());
     assertProtectedHistoryExcluded({ ...options, messages: safe.messages }, protectedTexts.get(sessionId) ?? new Set());
     excludedHistory.set(sessionId, safe.omitted);
     // The SDK freezes loop requests. A screened request uses its public one-shot path;
     // the outer publication barrier still applies to its resulting frames.
-    let prepared: GenerateOptions = { ...options, messages: budget ? currentMemoryOnly(safe.messages, currentPayloads.get(sessionId) ?? '') : safe.messages,
+    let prepared: GenerateOptions = { ...options, messages: budget ? currentMemoryOnly(safe.messages, auxiliary ? '' : currentPayloads.get(sessionId) ?? '')
+      .filter(message => message.source?.kind !== 'compact-checkpoint') : safe.messages,
       ...(safe.omitted ? { toolHistory: undefined } : {}),
       ...(budget ? { maxTokens: Math.min(options.maxTokens ?? budget.outputReserveTokens, budget.outputReserveTokens) } : {}) };
+    const nativeMessages = [...prepared.messages];
+    let consumedWork: WorkView | null = null;
+    if (auxiliary && budget && config.contextConfig && !work?.error(sessionId)) {
+      const continuation = await work?.current(sessionId);
+      workSnapshot = JSON.stringify(continuation ?? null);
+      if (continuation) {
+        const target = loadTargetCounter(config.contextConfig);
+        const restored = renderWork(continuation, Math.floor(budget.memoryTokens / 2), text => target.count(text));
+        prepared.messages.splice(Math.max(0, prepared.messages.length - 1), 0,
+          { role: 'user', content: [{ type: 'text', text: JSON.stringify(restored) }] });
+        consumedWork = continuation;
+      }
+    }
     let incoming: AsyncIterable<StreamChunk>;
     if (budget) {
       if (options.provider !== budget.provider || options.model !== budget.modelId) throw new Error('evernook:tokenizer_model_mismatch');
@@ -294,20 +398,35 @@ export async function installMemory(ctx: Context, config: Config) {
       const projected = projectToolUpdates(messages, prepared.tools, undefined);
       prepared = { ...prepared, ...call.config, messages: [...projected.messages],
         tools: projected.tools ? [...projected.tools] : undefined, toolHistory: undefined };
-      const used = budget.countRequest(prepared);
-      if (!Number.isSafeInteger(used) || used < 1) throw new Error('evernook:invalid_token_counter');
       const window = Math.min(budget.contextWindow, call.context?.contextWindow ?? budget.contextWindow);
-      if (used + budget.outputReserveTokens > window) throw new Error('evernook:host_context_window_exceeded');
+      if (auxiliary) await work?.consume(sessionId, nativeMessages, consumedWork);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const used = budget.countRequest(prepared);
+        if (!Number.isSafeInteger(used) || used < 1) throw new Error('evernook:invalid_token_counter');
+        if (workSnapshot !== undefined && JSON.stringify(await work?.current(sessionId) ?? null) !== workSnapshot) {
+          if (auxiliary || attempt) throw new Error('evernook:continuation_changed');
+          const section = await budgetedPayload(sessionId, input.text, options.signal);
+          workSnapshot = workSnapshots.get(sessionId);
+          prepared = { ...prepared, messages: currentMemoryOnly(prepared.messages, section.text, true) };
+          continue;
+        }
+        if (used + budget.outputReserveTokens > window) throw new LlmError('evernook:host_context_window_exceeded', CONTEXT_WINDOW_EXCEEDED_CODE);
+        break;
+      }
+      admittedDispatches.add(prepared);
       incoming = call.stream(prepared);
     } else incoming = safe.omitted ? ctx.llm.stream(prepared) : next();
+    if (auxiliary) { yield* incoming; return; }
     const attempt = randomUUID();
     const timestamp = Date.now();
     const source = String(options.sessionId);
+    const display = event(config, source, `attempt:${attempt}:display`, 'assistant', '', 1, timestamp, 'partial');
+    await work?.link(source, display.source, streamMode);
     await client.remember(event(config, source, `attempt:${attempt}:start`, 'system',
       stable({ kind: streamMode === 'durable_text' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
     if (streamMode === 'durable_text') {
       yield* durableText(client, incoming,
-        event(config, source, `attempt:${attempt}:display`, 'assistant', '', 1, timestamp, 'partial'),
+        display,
         input.receipt.message_id, maxStreamBytes, options.signal);
       return;
     }
@@ -350,24 +469,27 @@ export async function installMemory(ctx: Context, config: Config) {
         .map(source => ({ ...source, event: source.event.replace(/:start$/, ':display') })), next_offset: page.next_offset };
     },
     readStream(source: Source, cursor = 0, limit = 2048) { return client.readStream(source, cursor, limit); },
+    work(sessionId: SessionId) { return work?.current(String(sessionId)) ?? Promise.resolve(null); },
     async settings() {
       const state = await client.call<{ context: { configured: boolean; saved_policy?: Record<string, unknown>;
         recommended_policy?: Record<string, unknown>; model_id?: string; counter_id?: string } }>('status', {});
       return { core: state.context, host: budget ? { memory_tokens: budget.memoryTokens,
-        context_window: budget.contextWindow, output_reserve_tokens: budget.outputReserveTokens } : null };
+        context_window: budget.contextWindow, output_reserve_tokens: budget.outputReserveTokens,
+        compaction: nativeCompactionSettings() } : null };
     },
     status(sessionId: SessionId) {
       const key = String(sessionId);
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
         stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked' : 'buffered_calls_results_unverified',
         context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
+        work_error: work?.error(key),
         consolidation: consolidation?.snapshot(),
         protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
         provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };
     },
     async rescan(sessionId: SessionId) {
       const handle = await ctx.sessionPersistence.open(sessionId, 'read');
-      try { const contents = await handle.read(); through.delete(String(sessionId)); await ingest(handle.header, contents.events); }
+      try { const contents = await handle.read(); through.delete(String(sessionId)); await ingest(handle.header, contents.events, handle.inheritedEventCount); }
       finally { await handle.close(); }
     },
     async close() {

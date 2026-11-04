@@ -274,9 +274,13 @@ def _control_head(db: sqlite3.Connection, key: bytes) -> str:
     for table in ("ledger_identity_v1", "messages", "captures", "attachments", "changes", "visibility", "purge_requests_v1", "purge_targets_v1",
                   "text_streams_v1", "text_stream_chunks_v1",
                   "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1", "profile_events_v1",
-                  "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1"):
+                  "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1", "continuation_checkpoints_v1"):
+        exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()
+        # Preserve older control-head identities when this optional feature was never used.
+        if table == 'continuation_checkpoints_v1' and not exists:
+            continue
         digest.update(table.encode() + b"\0")
-        if db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+        if exists:
             for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid"):
                 digest.update(_json([["bytes", value.hex()] if isinstance(value, bytes)
                                      else [type(value).__name__, value] for value in row]).encode())
@@ -557,6 +561,20 @@ def replay_archive_controls(runtime: MemoryRuntime, access: Access, source: Path
                     from .experience import ExperienceRegistry
                     ExperienceRegistry._schema(copy)
                     replay_review_events("experience", "experience_id", experience_ids)
+                old_work = copy.execute("SELECT 1 FROM sqlite_master WHERE name='continuation_checkpoints_v1'").fetchone()
+                current_work = live.execute("SELECT 1 FROM sqlite_master WHERE name='continuation_checkpoints_v1'").fetchone()
+                if old_work:
+                    for prior in copy.execute('SELECT * FROM continuation_checkpoints_v1'):
+                        current = live.execute('SELECT * FROM continuation_checkpoints_v1 WHERE id=?', (prior['id'],)).fetchone() if current_work else None
+                        if current is None or tuple(current) != tuple(prior):
+                            raise MemoryFailure('archive_control_incomplete')
+                if current_work:
+                    from .continuations import Continuations
+                    Continuations._schema(copy)
+                    # Records contain source locators and state, never copied quotation text.
+                    # Missing ordinary evidence still blocks runtime publication independently.
+                    for row in live.execute('SELECT * FROM continuation_checkpoints_v1 ORDER BY rowid'):
+                        copy.execute('INSERT OR IGNORE INTO continuation_checkpoints_v1 VALUES (?,?,?,?,?,?,?,?)', tuple(row))
                 changes = live.execute("SELECT * FROM changes ORDER BY recorded_at,request_id").fetchall()
                 for prior in copy.execute("SELECT * FROM changes"):
                     if str(prior["target_id"]) in old_ids:

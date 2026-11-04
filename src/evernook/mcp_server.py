@@ -28,6 +28,7 @@ from .facts import FactRegistry
 from .experience import ExperienceRegistry
 from .host_context import HostContext
 from .scheduler import ConsolidationScheduler
+from .continuations import ContinuationDraft, Continuations
 
 
 class Arguments(BaseModel):
@@ -42,6 +43,16 @@ class HostActivity(Arguments):
     session: str
     active: bool
     ttl_seconds: int = 30
+
+
+class SaveContinuation(Arguments):
+    request_id: str
+    draft: ContinuationDraft
+
+
+class CurrentContinuation(Arguments):
+    task_id: str
+    branch_id: str
 
 
 class AttachmentWire(Arguments):
@@ -185,6 +196,12 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     if host_context is not None:
         host_context.status()
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
+        "evernook_v1_continuation_save": (SaveContinuation,
+            lambda args: Continuations(runtime).save(access, args.request_id, args.draft),
+            "Trusted native host only: save a versioned source-backed work checkpoint. Summary text remains untrusted; no fact acceptance or execution authority."),
+        "evernook_v1_continuation_current": (CurrentContinuation,
+            lambda args: Continuations(runtime).current(access, args.task_id, args.branch_id),
+            "Trusted native host only: restore the exact current task branch. Never falls back to older work after expiry or source invalidation."),
         "evernook_v1_host_activity": (HostActivity, lambda args: ConsolidationScheduler(runtime).foreground(access, **args.model_dump()),
             "Trusted native host only: announce an expiring foreground activity owned by this capture identity. Does not process or accept memories."),
         "evernook_v1_remember": (Remember, lambda args: runtime.submit(access, args.event),

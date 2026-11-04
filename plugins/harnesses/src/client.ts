@@ -52,6 +52,18 @@ export interface ContextBundle {
   degraded: string[]; complete: boolean; evidence_count: number;
 }
 
+export interface WorkSpan {
+  message_id: string; state_version: number; representation: string; content_version: number;
+  start: number; end: number; expected_text: string;
+}
+export interface WorkView {
+  checkpoint_id: string; task_id: string; branch_id: string; revision: number; state: string; expires_at: string;
+  request_id: string; goal_role: 'explicit_task_goal' | 'initial_user_request';
+  goal: (Omit<WorkSpan, 'expected_text'> & { text: string }) | Record<string, never>;
+  progress: (Omit<WorkSpan, 'expected_text'> & { text: string })[];
+  pending: (Omit<WorkSpan, 'expected_text'> & { text: string })[]; omitted_sources: string[];
+}
+
 /** After a protected native record, keep only the current safe turn and fixed system context.
  * The host's raw history remains untouched; an unprovable boundary blocks dispatch. */
 export function safeHistory<T extends { role: string; content?: unknown }>(messages: T[], safeInput: string,
