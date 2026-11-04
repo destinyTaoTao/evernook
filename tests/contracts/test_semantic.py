@@ -79,6 +79,18 @@ class SemanticTests(unittest.TestCase):
         self.assertIn("终点", hit.spans[0].text)
         self.assertEqual(restarted.refresh(self.access).indexed_messages, 1)
 
+    def test_status_reports_actual_vectors_before_a_multichunk_message_is_complete(self) -> None:
+        self.save("甲" * 160)  # 64/16 configured space: [0,64), [48,112), [96,160).
+        initial = self.workflow.status(self.access)
+        self.assertEqual(initial.stored_vectors, 0)
+        partial = self.workflow.refresh(self.access, limit=1)
+        self.assertEqual(partial.indexed_messages, 0)
+        self.assertEqual(partial.stored_vectors, 1)
+        restarted = SemanticRecall(MemoryRuntime(self.config), self.backend)
+        complete = restarted.refresh(self.access)
+        self.assertEqual(complete.indexed_messages, 1)
+        self.assertEqual(complete.stored_vectors, 3)
+
     def test_sparse_recent_window_expands_by_content_dense_window_keeps_global_history(self) -> None:
         target = self.save("合成：跨年承诺，喜欢辛辣。")
         self.save("合成：近期短记录", "2026-10-29T00:00:00Z")

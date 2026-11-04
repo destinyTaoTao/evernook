@@ -29,6 +29,7 @@ class SemanticStatus:
     source_watermark: str | None
     error_code: str | None = None
     failed_chunks: int | None = None
+    stored_vectors: int | None = None
 
 
 @dataclass(frozen=True)
@@ -114,7 +115,7 @@ class SemanticRecall:
         if space is None:
             return SemanticStatus("disabled", None, total, 0, total, counts[1])
         if not self._present(db):
-            return SemanticStatus("not_built", space.key, total, 0, total, counts[1])
+            return SemanticStatus("not_built", space.key, total, 0, total, counts[1], stored_vectors=0)
         covered = int(db.execute(f"SELECT count(*) FROM messages WHERE {_ELIGIBLE} AND id IN ({self._covered()})", (space.key,)).fetchone()[0])
         failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone()
         failed = 0
@@ -124,8 +125,9 @@ class SemanticRecall:
                 JOIN messages ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
                 WHERE f.space_id=? AND {_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
                   AND f.content_version=json_extract(messages.receipt,'$.content_version')""", (space.key,)).fetchone()[0])
+        vectors = int(db.execute("SELECT count(*) FROM semantic_chunks_v1 WHERE space_id=?", (space.key,)).fetchone()[0])
         return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
-                              None, failed)
+                              None, failed, vectors)
 
     def status(self, access: Access) -> SemanticStatus:
         self.runtime._require_scope(access, "recall", "semantic_status")

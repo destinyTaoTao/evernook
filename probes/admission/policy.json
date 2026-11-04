@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "experiment": "m58-23-2026-11-04-v1",
+  "source_baseline": "33d03d45c5c02fd1c10c6b26bd9d2fece949b28b",
+  "suite_hash": "b487e1777bd06eef30a50c3fc6811ef54e801c8bc00b3d46e00c6388b8d9886b",
+  "dataset_review": "maintainer_delegated_ai_assisted",
+  "models": {
+    "chat": { "name": "onnx-community/Qwen3-0.6B-ONNX", "revision": "58ca03a5e7b354b480b1a82b34bde8dc7b854cc0", "dtype": "q4", "device": "cpu", "thinking": false },
+    "embedding": { "name": "Xenova/paraphrase-multilingual-MiniLM-L12-v2", "revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900", "dtype": "q8", "dimensions": 384 },
+    "transformers": "4.2.0",
+    "onnxruntime": "1.24.3"
+  },
+  "environment": { "os": "Windows 11 AMD64", "cpu": "Intel Core i5-13600K", "logical_processors": 20, "physical_bytes": 68448100352, "python": "3.14.4", "node": "24.12.0", "dsh": "0.2.1-rc.3", "pi": "1.4.0" },
+  "quality": { "storage_required": 1.0, "retrieval_recall_at_10_required": 0.95, "temporal_required": 0.95, "automatic_canonical_required": 0.95, "host_canonical_required": 0.95, "blocking_failures_allowed": 0, "missing_allowed": 0 },
+  "latency_ms": { "complete_memory_p95": 1000, "warm_candidates_fusion_source_p95": 150, "recent_lexical_time_p95": 50 },
+  "resources": { "owned_private_bytes_max": 2147483648, "experiment_disk_bytes_max": 21474836480, "sample_interval_ms": 250 },
+  "scale": {
+    "fixture_version": "zh-scale-public-events-v1",
+    "as_of": "2026-11-04T00:00:00Z",
+    "message_counts": [100000, 1000000],
+    "ingest_seconds_max": 14400,
+    "index_seconds_max": 1800,
+    "index_vectors_target": 10016,
+    "warm_samples_per_cell": 30,
+    "fresh_process_samples_per_cell": 10,
+    "cells": ["recent", "historical", "no_answer", "popular"],
+    "conditions": ["idle", "writing", "rebuilding"],
+    "cold_definition": "fresh host process and cold per-call model; OS cache uncontrolled",
+    "warm_definition": "reused host process and warm OS cache; existing backend still reloads model per call",
+    "semantic_complete_coverage_required": true,
+    "pure_semantic_query": "业余时间我通常怎么放松？",
+    "pure_semantic_original": "我喜欢到湿地观察白鹭。"
+  },
+  "host": { "memory_tokens": 4096, "context_window": 32768, "output_reserve_tokens": 512, "max_new_tokens": 512, "parser": "strict JSON object from actual visible text; normalize only observed source IDs to corpus aliases", "error_rows": "record failure or missing; never fabricate a model answer", "stream_mode": "durable_text" },
+  "admission": "blocked unless every required result and blocking regression passes; failures and incomplete coverage retained; no default profile activation"
+}
