@@ -297,7 +297,9 @@ class ProfileRegistry:
                 self._sources(db, draft)
                 # Inherited rejections must reopen their actual originating decision.
                 rejected = self._rejection(db, draft)
-                if rejected is not None and rejected.tag_id != previous.tag_id:
+                if (rejected is not None and rejected.tag_id != previous.tag_id) or not db.execute(
+                        "SELECT 1 FROM profile_approvals_v1 WHERE tag_id=? AND action='reject' AND reviewed_revision=?",
+                        (previous.tag_id, previous.revision - 1)).fetchone():
                     raise MemoryFailure("profile_reopen_origin_required")
                 state = "draft"
             elif request.action == "reject":

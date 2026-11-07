@@ -127,6 +127,20 @@ class ManagementTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "invalid_management_operation"):
             self.ui.preview(self.access, {"kind": "purge", "message_id": source_id})
 
+    def test_canceled_preview_stays_canceled_after_restart_and_cannot_confirm(self) -> None:
+        source_id = self.source().message_id
+        operation = {'kind': 'source_suppress', 'message_id': source_id}
+        preview = self.ui.preview(self.access, operation)
+        canceled = self.ui.cancel(self.access, preview['proposal_id'])
+        restarted = MemoryManagement(MemoryRuntime(self.config))
+        self.assertEqual(restarted.cancel(self.access, preview['proposal_id']), canceled)
+        with self.assertRaisesRegex(MemoryFailure, 'management_preview_canceled'):
+            restarted.confirm(self.access, preview['proposal_id'], operation)
+        self.assertIsNotNone(self.runtime.read(self.access, source_id))
+        preview = self.ui.preview(self.access, operation)
+        committed = self.ui.confirm(self.access, preview['proposal_id'], operation)
+        self.assertEqual(self.ui.cancel(self.access, preview['proposal_id']), committed)
+
 
 if __name__ == "__main__":
     unittest.main()

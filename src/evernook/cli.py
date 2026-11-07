@@ -246,6 +246,8 @@ def _execute(args: argparse.Namespace) -> object:
             return management.preview(access, **value)
         if action == "confirm":
             return management.confirm(access, **value)
+        if action == "cancel":
+            return management.cancel(access, **value)
         raise MemoryFailure("invalid_management_action")
     if args.command == "capture-chunk":
         value = _input()

@@ -67,11 +67,13 @@ class MemoryManagement:
 
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,
              session_id: str | None = None, query: str = "", message_id: str | None = None,
-             tag_id: str | None = None, cursor: int = 0) -> dict[str, Any]:
+             tag_id: str | None = None, cursor: int = 0, category: str | None = None) -> dict[str, Any]:
         self._authorize(access)
         self._page(offset, limit)
         if session_id is not None:
             _identifier(session_id)
+        if category is not None:
+            _identifier(category)
         if not isinstance(query, str) or len(query) > 256 or credential_signal(query):
             raise MemoryFailure("invalid_query")
         with self.runtime._connection() as db:
@@ -102,19 +104,25 @@ class MemoryManagement:
                     record = self.profiles._record(row[0])
                     try:
                         self.profiles._sources(db, record.draft)
+                        if record.confirmation_id is not None and self.profiles._confirmation(db, record.confirmation_id) != record.confirmation_version:
+                            continue
                     except MemoryFailure:
                         continue
                     items.append(self._profile(record))
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
-            if view in {"profiles", "drafts", "suppressed", "rejected"}:
+            if view in {"profiles", "interests", "drafts", "suppressed", "rejected"}:
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
                     return {"items": [], "next_offset": None}
-                state = {"profiles": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
+                state = {"profiles": "confirmed", "interests": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
                 rows = db.execute("""SELECT e.tag_id FROM profile_events_v1 e JOIN
                     (SELECT tag_id,max(revision) revision FROM profile_events_v1 GROUP BY tag_id) h
                     ON e.tag_id=h.tag_id AND e.revision=h.revision
-                    WHERE json_extract(e.record,'$.state')=? ORDER BY json_extract(e.record,'$.recorded_at') DESC,e.tag_id
-                    LIMIT ? OFFSET ?""", (state, limit + 1, offset)).fetchall()
+                    WHERE json_extract(e.record,'$.state')=?
+                    AND (?<>'interests' OR json_extract(e.record,'$.draft.category') IN ('interest','preference'))
+                    AND (? IS NULL OR json_extract(e.record,'$.draft.category')=?)
+                    AND (?='' OR instr(json_extract(e.record,'$.draft.label'),?)>0)
+                    ORDER BY json_extract(e.record,'$.recorded_at') DESC,e.tag_id
+                    LIMIT ? OFFSET ?""", (state, view, category, category, query, query, limit + 1, offset)).fetchall()
                 items = []
                 for row in rows[:limit]:
                     profile_view = self.profiles._view(db, row[0])
@@ -122,8 +130,8 @@ class MemoryManagement:
                         if state == 'draft' and self.profiles._rejection(db, profile_view.record.draft) is not None:
                             continue
                         if state == 'rejected':
-                            origin = self.profiles._rejection(db, profile_view.record.draft)
-                            if origin is not None and origin.tag_id != profile_view.record.tag_id:
+                            if not db.execute("SELECT 1 FROM profile_approvals_v1 WHERE tag_id=? AND action='reject' AND reviewed_revision=?",
+                                              (profile_view.record.tag_id, profile_view.record.revision - 1)).fetchone():
                                 continue
                         items.append(self._profile(profile_view.record))
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
@@ -174,10 +182,18 @@ class MemoryManagement:
         kind = operation["kind"]
         snapshot: dict[str, Any] = {"sources": []}
         details: dict[str, Any] = {"sources": []}
+        confirmation_source: str | None = None
         if kind.startswith("source_"):
             source_ids = [operation["message_id"]]
             snapshot["dependencies"] = self._dependencies(db, operation["message_id"])
-            details["affected"] = snapshot["dependencies"]
+            details["affected"] = []
+            for dependency in snapshot["dependencies"]:
+                item = dict(dependency)
+                if dependency['kind'] == 'profile':
+                    profile_view = self.profiles._view(db, dependency['id'])
+                    if profile_view.record is not None and not profile_view.error_code:
+                        item['label'] = profile_view.record.draft.label
+                details['affected'].append(item)
         else:
             record = self.profiles._latest(db, operation["tag_id"])
             if record is None:
@@ -192,6 +208,7 @@ class MemoryManagement:
             if record.draft.processor_version.startswith("preference-clarification-v1:"):
                 raise MemoryFailure("preference_clarification_required")
             snapshot["profile"] = [record.tag_id, record.revision]
+            confirmation_source = record.confirmation_id
             source_ids = sorted({s.message_id for s in record.draft.sources}
                                 | ({record.confirmation_id} if record.confirmation_id else set()))
             details["previous"] = self._profile(record)
@@ -200,6 +217,8 @@ class MemoryManagement:
             if kind.startswith("source_") and item["representation"] != "original":
                 raise MemoryFailure("protected_source_unsupported")
             snapshot["sources"].append([source_id, item["state_version"], item["content_version"]])
+            if source_id == confirmation_source:
+                continue
             text = item.pop("text")
             details["sources"].append({**item, "excerpt": text[:2048], "total": len(text)})
         return snapshot, details
@@ -258,7 +277,10 @@ class MemoryManagement:
             if row is None or row["client_id"] != identity.client_id or not hmac.compare_digest(bytes(row["fingerprint"]), fingerprint):
                 raise MemoryFailure("management_preview_mismatch")
             if row["outcome"]:
-                return dict(json.loads(row["outcome"]))
+                previous_outcome = dict(json.loads(row["outcome"]))
+                if previous_outcome.get('state') == 'canceled':
+                    raise MemoryFailure('management_preview_canceled')
+                return previous_outcome
             if time.time() > row["expires"]:
                 raise MemoryFailure("management_preview_expired")
             snapshot, _ = self._snapshot(db, operation)
@@ -266,7 +288,8 @@ class MemoryManagement:
                 raise MemoryFailure("management_preview_stale")
 
             def evidence(text: str, suffix: str) -> str:
-                event = Event(Source(identity.entry, "memory-management", "management-confirmation", proposal_id + suffix),
+                branch = "management-confirmation" if suffix == ":confirm" or operation['kind'] == 'source_suppress' else "management-input"
+                event = Event(Source(identity.entry, "memory-management", branch, proposal_id + suffix),
                               "user", 0, datetime.now(timezone.utc).isoformat(), "complete", text)
                 self.runtime._validate_event(event)
                 digest = hmac.digest(self.runtime._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
@@ -303,6 +326,22 @@ class MemoryManagement:
             db.execute("UPDATE management_previews_v1 SET outcome=? WHERE id=?", (_json(outcome), proposal_id))
             db.execute("COMMIT")
         return outcome
+
+    def cancel(self, access: Access, proposal_id: str) -> dict[str, Any]:
+        identity = self._authorize(access)
+        _identifier(proposal_id)
+        with self.runtime._connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._schema(db)
+            row = db.execute('SELECT * FROM management_previews_v1 WHERE id=?', (proposal_id,)).fetchone()
+            if row is None or row['client_id'] != identity.client_id:
+                raise MemoryFailure('management_preview_mismatch')
+            if row['outcome']:
+                return dict(json.loads(row['outcome']))
+            outcome = {'proposal_id': proposal_id, 'state': 'canceled'}
+            db.execute('UPDATE management_previews_v1 SET outcome=? WHERE id=?', (_json(outcome), proposal_id))
+            db.execute('COMMIT')
+            return outcome
 
 
 _OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise", "profile_reopen"}

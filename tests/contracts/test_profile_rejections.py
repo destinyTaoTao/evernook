@@ -72,6 +72,9 @@ class ProfileRejectionTests(unittest.TestCase):
             self.profiles.decide(self.access, ProfileDecision('implicit-reopen', 'original', 2, 'revise', draft))
         self.click('profile_reopen', 'original')
         self.assertEqual(self.profiles.read(self.access, 'original').state, 'draft')
+        self.assertEqual(self.ui.read(self.access, view='rejected')['items'], [])
+        with self.assertRaisesRegex(MemoryFailure, 'profile_reopen_origin_required'):
+            self.click('profile_reopen', 'inherited')
         self.click('profile_confirm', 'original')
         self.assertEqual(self.profiles.read(self.access, 'original').state, 'confirmed')
 
