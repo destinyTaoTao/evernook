@@ -1,0 +1,347 @@
+"""Trusted local management boundary. Never register this as an MCP/model tool."""
+from __future__ import annotations
+
+from dataclasses import asdict, replace
+from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
+import sqlite3
+import time
+from typing import Any
+from uuid import uuid4
+
+from .candidates import EvidenceSpan
+from .models import Access, Change, Event, MemoryFailure, Source
+from .profile import ProfileDecision, ProfileRegistry
+from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE
+from .safety import credential_signal
+
+
+class MemoryManagement:
+    """The trusted host must establish the actual user click before calling confirm."""
+
+    def __init__(self, runtime: MemoryRuntime):
+        self.runtime = runtime
+        self.profiles = ProfileRegistry(runtime)
+
+    def _authorize(self, access: Access) -> Any:
+        identity = self.runtime._require_scope(access, "maintain", "memory_management")
+        if not {"recall", "accept"}.issubset(identity.scopes):
+            raise MemoryFailure("permission_denied")
+        return identity
+
+    @staticmethod
+    def _schema(db: sqlite3.Connection) -> None:
+        # Only keyed fingerprints and IDs: previews/receipts must not retain a second
+        # copy of source text after that source is purged.
+        db.execute("""CREATE TABLE IF NOT EXISTS management_previews_v1 (
+            id TEXT PRIMARY KEY, client_id TEXT NOT NULL, fingerprint BLOB NOT NULL,
+            snapshot TEXT NOT NULL, expires REAL NOT NULL, outcome TEXT)""")
+
+    @staticmethod
+    def _page(offset: int, limit: int) -> None:
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
+            raise MemoryFailure("invalid_page")
+
+    @staticmethod
+    def _profile(record: Any) -> dict[str, Any]:
+        value: dict[str, Any] = asdict(record)
+        for source in value["draft"]["sources"]:
+            source.pop("expected_text", None)
+        return value
+
+    @staticmethod
+    def _source(db: sqlite3.Connection, message_id: str) -> dict[str, Any]:
+        _identifier(message_id)
+        state = MemoryRuntime._state(db, message_id)
+        row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (message_id,)).fetchone()
+        message = MemoryRuntime._stored(row)
+        if state.status != "active" or message.event.role not in {"user", "assistant", "tool"}:
+            raise MemoryFailure("source_unavailable")
+        return {"message_id": message_id, "state_version": state.version,
+                "content_version": message.receipt.content_version, "source": asdict(message.event.source),
+                "role": message.event.role, "occurred_at": message.event.occurred_at,
+                "received_at": message.receipt.received_at, "completion": message.event.completion,
+                "representation": message.receipt.representation, "text": message.event.text}
+
+    def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,
+             session_id: str | None = None, query: str = "", message_id: str | None = None,
+             tag_id: str | None = None, cursor: int = 0, category: str | None = None) -> dict[str, Any]:
+        self._authorize(access)
+        self._page(offset, limit)
+        if session_id is not None:
+            _identifier(session_id)
+        if category is not None:
+            _identifier(category)
+        if not isinstance(query, str) or len(query) > 256 or credential_signal(query):
+            raise MemoryFailure("invalid_query")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            if view == "source":
+                if message_id is None or type(cursor) is not int or cursor < 0:
+                    raise MemoryFailure("invalid_arguments")
+                item = self._source(db, message_id)
+                text = item.pop("text")
+                if cursor > len(text):
+                    raise MemoryFailure("invalid_page")
+                end = min(len(text), cursor + 2048)
+                return {**item, "text": text[cursor:end], "start": cursor, "end": end,
+                        "total": len(text), "next_cursor": end if end < len(text) else None}
+            if view == "history":
+                if tag_id is None:
+                    raise MemoryFailure("invalid_arguments")
+                _identifier(tag_id)
+                if not self.profiles._latest(db, tag_id):
+                    return {"items": [], "next_offset": None}
+                current = self.profiles._view(db, tag_id)
+                if current.error_code:
+                    raise MemoryFailure("source_unavailable")
+                rows = db.execute("SELECT record FROM profile_events_v1 WHERE tag_id=? ORDER BY revision DESC LIMIT ? OFFSET ?",
+                                  (tag_id, limit + 1, offset)).fetchall()
+                items = []
+                for row in rows[:limit]:
+                    record = self.profiles._record(row[0])
+                    try:
+                        self.profiles._sources(db, record.draft)
+                        if record.confirmation_id is not None and self.profiles._confirmation(db, record.confirmation_id) != record.confirmation_version:
+                            continue
+                    except MemoryFailure:
+                        continue
+                    items.append(self._profile(record))
+                return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            if view in {"profiles", "interests", "drafts", "suppressed", "rejected"}:
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
+                    return {"items": [], "next_offset": None}
+                state = {"profiles": "confirmed", "interests": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
+                rows = db.execute("""SELECT e.tag_id FROM profile_events_v1 e JOIN
+                    (SELECT tag_id,max(revision) revision FROM profile_events_v1 GROUP BY tag_id) h
+                    ON e.tag_id=h.tag_id AND e.revision=h.revision
+                    WHERE json_extract(e.record,'$.state')=?
+                    AND (?<>'interests' OR json_extract(e.record,'$.draft.category') IN ('interest','preference'))
+                    AND (? IS NULL OR json_extract(e.record,'$.draft.category')=?)
+                    AND (?='' OR instr(json_extract(e.record,'$.draft.label'),?)>0)
+                    ORDER BY json_extract(e.record,'$.recorded_at') DESC,e.tag_id
+                    LIMIT ? OFFSET ?""", (state, view, category, category, query, query, limit + 1, offset)).fetchall()
+                items = []
+                for row in rows[:limit]:
+                    profile_view = self.profiles._view(db, row[0])
+                    if profile_view.record is not None and not profile_view.error_code:
+                        if state == 'draft' and self.profiles._rejection(db, profile_view.record.draft) is not None:
+                            continue
+                        if state == 'rejected':
+                            if not db.execute("SELECT 1 FROM profile_approvals_v1 WHERE tag_id=? AND action='reject' AND reviewed_revision=?",
+                                              (profile_view.record.tag_id, profile_view.record.revision - 1)).fetchone():
+                                continue
+                        items.append(self._profile(profile_view.record))
+                return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            if view == "timeline":
+                rows = db.execute(f"""SELECT event,receipt FROM messages WHERE {_RECALLABLE}
+                    AND json_extract(event,'$.role') IN ('user','assistant','tool')
+                    AND json_extract(event,'$.source.branch')<>'management-confirmation'
+                    AND (? IS NULL OR json_extract(event,'$.source.session')=?)
+                    AND (?='' OR instr(json_extract(event,'$.text'),?)>0)
+                    ORDER BY received DESC,id DESC LIMIT ? OFFSET ?""",
+                    (session_id, session_id, query, query, limit + 1, offset)).fetchall()
+                items = []
+                for row in rows[:limit]:
+                    message = self.runtime._stored(row)
+                    item = self._source(db, message.receipt.message_id)
+                    text = item.pop("text")
+                    items.append({**item, "excerpt": text[:240], "total": len(text)})
+                return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            if view == "status":
+                count = db.execute("SELECT count(*) FROM messages").fetchone()[0]
+                return {"messages": count, "preview": True, "daily_admitted": False,
+                        "ordinary_memory_encrypted": False, "supported_actions": sorted(_OPERATIONS)}
+        raise MemoryFailure("invalid_management_view")
+
+    @staticmethod
+    def _operation(operation: dict[str, Any]) -> None:
+        if not isinstance(operation, dict) or not isinstance(operation.get("kind"), str):
+            raise MemoryFailure("invalid_management_operation")
+        kind = operation["kind"]
+        if kind not in _OPERATIONS:
+            raise MemoryFailure("invalid_management_operation")
+        target = "message_id" if kind.startswith("source_") else "tag_id"
+        extra = {"text"} if kind == "source_correct" else {"label"} if kind == "profile_revise" else set()
+        if set(operation) != {"kind", target} | extra:
+            raise MemoryFailure("invalid_management_operation")
+        _identifier(operation[target])
+        for key in extra:
+            text = operation[key]
+            bound = 16384 if key == "text" else 256
+            if not isinstance(text, str) or not text.strip() or len(text) > bound or credential_signal(text):
+                raise MemoryFailure("invalid_management_text")
+            try:
+                text.encode("utf-8", errors="strict")
+            except UnicodeError:
+                raise MemoryFailure("invalid_encoding") from None
+
+    def _snapshot(self, db: sqlite3.Connection, operation: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        kind = operation["kind"]
+        snapshot: dict[str, Any] = {"sources": []}
+        details: dict[str, Any] = {"sources": []}
+        confirmation_source: str | None = None
+        if kind.startswith("source_"):
+            source_ids = [operation["message_id"]]
+            snapshot["dependencies"] = self._dependencies(db, operation["message_id"])
+            details["affected"] = []
+            for dependency in snapshot["dependencies"]:
+                item = dict(dependency)
+                if dependency['kind'] == 'profile':
+                    profile_view = self.profiles._view(db, dependency['id'])
+                    if profile_view.record is not None and not profile_view.error_code:
+                        item['label'] = profile_view.record.draft.label
+                details['affected'].append(item)
+        else:
+            record = self.profiles._latest(db, operation["tag_id"])
+            if record is None:
+                raise MemoryFailure("profile_not_found")
+            view = self.profiles._view(db, record.tag_id)
+            if view.error_code:
+                raise MemoryFailure("source_unavailable")
+            allowed = {"profile_confirm": {"draft"}, "profile_reject": {"draft"},
+                       "profile_suppress": {"confirmed"}, "profile_revise": {"confirmed", "draft"}, "profile_reopen": {"rejected"}}
+            if record.state not in allowed[kind]:
+                raise MemoryFailure("invalid_profile_transition")
+            if record.draft.processor_version.startswith("preference-clarification-v1:"):
+                raise MemoryFailure("preference_clarification_required")
+            snapshot["profile"] = [record.tag_id, record.revision]
+            confirmation_source = record.confirmation_id
+            source_ids = sorted({s.message_id for s in record.draft.sources}
+                                | ({record.confirmation_id} if record.confirmation_id else set()))
+            details["previous"] = self._profile(record)
+        for source_id in source_ids:
+            item = self._source(db, source_id)
+            if kind.startswith("source_") and item["representation"] != "original":
+                raise MemoryFailure("protected_source_unsupported")
+            snapshot["sources"].append([source_id, item["state_version"], item["content_version"]])
+            if source_id == confirmation_source:
+                continue
+            text = item.pop("text")
+            details["sources"].append({**item, "excerpt": text[:2048], "total": len(text)})
+        return snapshot, details
+
+    @staticmethod
+    def _dependencies(db: sqlite3.Connection, message_id: str) -> list[dict[str, Any]]:
+        affected: list[dict[str, Any]] = []
+        for table, source_column in (("important", "message_id"), ("source_context", "source_id")):
+            rows = db.execute(f"SELECT id FROM {table} WHERE {source_column}=? ORDER BY id LIMIT 1001",
+                              (message_id,)).fetchall()
+            affected.extend({"kind": table, "id": row[0]} for row in rows)
+        for table, id_column, path in (("profile_events_v1", "tag_id", "$.draft.sources"),
+                                       ("fact_decisions_v1", "id", "$.sources"),
+                                       ("experience_events_v1", "experience_id", "$.draft.sources")):
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                continue
+            rows = db.execute(f"""SELECT DISTINCT t.{id_column},t.revision FROM {table} t,
+                json_each(t.record,?) s WHERE json_extract(s.value,'$.message_id')=?
+                OR json_extract(t.record,'$.confirmation_id')=? ORDER BY 1,2 LIMIT 1001""",
+                              (path, message_id, message_id)).fetchall()
+            if len(rows) > 1000:
+                raise MemoryFailure("management_scope_too_large")
+            affected.extend({"kind": table.split("_")[0], "id": row[0], "revision": row[1]} for row in rows)
+        if len(affected) > 1000:
+            raise MemoryFailure("management_scope_too_large")
+        return affected
+
+    def preview(self, access: Access, operation: dict[str, Any]) -> dict[str, Any]:
+        identity = self._authorize(access)
+        self._operation(operation)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._schema(db)
+            # Expired unconsumed previews contain no evidence and need no permanent retention.
+            db.execute("DELETE FROM management_previews_v1 WHERE outcome IS NULL AND expires<?", (time.time(),))
+            if db.execute("SELECT count(*) FROM management_previews_v1 WHERE outcome IS NULL AND client_id=?", (identity.client_id,)).fetchone()[0] >= 64:
+                raise MemoryFailure("management_queue_full")
+            snapshot, details = self._snapshot(db, operation)
+            proposal_id, expires = str(uuid4()), time.time() + 300
+            fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(operation).encode(), hashlib.sha256)
+            db.execute("INSERT INTO management_previews_v1 VALUES (?,?,?,?,?,NULL)",
+                       (proposal_id, identity.client_id, fingerprint, _json(snapshot), expires))
+            db.execute("COMMIT")
+        return {"proposal_id": proposal_id, "expires_at": expires, "operation": operation, **details,
+                "residuals": ["originals_retained", "previous_host_context_not_retracted"]}
+
+    def confirm(self, access: Access, proposal_id: str, operation: dict[str, Any]) -> dict[str, Any]:
+        identity = self._authorize(access)
+        _identifier(proposal_id)
+        self._operation(operation)
+        fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(operation).encode(), hashlib.sha256)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._schema(db)
+            row = db.execute("SELECT * FROM management_previews_v1 WHERE id=?", (proposal_id,)).fetchone()
+            if row is None or row["client_id"] != identity.client_id or not hmac.compare_digest(bytes(row["fingerprint"]), fingerprint):
+                raise MemoryFailure("management_preview_mismatch")
+            if row["outcome"]:
+                previous_outcome = dict(json.loads(row["outcome"]))
+                if previous_outcome.get('state') == 'canceled':
+                    raise MemoryFailure('management_preview_canceled')
+                return previous_outcome
+            if time.time() > row["expires"]:
+                raise MemoryFailure("management_preview_expired")
+            snapshot, _ = self._snapshot(db, operation)
+            if _json(snapshot) != row["snapshot"]:
+                raise MemoryFailure("management_preview_stale")
+
+            def evidence(text: str, suffix: str) -> str:
+                branch = "management-confirmation" if suffix == ":confirm" or operation['kind'] == 'source_suppress' else "management-input"
+                event = Event(Source(identity.entry, "memory-management", branch, proposal_id + suffix),
+                              "user", 0, datetime.now(timezone.utc).isoformat(), "complete", text)
+                self.runtime._validate_event(event)
+                digest = hmac.digest(self.runtime._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
+                return self.runtime._persist_event(db, event, event, digest).message_id
+
+            kind = operation["kind"]
+            target: str = operation["message_id"] if kind.startswith("source_") else operation["tag_id"]
+            if kind.startswith("source_"):
+                text = operation.get("text", "管理页面确认停止召回来源 " + target)
+                confirmation_id = evidence(text, ":source")
+                change = Change(proposal_id, target, snapshot["sources"][0][1],
+                                "correct" if kind == "source_correct" else "suppress", confirmation_id,
+                                "Trusted management page confirmed " + proposal_id)
+                result = self.runtime._change(db, change)
+                revision, state = result.version, result.status
+            else:
+                record = self.profiles._latest(db, target)
+                assert record is not None
+                if kind == "profile_revise":
+                    label = operation["label"]
+                    source_id = evidence(label, ":replacement")
+                    draft = replace(record.draft, label=label, confidence=1.0,
+                                    sources=(EvidenceSpan(source_id, 1, "original", 1, 0, len(label), label),),
+                                    processor_version="trusted-management-v1")
+                    record = self.profiles._decide(db, ProfileDecision(proposal_id + ":revise", target,
+                                                                     record.revision, "revise", draft))
+                confirmation_id = evidence("管理页面确认 " + kind + " " + target, ":confirm")
+                action = "confirm" if kind == "profile_revise" else kind.removeprefix("profile_")
+                result_profile = self.profiles._decide(db, ProfileDecision(proposal_id, target, record.revision,
+                                                                          action, confirmation_id=confirmation_id))
+                revision, state = result_profile.revision, result_profile.state
+            outcome = {"proposal_id": proposal_id, "action": kind, "target_id": target,
+                       "revision": revision, "state": state, "confirmation_id": confirmation_id}
+            db.execute("UPDATE management_previews_v1 SET outcome=? WHERE id=?", (_json(outcome), proposal_id))
+            db.execute("COMMIT")
+        return outcome
+
+    def cancel(self, access: Access, proposal_id: str) -> dict[str, Any]:
+        identity = self._authorize(access)
+        _identifier(proposal_id)
+        with self.runtime._connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._schema(db)
+            row = db.execute('SELECT * FROM management_previews_v1 WHERE id=?', (proposal_id,)).fetchone()
+            if row is None or row['client_id'] != identity.client_id:
+                raise MemoryFailure('management_preview_mismatch')
+            if row['outcome']:
+                return dict(json.loads(row['outcome']))
+            outcome = {'proposal_id': proposal_id, 'state': 'canceled'}
+            db.execute('UPDATE management_previews_v1 SET outcome=? WHERE id=?', (_json(outcome), proposal_id))
+            db.execute('COMMIT')
+            return outcome
+
+
+_OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise", "profile_reopen"}

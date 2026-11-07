@@ -312,6 +312,8 @@ class ConsolidationWorkflow:
                         f"consolidation-{candidate_id}", f"consol-{candidate_id[:32]}", 0, "propose",
                         ProfileDraft(draft.category, draft.label, draft.confidence, draft.sources)))
                     proposal_id = proposal.tag_id
+                    if proposal.state == 'rejected':
+                        state = 'rejected'
                     # Generic proposals lack admitted preference provenance. Only the
                     # qualified preference workflow may publish a confirmed profile.
                 elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
@@ -343,6 +345,14 @@ class ConsolidationWorkflow:
             result: list[ConsolidationDraftRow] = []
             for row in rows[:limit]:
                 draft = self._draft_row(row)
+                if draft.state == 'rejected':
+                    continue
+                if draft.proposal_id is not None:
+                    head = self.profile._latest(db, draft.proposal_id)
+                    if head is not None and head.state == 'rejected':
+                        continue
+                    if head is not None and head.state == 'draft' and self.profile._rejection(db, head.draft) is not None:
+                        continue
                 if self._available_draft(db, draft):
                     result.append(draft)
             return ConsolidationQueuePage(tuple(result), offset + limit if len(rows) > limit else None)

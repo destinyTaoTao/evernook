@@ -778,36 +778,41 @@ class MemoryRuntime:
             _identifier(value)
         if not request.reason.strip() or not isinstance(request.action, str) or request.action not in {"correct", "revoke", "suppress"}:
             raise MemoryFailure("invalid_change")
-        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT fingerprint,receipt FROM changes WHERE request_id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("change_conflict")
-                return MessageState(**json.loads(existing["receipt"]))
-            current = self._state(db, request.target_id)
-            if current.version != request.expected_version:
-                raise MemoryFailure("version_conflict")
-            if current.status == "purged":
-                # Phase-1 purge scope is frozen: no change may relabel a target already marked purged.
-                raise MemoryFailure("not_recallable")
-            evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
-            if evidence_row is None or request.evidence_id == request.target_id:
-                raise MemoryFailure("insufficient_evidence")
-            evidence = self._stored(evidence_row)
-            if (evidence.event.role != "user" or evidence.event.completion != "complete"
-                    or not evidence.event.text.strip() or not evidence.receipt.original_saved
-                    or self._state(db, request.evidence_id).status != "active"):
-                raise MemoryFailure("insufficient_evidence")
-            state = MessageState(current.message_id, current.version + 1,
-                {"correct": "corrected", "revoke": "revoked", "suppress": "suppressed"}[request.action],
-                request.evidence_id if request.action == "correct" else None, request.request_id)
-            db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (request.request_id, request.target_id,
-                request.evidence_id, fingerprint, _json(asdict(request)), _json(asdict(state)), datetime.now(timezone.utc).isoformat()))
-            db.execute("INSERT INTO visibility VALUES (?,?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET version=excluded.version, status=excluded.status, replacement_id=excluded.replacement_id, change_id=excluded.change_id",
-                       (state.message_id, state.version, state.status, state.replacement_id, state.change_id))
+            state = self._change(db, request)
             db.execute("COMMIT")
+        return state
+
+    def _change(self, db: sqlite3.Connection, request: Change) -> MessageState:
+        """Apply a validated change in the caller's transaction (also used by trusted UI confirmation)."""
+        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
+        existing = db.execute("SELECT fingerprint,receipt FROM changes WHERE request_id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("change_conflict")
+            return MessageState(**json.loads(existing["receipt"]))
+        current = self._state(db, request.target_id)
+        if current.version != request.expected_version:
+            raise MemoryFailure("version_conflict")
+        if current.status == "purged":
+            # Phase-1 purge scope is frozen: no change may relabel a target already marked purged.
+            raise MemoryFailure("not_recallable")
+        evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
+        if evidence_row is None or request.evidence_id == request.target_id:
+            raise MemoryFailure("insufficient_evidence")
+        evidence = self._stored(evidence_row)
+        if (evidence.event.role != "user" or evidence.event.completion != "complete"
+                or not evidence.event.text.strip() or not evidence.receipt.original_saved
+                or self._state(db, request.evidence_id).status != "active"):
+            raise MemoryFailure("insufficient_evidence")
+        state = MessageState(current.message_id, current.version + 1,
+            {"correct": "corrected", "revoke": "revoked", "suppress": "suppressed"}[request.action],
+            request.evidence_id if request.action == "correct" else None, request.request_id)
+        db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (request.request_id, request.target_id,
+            request.evidence_id, fingerprint, _json(asdict(request)), _json(asdict(state)), datetime.now(timezone.utc).isoformat()))
+        db.execute("INSERT INTO visibility VALUES (?,?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET version=excluded.version, status=excluded.status, replacement_id=excluded.replacement_id, change_id=excluded.change_id",
+                   (state.message_id, state.version, state.status, state.replacement_id, state.change_id))
         return state
 
     def review_archive(self, access: Access, message_id: str) -> ArchiveView:

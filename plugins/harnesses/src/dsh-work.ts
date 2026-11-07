@@ -31,7 +31,7 @@ export class DshWork {
     }
   }
 
-  async link(sessionId: string, source: Source, mode: 'buffered' | 'durable_text') {
+  async link(sessionId: string, source: Source, mode: 'buffered' | 'durable_text' | 'durable_tools') {
     const step = this.steps.get(sessionId);
     if (!step) throw new Error('evernook:native_step_unavailable');
     await this.client.remember({ source: this.source(sessionId, `native-stream:${step.seq}:${step.attempt}`), role: 'system',
@@ -128,7 +128,7 @@ export class DshWork {
           const linkSource = nativeStreams.get(seq)!;
           add(linkSource);
           const link = JSON.parse((await sourceSnapshot(this.client, linkSource)).stored.event.text) as { mode: string; source: Source };
-          if (!['buffered', 'durable_text'].includes(link.mode) || link.source.entry !== this.entry || link.source.session !== origin(seq)) {
+          if (!['buffered', 'durable_text', 'durable_tools'].includes(link.mode) || link.source.entry !== this.entry || link.source.session !== origin(seq)) {
             throw new Error('evernook:continuation_stream_link_invalid');
           }
           if (link.mode === 'buffered') {

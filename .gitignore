@@ -43,6 +43,8 @@ build/
 dist/
 *.egg-info/
 node_modules/
+plugins/dsh/lib/
+plugins/dsh/*.tgz
 *.log
 .idea/
 .vscode/

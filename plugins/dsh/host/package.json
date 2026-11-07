@@ -1,0 +1,20 @@
+{
+  "name": "evernook-dsh-verified-host",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
+  },
+  "overrides": {
+    "zod": "4.6.7",
+    "undici": "8.12.4",
+    "fflate": "0.8.3",
+    "@modelcontextprotocol/client": "2.4.0"
+  },
+  "engines": {
+    "node": ">=24.11.0 <25"
+  },
+  "scripts": {
+    "provision": "node provision.mjs"
+  }
+}
