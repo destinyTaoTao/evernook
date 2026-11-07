@@ -34,13 +34,22 @@ export async function apply(ctx, config) {
       plan.requests++;
       const step = plan.steps[plan.requests - 1];
       if (step) {
-        if (plan.preface) {
-          yield { type: 'block-start', index: 0, blockType: 'text' };
-          yield { type: 'text-delta', index: 0, text: plan.preface };
-          plan.livePrefixObserved = plan.liveText.includes(plan.preface);
-          yield { type: 'block-end', index: 0, block: { type: 'text', text: plan.preface } };
+        let offset = 0;
+        if (plan.reasoning) {
+          const before = plan.liveReasoning;
+          yield { type: 'block-start', index: 0, blockType: 'reasoning' };
+          yield { type: 'reasoning-delta', index: 0, text: plan.reasoning };
+          yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: plan.reasoning } };
+          plan.reasoningHeld = plan.liveReasoning === before;
+          offset = 1;
         }
-        const index = plan.preface ? 1 : 0;
+        if (plan.preface) {
+          yield { type: 'block-start', index: offset, blockType: 'text' };
+          yield { type: 'text-delta', index: offset, text: plan.preface };
+          plan.livePrefixObserved = plan.liveText.includes(plan.preface);
+          yield { type: 'block-end', index: offset, block: { type: 'text', text: plan.preface } };
+        }
+        const index = offset + (plan.preface ? 1 : 0);
         const id = ToolCallId('synthetic-native-call-' + plan.requests);
         const args = JSON.stringify(step.args);
         yield { type: 'block-start', index, blockType: 'tool-call' };
@@ -60,6 +69,7 @@ export async function apply(ctx, config) {
   ctx.on('agent/assistant-stream', ({ agent, frame }) => {
     const plan = plans.get(String(agent.session.id));
     if (plan && frame.type === 'chunk' && frame.chunk.type === 'text-delta') plan.liveText += frame.chunk.text;
+    if (plan && frame.type === 'chunk' && frame.chunk.type === 'reasoning-delta') plan.liveReasoning += frame.chunk.text;
   });
   const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
   function substitute(value) {
@@ -102,6 +112,7 @@ export async function apply(ctx, config) {
       try {
         const entry = selected.cases[input.case];
         if (entry.preface !== undefined && (typeof entry.preface !== 'string' || entry.preface.length > 4096)) return json({ error: 'invalid_synthetic_preface' }, 400);
+        if (entry.reasoning !== undefined && (typeof entry.reasoning !== 'string' || entry.reasoning.length > 4096)) return json({ error: 'invalid_synthetic_reasoning' }, 400);
         const steps = entry.steps ?? [{ tool: entry.tool, args: entry.args }];
         if (!Array.isArray(steps) || !steps.length || steps.length > 8
             || steps.some(step => !['read', 'write', 'edit', 'pwsh', 'run_code'].includes(step.tool))) return json({ error: 'unsupported_synthetic_tool' }, 400);
@@ -109,7 +120,8 @@ export async function apply(ctx, config) {
           setup: async agentCtx => { await ctx.get('agentPresets')?.mount(agentCtx, entry.preset); },
           agentOptions: { provider: 'synthetic-native94', model: 'local-test' } });
         const id = String(handle.agent.session.id);
-        const plan = { steps: substitute(steps), requests: 0, trace: [], preface: entry.preface, liveText: '', livePrefixObserved: false };
+        const plan = { steps: substitute(steps), requests: 0, trace: [], preface: entry.preface, liveText: '', livePrefixObserved: false,
+          reasoning: entry.reasoning, liveReasoning: '', reasoningHeld: false };
         plans.set(id, plan);
         removeMode = handle.agent.ctx.tools.presentAs(entry.mode ?? 'native');
         const errors = [];
@@ -132,6 +144,7 @@ export async function apply(ctx, config) {
         plans.delete(id);
         return json({ synthetic: true, case: input.case, session: id, workspace: work, requests: plan.requests, timed_out: timedOut, errors,
           expected_preface: entry.preface, live_prefix_observed: plan.livePrefixObserved,
+          expected_reasoning: entry.reasoning?.repeat(steps.length), live_reasoning: plan.liveReasoning, reasoning_held: plan.reasoningHeld,
           trace: plan.trace, event_types: [...new Set(events.map(value => value.type))],
           expected_error: entry.expectError === true, expected_text: entry.expectText, expected_file: entry.expectedFile,
           expected_requests: entry.cancelAfterMs || entry.blockPublication ? 1 : steps.length + 1,

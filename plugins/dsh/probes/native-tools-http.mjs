@@ -32,6 +32,10 @@ async function main() {
   assert.equal(result.errors.length, 0);
   assert.ok(result.results.length >= 1);
   if (result.expected_preface) assert.equal(result.live_prefix_observed, true, 'Saved text was not visible before the provider finished');
+  if (result.expected_reasoning) {
+    assert.equal(result.reasoning_held, true);
+    assert.equal(result.live_reasoning, result.expected_reasoning);
+  }
   const rootResult = result.results.find(value => value.type === 'tool/result');
   assert.ok(rootResult);
   assert.equal(Boolean(rootResult.data.message.isError), result.expected_error);
@@ -72,6 +76,15 @@ async function main() {
     }
     result.ledger_snapshots = snapshots.length;
     result.exact_native_results_checked = true;
+    if (result.expected_reasoning) {
+      const found = await reader.call('search', { query: 'evernook_dsh_tool_frames_v1', mode: 'exact', limit: 100 });
+      const snapshot = found.hits.find(value => value.source.session === result.session
+        && value.source.event.endsWith(':frames') && value.role === 'system');
+      assert.ok(snapshot);
+      assert.ok((await reader.read(snapshot.message_id)).event.text.includes(result.expected_reasoning));
+      assert.equal((await reader.readCapture(snapshot.message_id)).complete, true);
+      result.reasoning_saved = true;
+    }
     if (result.expected_preface) {
       const found = await reader.streamAttempts('evernook_dsh_text_stream_v1', 'dsh', result.session);
       const streams = await Promise.all(found.sources.map(source => reader.readStream({ ...source, event: source.event.replace(/:start$/, ':display') })));

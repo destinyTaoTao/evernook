@@ -1,6 +1,6 @@
 # 固定补丁宿主（Windows Web 受限预览）
 
-对应 [#92](https://github.com/destinyTaoTao/evernook/issues/92)、[#94](https://github.com/destinyTaoTao/evernook/issues/94)与[#95/#97](https://github.com/destinyTaoTao/evernook/issues/97)。独立目录中固定依赖，并对确切上游产物应用发布屏障及只读恢复限制；不替换全局dsh。目标Node >=24.11 <25、dsh0.2.1-rc.5、Cordis4.0.5、schemastery3.18.5、插件preview.17。当批核对的0.2.2-rc.1仍固定Zod4.4.3，没有把升级本身当成依赖修复。
+对应 [#92](https://github.com/destinyTaoTao/evernook/issues/92)、[#94](https://github.com/destinyTaoTao/evernook/issues/94)与[#95/#97](https://github.com/destinyTaoTao/evernook/issues/97)。独立目录中固定依赖，并对确切上游产物应用发布屏障及只读恢复限制；不替换全局dsh。目标Node >=24.11 <25、dsh0.2.1-rc.5、Cordis4.0.5、schemastery3.18.5、插件preview.18。当批核对的0.2.2-rc.1仍固定Zod4.4.3，没有把升级本身当成依赖修复。
 
 | 固定覆盖 | 原因 |
 |---|---|
@@ -32,7 +32,7 @@ $verifiedHost = '<external host directory>'
 $env:DSH_HOME = '<existing dedicated external DSH_HOME directory>'
 $env:DSH_TELEMETRY_MODE = 'DISABLED'
 node ./host/launch.mjs $verifiedHost --profile evernook --from-default-profile web --dump-config
-node ./host/launch.mjs $verifiedHost plugin --profile evernook add '<absolute preview.17 tgz path>'
+node ./host/launch.mjs $verifiedHost plugin --profile evernook add '<absolute preview.18 tgz path>'
 node ./host/verify.mjs $verifiedHost "$env:DSH_HOME/profiles/evernook"
 pnpm --dir "$env:DSH_HOME/profiles/evernook" audit --prod
 # Add the explicit external EverNook paths to cordis.patch.yml, as in ../README.md.

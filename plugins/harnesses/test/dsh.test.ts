@@ -1554,6 +1554,101 @@ test('native file references and tool events preserve exact text, input links an
 
 
 const patchedPublication = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+
+test('reasoning tool stream saves complete frames before disclosure and preserves replay on the next model request', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('reasoning-tool');
+  const reasoning = '合成推理🙂：只核对临时证据。';
+  const frames: StreamChunk[] = [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '合成推理\uD83D' },
+    { type: 'reasoning-delta', index: 0, text: '\uDE42：只核对临时证据。' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoning } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '合成可见答案。' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '合成可见答案。' } },
+    { type: 'block-start', index: 2, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' }, replayState: { response: { id: 'synthetic-reasoning-response' },
+      blocks: [{ signature: 'synthetic-replay-signature' }, {}, {}] } },
+  ];
+  adapter.chunks = frames;
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('reasoning-complete');
+  const visible: StreamChunk[] = []; let effects = 0; let checked = false;
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  adapter.afterChunk = async index => {
+    if (index === 8) { assert.equal(visible.length, 0); assert.equal(effects, 0); checked = true; }
+  };
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic reasoning workflow',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        const result = await reader.call<{ hits: { message_id: string }[] }>('search', { query: 'evernook_dsh_tool_frames_v1', mode: 'exact', limit: 100 });
+        assert.equal(result.hits.length, 1);
+        const capture = await reader.readCapture(result.hits[0].message_id);
+        assert.equal(capture.complete, true); assert.equal(capture.input_id, host.memory.status(handle.agent.session.id).latest_input!.message_id);
+        const saved = JSON.parse(execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import MemoryRuntime; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); sys.stdout.buffer.write(r.read_attachment(a,sys.argv[3],'raw-tool-stream-v1'))", host.config.config, host.config.access, result.hits[0].message_id], { cwd: checkout, encoding: 'utf8' }));
+        assert.deepEqual(saved, frames);
+        const attempts = await host.memory.streams(handle.agent.session.id);
+        assert.equal((await reader.readStream(attempts.streams[0])).text, '合成可见答案。');
+        effects++; adapter.chunks = undefined;
+        return [{ type: 'text', text: '合成工具完成。' }];
+      } }));
+    handle.agent.followup(user('reasoning-input', '合成：推理、文本与工具分开保存。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.equal(checked, true); assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 2);
+    assert.match(JSON.stringify(adapter.requests[1]), /synthetic-replay-signature/);
+    assert.equal(visible.filter(value => value.type === 'reasoning-delta').map(value => value.text).join(''), reasoning);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+for (const failure of ['protected', 'cross-channel', 'mismatch', 'unclosed', 'canceled', 'interrupted', 'oversized', 'save-revoked']) {
+  test(`reasoning tool stream blocks ${failure} before reasoning disclosure or tool execution`, { skip: !patchedPublication }, async () => {
+    const adapter = new Synthetic();
+    const reasoning = failure === 'protected' ? 'password=synthetic-reasoning-secret'
+      : failure === 'cross-channel' ? 'pass' : failure === 'oversized' ? 'x'.repeat(800000) : '合成推理。';
+    const id = ToolCallId('reasoning-failure-call');
+    adapter.chunks = [
+      { type: 'block-start', index: 0, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 0, text: reasoning },
+    ];
+    if (failure !== 'unclosed') adapter.chunks.push({ type: 'block-end', index: 0,
+      block: { type: 'reasoning', text: failure === 'mismatch' ? 'changed' : reasoning } });
+    if (failure === 'cross-channel') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'word=synthetic-reasoning-secret' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'word=synthetic-reasoning-secret' } });
+    adapter.chunks.push({ type: 'block-start', index: 2, blockType: 'tool-call' },
+      { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+      { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+      { type: 'finish', reason: { kind: 'tool-calls' } });
+    const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+    const handle = await host.create('reasoning-failure-' + failure);
+    const visible: StreamChunk[] = []; let effects = 0;
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+    adapter.afterChunk = async index => {
+      if (index !== 1) return;
+      if (failure === 'canceled') handle.agent.cancel({ kind: 'user' });
+      if (failure === 'interrupted') throw new Error('synthetic protocol interruption');
+      if (failure === 'save-revoked') execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+    };
+    try {
+      host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic blocked reasoning',
+        parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return []; } }));
+      handle.agent.followup(user('reasoning-failure-input', '合成：失败不展示推理或运行工具。'));
+      await handle.agent.whenIdle();
+      assert.equal(effects, 0); assert.equal(visible.length, 0);
+      if (failure !== 'canceled') assert.ok(host.errors.length);
+      assert.doesNotMatch(host.errors.map(String).join('\n'), /synthetic-reasoning-secret/);
+      const streams = await host.memory.streams(handle.agent.session.id);
+      const saved = await host.memory.readStream(streams.streams[0]);
+      assert.equal(saved.complete, false); assert.equal(saved.final_message_id, null);
+      if (failure === 'canceled') assert.equal(saved.state, 'canceled');
+    } finally { await handle.dispose(); await host.close(); }
+  });
+}
 test('patched tool publication saves the exact final snapshot before native notification', { skip: !patchedPublication }, async () => {
   const adapter = new Synthetic(); adapter.toolOnce = true;
   const host = await boot(adapter, false, false, { toolPublication: true });

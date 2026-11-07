@@ -2,6 +2,8 @@
 
 日期：2026-11-08。实施跟踪 [#94](https://github.com/destinyTaoTao/evernook/issues/94)，关联 #88/#92/#81/#82。用户已授权独立宿主最小发布补丁；首批 [#95](https://github.com/destinyTaoTao/evernook/issues/95) 的缓冲工具屏障见[验证记录](dsh-tool-publication.md)，[#96](https://github.com/destinyTaoTao/evernook/issues/96) 补入显式[受限混合可靠流](dsh-mixed-stream.md)，[#97](https://github.com/destinyTaoTao/evernook/issues/97) 提供[可信核对与只读续接](dsh-tool-recovery.md)。旧会话不解封，首版没有工具解禁；完整日用工作流仍未交付。
 
+后续 [#98](dsh-control-restore.md)补齐运行库发布的页面/恢复控制水位；[#99](dsh-reasoning-stream.md)补齐顺序有界推理的完整保存后展示及真实传输适配器本地协议验证。真实远端模型、附件、完整日用与物理系统门禁继续开放。
+
 ## 已确认的缺口
 
 `node plugins/dsh/probes/tool-publication.mjs <private host directory>` 在真实dsh0.2.1-rc.5的Tools服务注册合成工具与结果观察者：观察者仍在等待保存时，`tools.execute`已经返回成功；观察者抛出存储异常时，执行仍返回成功。输出为 `observer_awaited:false`、`observer_failure_blocks_result:false`。这不能作为“先可靠保存，再显示/继续模型”的屏障。

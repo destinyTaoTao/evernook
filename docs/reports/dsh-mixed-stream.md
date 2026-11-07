@@ -1,5 +1,7 @@
 # dsh 文本与工具可靠混合流：受限协议
 
+后续：preview.18 的 [#99 推理增量](dsh-reasoning-stream.md)已接受顺序有界推理块，完整结构保存后延迟展示；本页“拒绝reasoning”是 #96 当批边界。附件与重叠非工具块、真实模型/正式日用仍未准入。
+
 日期：2026-11-07。对应 [#96](https://github.com/destinyTaoTao/evernook/issues/96)，属于 #94/#88，接续 [#95 发布屏障](dsh-tool-publication.md)。正式日用仍由 #81/#82 阻断。
 
 ## 实现与不变量
