@@ -242,7 +242,9 @@ Source-scope checks recognize actual dsh runtime-context `evernook-evidence` sec
 user-authored JSON is not treated as host provenance. Unknown host snapshot formats or
 missing capture receipts remain null. A substring relation is not semantic grading and cannot
 turn a strict failure into a pass. Run `python probes/admission/test_host_diagnostics.py -v`
-for the six narrow diagnostic checks. The
+for the seven narrow diagnostic checks. `host_error_code` and `observation_error_code`
+separately retain runtime and observation/parser failures; legacy `error_code` remains
+the host field. A null code alone cannot prove dispatch, valid JSON or publication. The
 [six-case pilot](../../docs/reports/m58-quality-pilot-2026-11-08.md) preserves 0/6 native
 strict matches, a rejected/partial prompt experiment, and renewed variation-input resource
 failures; no frozen thresholds, profile activation or full-suite claims are changed.
@@ -262,3 +264,8 @@ values into a preallocated buffer does not itself remove the CPU return copy.
 also retains unsuccessful MemPattern/forced-GC controls, an excluded overlapping attempt,
 and the pending separate native-patch decision. No patch binary has been applied or
 promoted by this diagnostic. Original model, context/output allowance and thresholds remain.
+
+The [follow-up presentation controls and current Core observations](../../docs/reports/m58-followup-81-prompt-projection.md)
+retain rejected lossless-layout/message-order trials, 304/304 frozen Core storage/lexical/temporal
+checks, and 21/60 automatic-rule outcomes with zero accepted profiles. These are distinct
+diagnostic windows, not a combined admission run; raw outputs and the original scorer remain.

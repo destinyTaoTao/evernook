@@ -2,6 +2,8 @@
 
 后续：[2240token输出所有权对照](m58-followup-86-output-ownership.md)确认固定ORT的预分配返回复制；串行强制GC仍超过2GiB，原生补丁仅为待确认提案，未改变下述质量结论。
 
+再后续：[无损JSON/消息位置对照及当前Core复验](m58-followup-81-prompt-projection.md)仍保留三个模型决策阻断；当前304项Core通过不替代模型/自动接纳准入。
+
 2026-11-08，接续[#86外置预处理权重候选](m58-followup-86-external-prepacked.md)。新证据再次阻断资源与质量准入：六题原生基线严格评分0/6，两批变化输入Private Bytes均超过2GiB。仅加入通用输出契约的三题试验为1/3，仍有关键决策失败，未采用该提示或启用日用。没有修改模型权重、Core、适配器、原评分、默认profile或冻结policy。
 
 ## 冻结与执行范围

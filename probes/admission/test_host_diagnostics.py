@@ -54,6 +54,18 @@ class HostDiagnosticsTest(unittest.TestCase):
         self.assertEqual(report["details"][0]["status"], "failed")
         self.assertEqual(report["details"][0]["answer_relation"], "unavailable")
 
+    def test_reports_observation_parse_errors_separately_from_host_errors(self) -> None:
+        suite = load_suite(Path(__file__).resolve().parents[2] / "eval/zh-memory-v1")
+        visible = '```json\n{"decision":"answer"}\n```'
+        report = diagnose(suite, {"suite_hash": suite.suite_hash, "rows": [{"id": "host-g01-q1",
+            "payload": {"error_code": "invalid_visible_model_json", "observed": visible}}]},
+            [{"query_id": "g01-q1", "visible": visible, "error_code": None}])
+        detail = report["details"][0]
+        self.assertEqual(detail["status"], "failed")
+        self.assertIsNone(detail["error_code"])
+        self.assertIsNone(detail["host_error_code"])
+        self.assertEqual(detail["observation_error_code"], "invalid_visible_model_json")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,7 +90,8 @@ def diagnose(suite: EvaluationSuite, observations: dict[str, Any], runs: list[di
             "current_input_cited": current in cited if isinstance(current, str) and isinstance(cited, list) else None,
             "current_input_selected_as_memory": current in selected if isinstance(current, str) and selected is not None else None,
             "first_visible_independently_read": run.get("first_visible_independently_read"),
-            "final_replay_matches": run.get("final_replay_matches"), "error_code": run.get("error_code")})
+            "final_replay_matches": run.get("final_replay_matches"), "error_code": run.get("error_code"),
+            "host_error_code": run.get("error_code"), "observation_error_code": actual.get("error_code")})
     if len(details) != len(by_query):
         raise ValueError("host_diagnostic_run_without_observation")
     return {"suite_hash": suite.suite_hash, "score": scored, "details": details,
