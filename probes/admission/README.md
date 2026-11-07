@@ -228,3 +228,21 @@ session options and startup metadata. Fixed-request Private Bytes is now below 2
 but working set is still about 2.41 GB and strict quality still fails. ORT-format direct-byte
 loading was measured and rejected for higher memory. See
 [measurements, integrity and native cancellation/replay](../../docs/reports/m58-followup-86-external-prepacked.md).
+
+## Read-only host failure diagnostics (#81)
+
+`python probes/admission/host_diagnostics.py --input ACTUAL_BATCH_1 --input ACTUAL_BATCH_2 --output NEW_EXTERNAL_ROOT`
+combines host observations/runs only for diagnosis, invokes the unchanged frozen scorer,
+and records field/literal differences and input/source hashes. Duplicate case/run identities,
+missing paired observations and mismatched suite identities are rejected. Each captured JSON
+file is bounded to 64 MiB; the scorer retains its own observation limits. Raw inputs are not
+rewritten. Exit 0 means a diagnostic report was written, not that its score passed admission.
+
+Source-scope checks recognize actual dsh runtime-context `evernook-evidence` sections;
+user-authored JSON is not treated as host provenance. Unknown host snapshot formats or
+missing capture receipts remain null. A substring relation is not semantic grading and cannot
+turn a strict failure into a pass. Run `python probes/admission/test_host_diagnostics.py -v`
+for the six narrow diagnostic checks. The
+[six-case pilot](../../docs/reports/m58-quality-pilot-2026-11-08.md) preserves 0/6 native
+strict matches, a rejected/partial prompt experiment, and renewed variation-input resource
+failures; no frozen thresholds, profile activation or full-suite claims are changed.
