@@ -1,7 +1,8 @@
 // Real isolated owner/API recovery. Credentials stay in the launch log, never stdout or reports.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, existsSync } from 'node:fs';
 import { resolve, relative, isAbsolute, sep } from 'node:path';
+async function main() {
 const [logPath, reportPath, mode = 'create'] = process.argv.slice(2);
 const launch = readFileSync(logPath, 'utf8').match(/http:\/\/127\.0\.0\.1:\d+\/\?\S+/)?.[0];
 assert.ok(launch);
@@ -19,7 +20,14 @@ assert.equal(boot.status, 200); assert.equal(boot.value.recovery_supported, true
 const manage = body => post('/api/evernook/manage', body, boot.value.csrf);
 let report;
 if (mode === 'create') {
-  const failed = await probe({ case: 'recovery-write' }); assert.equal(failed.status, 200);
+  assert.ok(!existsSync(reportPath), 'Use a fresh report for a new side-effect scenario');
+  const attemptPath = reportPath + '.create-attempt.json';
+  // Claim before the tool can run. A failed/partial attempt must remain inspectable,
+  // and invoking create again with the same report must not execute it twice.
+  writeFileSync(attemptPath, JSON.stringify({ synthetic: true, stage: 'started' }), { flag: 'wx' });
+  const failed = await probe({ case: 'recovery-write' });
+  writeFileSync(attemptPath, JSON.stringify({ stage: 'response_received', ...failed }, null, 2));
+  assert.equal(failed.status, 200);
   const source = failed.value;
   assert.equal(source.synthetic, true); assert.equal(source.requests, 1);
   assert.equal(source.blocked.length, 1); assert.equal(source.results.length, 0);
@@ -58,3 +66,5 @@ assert.equal(after.value.result.fingerprint, view.value.result.fingerprint, 'The
 report[mode] = { passed: true, no_provider_or_tool: true, original_unchanged: true };
 writeFileSync(reportPath, JSON.stringify(report, null, 2));
 console.log(JSON.stringify({ mode, passed: true, no_provider_or_tool: true, original_unchanged: true, single_read_only_target: true }));
+}
+await main().catch(error => { console.error(error.message); process.exitCode = 1; });

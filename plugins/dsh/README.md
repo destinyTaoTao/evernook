@@ -15,7 +15,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.19.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.20.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'
