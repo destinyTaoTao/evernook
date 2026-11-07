@@ -13,7 +13,9 @@ npm run build
 npm pack --ignore-scripts
 ```
 
-构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。将生成的 `dsh-evernook-0.1.0-preview.8.tgz` 安装到独立 profile，建议另外设置仓库外的 DSH_HOME：
+构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
+
+将生成的 `dsh-evernook-0.1.0-preview.8.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'
@@ -55,6 +57,6 @@ dsh --profile evernook --no-open
 - 跨处理器拒绝防重是确定性标签/来源身份匹配；新证据与主动重审单独处理。
 - 普通记忆未做全库加密。dsh原始日志、其他插件副本及宿主聊天模型的数据出机不由EverNook控制；同账户恶意代码不在强隔离范围。
 - 本包未发布到npm；安装步骤不等于真实模型、所有工具链、跨平台、长跑或物理断电验收。实际验证记录见 `docs/reports/`。
-- 本包自己的MCP路径固定修复版本Zod4.6.7；目标dsh的peer依赖仍固定旧Zod，依赖审计传播3条high告警（同一资源耗尽公告）。尚未确认本页面可利用路径；正式日用前按 [#92](https://github.com/destinyTaoTao/evernook/issues/92) 升级并复验宿主，不能把本机访问限制当成修复。
+- 本包自己的MCP路径固定Zod4.6.7；未经修补的目标dsh仍固定旧Zod。新的[独立补丁宿主](host/README.md)固定Zod/Undici/MCP/fflate，2026-11-07实际宿主和插件profile生产审计均为0条，并验证61条依赖解析边；不代表任意全局安装或其他插件同样通过。完整工具链和日用仍受 [#92](https://github.com/destinyTaoTao/evernook/issues/92)、#81/#82门禁约束。
 
 机制参考：[dsh官方UI插件指南](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset/skills/cordis-plugin-development/references/ui-plugin.md)、[dsh-context](https://github.com/bowenliang123/dsh-context)。本插件沿宿主slot/locale/生命周期API独立实现，没有搬入其缓存、上下文压缩或记忆核心。

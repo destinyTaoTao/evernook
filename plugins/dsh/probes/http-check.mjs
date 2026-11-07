@@ -1,6 +1,7 @@
 // Real installed dsh owner/API fence checks. Only use an isolated synthetic profile.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+async function main() {
 const [logPath, reportPath, mode] = process.argv.slice(2);
 const launch = readFileSync(logPath, 'utf8').match(/http:\/\/127\.0\.0\.1:\d+\/\?\S+/)?.[0];
 assert.ok(launch, 'No isolated loopback launch URL');
@@ -37,3 +38,5 @@ check('forged_confirmation', (await send({ action: 'confirm', proposal_id: 'forg
 writeFileSync(reportPath, JSON.stringify({ synthetic: true, observations }, null, 2));
 console.log(JSON.stringify({ checks: observations.length, passed: true }));
 }
+}
+await main().catch(error => { console.error(error.message); process.exitCode = 1; });
