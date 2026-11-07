@@ -513,7 +513,7 @@ class MemoryRuntime:
         return access
 
     @contextmanager
-    def _connection(self, *, check: Callable[[], object] | None = None) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
         interrupted: list[MemoryFailure] = []
         try:
@@ -531,7 +531,22 @@ class MemoryRuntime:
                         return 1
                 connection.set_progress_handler(progress, 1000)
             connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute("PRAGMA synchronous=FULL")
+            setup_deadline = time.monotonic() + self._timeout
+            while True:
+                if check is not None:
+                    check()
+                try:
+                    connection.execute("PRAGMA synchronous=FULL")
+                    break
+                except sqlite3.OperationalError as error:
+                    # Cancellable readers use timeout=0. Even this connection-local
+                    # setting can meet a short WAL lock; wait only before yielding.
+                    if check is None or (error.sqlite_errorcode & 255) != sqlite3.SQLITE_BUSY:
+                        raise
+                    remaining = min(check(), setup_deadline - time.monotonic())
+                    if remaining <= 0:
+                        raise
+                    time.sleep(min(.01, remaining))
             yield connection
             if interrupted:
                 raise interrupted[0]

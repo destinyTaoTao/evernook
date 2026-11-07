@@ -1,5 +1,7 @@
 # 当前实现与架构图
 
+> **2026-11-08 检索连接争锁：** Core0.1.3仅对可取消连接开始业务查询前的SQLite配置瞬时BUSY增加有界、可取消等待，不重试业务事务或工具。新增5项真实锁回归及实际安装短pilot通过；见[#104记录](reports/cancellable-sqlite-connection.md)。正式1800秒窗口仍待完成。
+
 > **2026-11-08 Windows启动竞争：** Core0.1.2修复SQLite可选日志并发消失时的本机盘符路径误判，并仅对该日志的精确FileNotFound异常有界重查完整ACL。源码和独立安装各100次并发启动零错误，真实权限拒绝保持；见[#103记录](reports/windows-sqlite-path-race.md)。dsh长跑尚未据此宣告通过。
 
 > **2026-11-08 隔离宿主切库：** [#100](reports/dsh-runtime-cutover.md)已用实际独立wheel与同一dsh测试profile验证停止旧入口、重新配对并切向新运行库；原话/控制/可靠流和只读恢复保留，旧库哈希冻结。仅合成数据，未验收用户库/跨机器/实际OS及新的长跑。
