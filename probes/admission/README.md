@@ -246,3 +246,19 @@ for the six narrow diagnostic checks. The
 [six-case pilot](../../docs/reports/m58-quality-pilot-2026-11-08.md) preserves 0/6 native
 strict matches, a rejected/partial prompt experiment, and renewed variation-input resource
 failures; no frozen thresholds, profile activation or full-suite claims are changed.
+
+## Pinned CPU output ownership check (#86)
+
+`node --expose-gc plugins/harnesses/probes/output-ownership.ts PROFILE NEW_EXTERNAL copy|reuse`
+uses a 116-byte synthetic float32 Add graph against actual Windows x64 ORT1.24.3,
+recording binding/DLL hashes. It checks caller buffer writes, offset sentinels, returned
+buffer/object identity, rejection of wrong shape and readability after session release.
+It does not load Qwen or establish model/resource/quality admission. Give it a fresh output
+and a 15-second monitor limit; very short process samples do not establish a memory peak.
+The stock library passes `copy` and fails `reuse` after writing its receipt. Returning correct
+values into a preallocated buffer does not itself remove the CPU return copy.
+
+[Long-input and ownership evidence](../../docs/reports/m58-followup-86-output-ownership.md)
+also retains unsuccessful MemPattern/forced-GC controls, an excluded overlapping attempt,
+and the pending separate native-patch decision. No patch binary has been applied or
+promoted by this diagnostic. Original model, context/output allowance and thresholds remain.
