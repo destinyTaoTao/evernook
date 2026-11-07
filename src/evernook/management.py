@@ -106,10 +106,10 @@ class MemoryManagement:
                         continue
                     items.append(self._profile(record))
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
-            if view in {"profiles", "drafts", "suppressed"}:
+            if view in {"profiles", "drafts", "suppressed", "rejected"}:
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
                     return {"items": [], "next_offset": None}
-                state = {"profiles": "confirmed", "drafts": "draft", "suppressed": "suppressed"}[view]
+                state = {"profiles": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
                 rows = db.execute("""SELECT e.tag_id FROM profile_events_v1 e JOIN
                     (SELECT tag_id,max(revision) revision FROM profile_events_v1 GROUP BY tag_id) h
                     ON e.tag_id=h.tag_id AND e.revision=h.revision
@@ -119,6 +119,12 @@ class MemoryManagement:
                 for row in rows[:limit]:
                     profile_view = self.profiles._view(db, row[0])
                     if profile_view.record is not None and not profile_view.error_code:
+                        if state == 'draft' and self.profiles._rejection(db, profile_view.record.draft) is not None:
+                            continue
+                        if state == 'rejected':
+                            origin = self.profiles._rejection(db, profile_view.record.draft)
+                            if origin is not None and origin.tag_id != profile_view.record.tag_id:
+                                continue
                         items.append(self._profile(profile_view.record))
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
             if view == "timeline":
@@ -180,7 +186,7 @@ class MemoryManagement:
             if view.error_code:
                 raise MemoryFailure("source_unavailable")
             allowed = {"profile_confirm": {"draft"}, "profile_reject": {"draft"},
-                       "profile_suppress": {"confirmed"}, "profile_revise": {"confirmed", "draft"}}
+                       "profile_suppress": {"confirmed"}, "profile_revise": {"confirmed", "draft"}, "profile_reopen": {"rejected"}}
             if record.state not in allowed[kind]:
                 raise MemoryFailure("invalid_profile_transition")
             if record.draft.processor_version.startswith("preference-clarification-v1:"):
@@ -299,4 +305,4 @@ class MemoryManagement:
         return outcome
 
 
-_OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise"}
+_OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise", "profile_reopen"}
