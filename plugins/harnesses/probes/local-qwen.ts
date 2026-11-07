@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { withModelFileAccess, type ModelFileAccess } from './model-file-access.ts';
 
 const artifacts: Record<string, string> = {
   'config.json': '8a04114ba59cc42b47d804d35d1d5c61d746ae4634f41f796768c6e302d39b9e',
@@ -67,10 +68,13 @@ export class LocalQwenChat {
   }
 
   static async create(profilePath: string) {
-    const profile = JSON.parse(await readFile(profilePath, 'utf8')) as { transformers_dir: string; model_dir: string; profile: string };
+    const profile = JSON.parse(await readFile(profilePath, 'utf8')) as {
+      transformers_dir: string; model_dir: string; profile: string; file_access?: ModelFileAccess };
     if (!['qwen3-0.6b-experimental-extractive-v1', 'qwen3-0.6b-last-hidden-experimental-v1'].includes(profile.profile)) {
       throw new Error('model_profile_mismatch');
     }
+    const fileAccess = profile.file_access === undefined ? 'library-default' : profile.file_access;
+    if (!['library-default', 'verified-local-path-v1'].includes(fileAccess)) throw new Error('model_file_access_mismatch');
     const candidate = profile.profile === 'qwen3-0.6b-last-hidden-experimental-v1';
     const expectedArtifacts = Object.freeze({ ...artifacts, ...(candidate ? { 'onnx/model_q4.onnx': lastHiddenGraph } : {}) });
     const integrity = await LocalQwenChat.verify(profile.model_dir, expectedArtifacts);
@@ -83,8 +87,9 @@ export class LocalQwenChat {
     const importMs = performance.now() - importedAt;
     api.env.allowRemoteModels = false; api.env.allowLocalModels = true; api.env.useBrowserCache = false; api.env.useFSCache = false;
     const loadedAt = performance.now();
-    const generator: Generator = await api.pipeline('text-generation', profile.model_dir,
-      { local_files_only: true, dtype: 'q4', device: 'cpu', session_options: { intraOpNumThreads: 4, interOpNumThreads: 1 } });
+    const loaded = await withModelFileAccess<Generator>(api.env, profile.model_dir, fileAccess, () => api.pipeline('text-generation', profile.model_dir,
+      { local_files_only: true, dtype: 'q4', device: 'cpu', session_options: { intraOpNumThreads: 4, interOpNumThreads: 1 } }));
+    const generator: Generator = loaded.value;
     const config = JSON.parse(await readFile(join(profile.model_dir, 'config.json'), 'utf8'));
     const generation = JSON.parse(await readFile(join(profile.model_dir, 'generation_config.json'), 'utf8'));
     if (!Number.isSafeInteger(config.max_position_embeddings) || config.max_position_embeddings < 1024) throw new Error('model_window_unknown');
@@ -92,7 +97,7 @@ export class LocalQwenChat {
     if (!eos.length || !eos.every(Number.isSafeInteger)) throw new Error('model_finish_unknown');
     return new LocalQwenChat(generator, profile.model_dir, api.TextStreamer, eos, config.max_position_embeddings,
       { model: 'onnx-community/Qwen3-0.6B-ONNX', revision: '58ca03a5e7b354b480b1a82b34bde8dc7b854cc0',
-        artifacts: { ...expectedArtifacts }, profile: profile.profile,
+        artifacts: { ...expectedArtifacts }, profile: profile.profile, file_access: fileAccess, verified_graph_path_hits: loaded.pathHits,
         export_variant: candidate ? 'last-hidden-before-lm-head-v1' : 'original-full-sequence',
         integrity_ms: integrity, import_ms: importMs, pipeline_load_ms: performance.now() - loadedAt,
         protocol_sha256: createHash('sha256').update(protocol).digest('hex'),

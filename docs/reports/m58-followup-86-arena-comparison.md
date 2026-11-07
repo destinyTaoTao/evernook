@@ -52,3 +52,5 @@ node --expose-gc plugins/harnesses/probes/model-resources.ts PROFILE REQUEST NEW
 各命令须由`probes/admission/monitor.py --max-seconds 35|100 -- ...`包装，使用新外部目录；不覆盖或复用旧输出。类型检查、构建及差异检查通过。原生/durable取消代码未改变，本批不宣称重新验收取消、pi、桌面或真实远端模型，也不将本批直接ORT诊断冒充dsh0.2.1-rc.5完整链路。
 
 外部证据位于`Documents/Codex/2026-11-08/evernook-86-arena-01`，包含四个主实验、独立比较回执、attribution失败/有效记录、撤回变体源码及loader-input-proof。模型、请求、数据库、原始输出与任何凭证均未提交。
+
+后续[路径缓存验证](m58-followup-86-path-cache.md)用真实文件流定位到未消费的FileResponse额外读取整张图，并以现有自定义缓存接口显式避开；保留必要哈希和所有输出。该独立配置仍超2GiB，未晋升。

@@ -193,3 +193,13 @@ probe also records the model argument kind at the actual ORT creation boundary, 
 logging a path string or retaining model buffers for measurement. See the
 [arena comparison and rejected hashing hypothesis](../../docs/reports/m58-followup-86-arena-comparison.md).
 The candidate remains over the frozen 2 GiB gate; these switches are diagnostic only.
+
+An independent copy of the experimental Qwen profile may select
+`"file_access": "verified-local-path-v1"`. It resolves only the already hash-verified q4
+graph through the library's custom cache, with scoped/serialized global state and no cache
+writes. All nine asset hashes still run before load and every generation. Check startup
+`file_access` and `verified_graph_path_hits`; an absent field keeps `library-default`.
+`model-file-access-check.ts PROFILE NEW_EXTERNAL original|verified` is the small real-library
+8 MiB path-only regression (original fails, verified passes), requiring no model generation.
+See [full evidence and limits](../../docs/reports/m58-followup-86-path-cache.md).
+This profile remains experimental and over the memory gate; no daily provider is switched.

@@ -63,6 +63,7 @@ await writeFile(join(destination, 'manifest.json'), JSON.stringify({ mode, alloc
   context_window: 32768, declared_memory_budget: 4096, request_sha256: createHash('sha256').update(JSON.stringify(request)).digest('hex'),
   probe_sha256: createHash('sha256').update(await readFile(import.meta.filename)).digest('hex'),
   model_probe_sha256: createHash('sha256').update(await readFile(new URL('./local-qwen.ts', import.meta.url))).digest('hex'),
+  file_access_probe_sha256: createHash('sha256').update(await readFile(new URL('./model-file-access.ts', import.meta.url))).digest('hex'),
   scope: 'fixed captured provider request; ORT output wrappers observed without retaining tensors; GC cannot establish native tensor release; not native publication or admission',
   gc_enabled: typeof globalThis.gc === 'function', pid: process.pid }) + '\n');
 let model: LocalQwenChat | undefined;

@@ -67,6 +67,7 @@ await writeFile(join(destination, 'manifest.json'), JSON.stringify({ variant, pi
   request_sha256: createHash('sha256').update(JSON.stringify(request)).digest('hex'),
   probe_sha256: createHash('sha256').update(await readFile(import.meta.filename)).digest('hex'),
   model_probe_sha256: createHash('sha256').update(await readFile(new URL('./local-qwen.ts', import.meta.url))).digest('hex'),
+  file_access_probe_sha256: createHash('sha256').update(await readFile(new URL('./model-file-access.ts', import.meta.url))).digest('hex'),
   original_generation_allowance: 512, original_context_window: 32768 }) + '\n');
 let model: LocalQwenChat | undefined;
 try {
