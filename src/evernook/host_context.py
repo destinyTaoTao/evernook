@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 from typing import Any
@@ -64,6 +65,16 @@ class HostContext:
         effective = replace(policy, normal_tokens=min(policy.normal_tokens, max_tokens),
             deep_tokens=min(policy.deep_tokens, max_tokens), pinned_tokens=min(policy.pinned_tokens, max_tokens))
         with counter.session(timeout=timeout) as scoped:
-            return ContextBuilder(self.runtime, self.recall, effective, scoped).build(
-                access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
-                query_omitted=len(query) > 256, cancel=cancel, current_input_id=current_input_id)
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="evernook-tokenizer-warmup") as warmup:
+                # Initialize this request's worker while recall runs; real counts still
+                # recheck the assets. No query or source text is sent by the warmup.
+                ready = warmup.submit(scoped.count, "")
+                try:
+                    bundle = ContextBuilder(self.runtime, self.recall, effective, scoped).build(
+                        access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
+                        query_omitted=len(query) > 256, cancel=cancel, current_input_id=current_input_id)
+                    ready.result()
+                    return bundle
+                finally:
+                    # Also unblock a pending warmup before joining it on early rejection.
+                    scoped.close()

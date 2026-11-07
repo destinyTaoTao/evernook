@@ -12,6 +12,8 @@
 
 一次 `HostContext.build` 使用一个有界分词器会话，复用已验证的 tokenizer 对象；每次计数仍重新核对两份资产散列。请求/响应有独立序号，禁止把旧计数当作下一次响应。会话继承构造超时（最多 120 秒）、单次计数最多 10 秒，取消、异常和正常返回均回收自己的 Node 进程；所有者退出关闭输入后 worker 退出。独立 `LocalTokenCounter.count` 保留单次协议；可信调用端可显式使用 `with counter.session(timeout=...) as scoped`。没有跨构造常驻服务、字符估算或 token 预算缩减。
 
+Core0.1.5在该构造内部，以一次空字符串计数预热同一个worker，与召回并行；预热不发送查询或来源正文，不延长原会话截止时间。正式计数仍走同一有序请求队列并逐次校验资产，不能以预热成功替代后续校验。正常返回前等待预热完成；构造早期拒绝、取消或失败时先关闭会话、解除阻塞，再回收预热线程。并行会增加短时资源重叠，性能与资源仍须按实际负载验收。
+
 dsh `memoryBudget` 由可信宿主提供 `provider`、`modelId`、`memoryTokens`、`contextWindow`、`outputReserveTokens` 和同步 `countRequest(request: GenerateOptions): number`。该回调必须按对应 provider 的实际聊天模板、工具声明与请求封装使用真实目标 tokenizer 计数；它不是 SDK 自带的通用计数器。没有可靠的 provider framing counter 时不能启用此模式。输出额度受预留额度限制；已知模型窗口与配置窗口取较小值。宿主历史或模板占满窗口时，在调用 provider 前报 `host_context_window_exceeded`。#79 协作既有原生压缩 backend，辅助 compaction 调用也受完整计数/屏蔽约束；工作检查点与遗漏规则见[续接契约](work-continuation-v1.md)。
 
 核心计数覆盖完整序列化 payload。宿主使用同一固定资产独立复算，并计入 SDK runtime-context 包装；最终请求仅保留与本轮内容匹配的一份 EverNook section，其余宿主 section 保留。旧记忆快照不会继续挤占额度或携带失效画像。文件先转换为 SDK 的实际 handle 文本，工具使用完整当前声明，避免后续历史工具更新投影改变计数。文本模型图片占位可按 SDK 投影计数；未知或图片模型的图片请求返回 `budgeted_image_request_unsupported`，尚不声明多模态预算支持。输出仍经过既有完整保存屏障；可靠分块流式另见后续票据。
