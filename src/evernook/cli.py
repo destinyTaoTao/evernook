@@ -96,6 +96,7 @@ def _parser() -> Parser:
     backup_retain.add_argument("--apply", action="store_true")
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
+        ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
         ("change", "Trusted source correction, suppression or revocation using JSON stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
@@ -234,6 +235,18 @@ def _execute(args: argparse.Namespace) -> object:
         return configure_audit(args.config, retention_days=args.retention_days)
     runtime = MemoryRuntime(args.config)
     access = runtime.access_from_file(args.access)
+    if args.command == "manage":
+        from .management import MemoryManagement
+        management = MemoryManagement(runtime)
+        value = _input()
+        action = value.pop("action", None)
+        if action == "read":
+            return management.read(access, **value)
+        if action == "preview":
+            return management.preview(access, **value)
+        if action == "confirm":
+            return management.confirm(access, **value)
+        raise MemoryFailure("invalid_management_action")
     if args.command == "capture-chunk":
         value = _input()
         event = value.pop("event")
