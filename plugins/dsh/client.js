@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     gaps: '采集缺口', noGaps: '当前没有报告采集缺口', raw: '普通原话', projection: '脱敏投影', user: '用户', assistant: '助手', tool: '工具',
     draft: '待审', confirmed: '已接纳', version: '版本', uncertain: '时间或推断不等于已确认事实',
     textOnly: '可靠文本流模式：工具、推理块与多文本块尚不支持', buffered: '整段保存后显示：通用工具结果发布屏障尚未验收',
+    bufferedTools: '整段保存后显示，工具调用和结果也须先取得保存回执；正式日用仍待验收',
     encryption: '普通记忆未做全库加密，凭证不通过本页面展示', sourceUnavailable: '该来源已不可读取，可能已更正或停止召回',
     clarification: '此项需要专门的冲突澄清，不能作为普通草案直接接纳', page: '页', result: '实际结果',
   };
@@ -48,6 +49,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     gaps: 'Capture gaps', noGaps: 'No capture gaps currently reported', raw: 'Original words', projection: 'Redacted projection', user: 'User', assistant: 'Assistant', tool: 'Tool',
     draft: 'Draft', confirmed: 'Accepted', version: 'Version', uncertain: 'A timestamp or inference is not a confirmed fact',
     textOnly: 'Reliable text mode: tools, reasoning, and multiple text blocks are unsupported', buffered: 'Saved before display: the general tool-result publication barrier is unverified',
+    bufferedTools: 'Buffered display with saved tool calls and results. Daily-use acceptance is pending.',
     encryption: 'Ordinary memory is not fully encrypted at rest. This page never displays vault credentials.', sourceUnavailable: 'Source unavailable. It may have been corrected or suppressed.',
     clarification: 'This item needs the dedicated conflict-clarification flow, not ordinary acceptance.', page: 'Page', result: 'Actual result',
   };
@@ -216,7 +218,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           h('div', { className: 'en-values' }, ...['local', 'evidence', 'control'].map(key => h('span', { key }, '✓ ' + t(key)))),
           host === 'sidebar' ? h('p', { className: 'en-muted' }, t('sessionHelp')) : null,
           sessionStatus ? h('details', { className: 'en-notice' }, h('summary', null, t('status')),
-            h('p', null, t(sessionStatus.stream_mode === 'durable_text' ? 'textOnly' : 'buffered')),
+            h('p', null, t(sessionStatus.stream_mode === 'durable_text' ? 'textOnly'
+              : sessionStatus.tool_publication === 'saved_before_publish' ? 'bufferedTools' : 'buffered')),
             h('p', null, t('gaps') + ': ' + (sessionStatus.capture_gaps?.join(', ') || t('noGaps')))) : null,
           h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'drafts', 'suppressed', 'rejected'].map(name =>
             button(t(name), () => changeTab(name), { key: name, role: 'tab', 'aria-selected': name === tab }))),

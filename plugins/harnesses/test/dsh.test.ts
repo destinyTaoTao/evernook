@@ -13,7 +13,7 @@ import AgentRegistry from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local';
 import LlmRuntime, { LlmAdapter, MessageId, ToolCallId, freezeMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
-import SessionStore, { SessionId, SessionLogOffset, buildForkSeed } from '@deepseek-ai/dsh-session';
+import SessionStore, { SessionId, SessionLogOffset, buildForkSeed, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import * as persistence from '@deepseek-ai/dsh-session-persistence-jsonl';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
@@ -66,7 +66,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -94,6 +94,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
     config.consolidation = { access, pollMs: 100 };
   }
   if (durable) Object.assign(config, { streamMode: 'durable_text' });
+  if (lifecycle.toolPublication) Object.assign(config, { toolPublication: true });
   let target: Tokenizer | undefined;
   if (budgeted) {
     const tokenizer = { model: { type: 'WordLevel', vocab: { '[UNK]': 0, hello: 1, world: 2 }, unk_token: '[UNK]' },
@@ -1539,4 +1540,98 @@ test('native file references and tool events preserve exact text, input links an
       assert.deepEqual(Buffer.from(object!.content as Uint8Array), data);
     } finally { db.close(); }
   } finally { await handle.dispose(); await host.close(); }
+});
+
+
+const patchedPublication = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+test('patched tool publication saves the exact final snapshot before native notification', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('publication-exact');
+  const observed: Promise<void>[] = [];
+  const finalText = '合成最终修整🙂\r\n37.50元。';
+  try {
+    host.ctx.tools.register({ ...defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic final content',
+      parameters: { amount: { type: 'number' } }, execute: async () => [{ type: 'text', text: 'before final transform' }] }),
+      finalizeContent: () => [{ type: 'text', text: finalText }] });
+    host.ctx.on('tools/result', () => { observed.push((async () => {
+      const found = await reader.call<{ hits: { message_id: string; source: { event: string }; role: string }[] }>('search',
+        { query: 'evernook_tool_publication_v1', mode: 'exact', limit: 100 });
+      const hit = found.hits.find(value => value.role === 'tool' && value.source.event.startsWith('tool-publish-v1:') && value.source.event.endsWith(':result'));
+      assert.ok(hit, 'Final result must already be in the real ledger');
+      const stored = await reader.read(hit.message_id);
+      const snapshot = JSON.parse(stored.event.text) as { result: { content: { text: string }[]; value: unknown } };
+      assert.equal(snapshot.result.content[0].text, finalText);
+      assert.deepEqual(snapshot.result.value, [{ type: 'text', text: 'before final transform' }]);
+      const manifest = JSON.parse(execFileSync(python!, ['-c', "import json,sys; from pathlib import Path; from dataclasses import asdict; from evernook import pair_client,MemoryRuntime; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); print(json.dumps(asdict(MemoryRuntime(c).read_capture(a,sys.argv[2]))))", host.config.config, hit.message_id], { cwd: checkout, encoding: 'utf8' })) as { input_id: string; tool_name: string; complete: boolean };
+      assert.equal(manifest.input_id, host.memory.status(handle.agent.session.id).latest_input!.message_id);
+      assert.equal(manifest.tool_name, 'synthetic-tool');
+      assert.equal(manifest.complete, true);
+    })()); void observed.at(-1)!.catch(() => {}); });
+    handle.agent.followup(user('publication-exact-input', '合成：验证最终工具结果先保存再通知。'));
+    await handle.agent.whenIdle();
+    assert.equal(observed.length, 1); await Promise.all(observed);
+    assert.deepEqual(host.errors, []);
+    assert.equal(adapter.requests.length, 2);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+test('patched tool publication blocks after the real capture identity is revoked following a side effect', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const handle = await host.create('publication-save-failure');
+  let effects = 0;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic permission failure',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        effects++;
+        execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+        return [{ type: 'text', text: 'synthetic result must remain unpublished' }];
+      } }));
+    handle.agent.followup(user('publication-failure-input', '合成：执行后撤销保存权限。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 1);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').length, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/publication-blocked').length, 1);
+    handle.agent.followup(user('publication-no-retry', '合成：核对状态，不得自动重复副作用。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+
+for (const failure of ['protected', 'oversized']) test(`patched tool publication blocks ${failure} final snapshots`, { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('publication-' + failure);
+  let effects = 0;
+  try {
+    const resultText = failure === 'protected' ? 'password=synthetic-tool-never-publish' : 'x'.repeat(600000);
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic unsafe result',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; return [{ type: 'text', text: resultText }]; } }));
+    handle.agent.followup(user('publication-' + failure + '-input', '合成：验证不安全结果阻断。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').length, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/publication-blocked').length, 1);
+    if (failure === 'protected') {
+      await assert.rejects(reader.call('search', { query: resultText, mode: 'exact', limit: 100 }), /evernook:protected_query/);
+      const found = await reader.call<{ hits: unknown[] }>('search', { query: 'synthetic-tool-never-publish', mode: 'exact', limit: 100 });
+      assert.equal(found.hits.length, 0);
+    }
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+
+test('tool publication refuses an unpatched host before starting the memory transport', { skip: patchedPublication }, async () => {
+  const ctx = new Context();
+  try {
+    await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
+    await ctx.plugin(ToolRuntime).await();
+    await assert.rejects(installMemory(ctx, { python: python!, config: join(output!, 'unused-runtime.json'),
+      access: join(output!, 'unused-access.json'), entry: 'dsh', toolPublication: true }), /evernook:tool_publication_patch_required/);
+  } finally { await ctx.fiber.dispose(); }
 });

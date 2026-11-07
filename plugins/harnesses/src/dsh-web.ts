@@ -11,11 +11,13 @@ export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPr
 export interface Config {
   python: string; config: string; access: string; maintenanceAccess: string; entry: string;
   streamMode: 'buffered' | 'durable_text';
+  toolPublication?: boolean;
 }
 export const Config: z<Config> = z.object({
   python: z.string().default(''), config: z.string().default(''), access: z.string().default(''),
   maintenanceAccess: z.string().default(''), entry: z.string().default('dsh'),
   streamMode: z.union(['durable_text', 'buffered']).default('durable_text'),
+  toolPublication: z.boolean().default(false),
 });
 interface Connection {
   fetch: { register(route: { path: string; methods: readonly string[]; requestBody: 'streaming';
@@ -38,7 +40,7 @@ export async function installWeb(ctx: Context, config: Config) {
     throw new Error('evernook:incomplete_web_config');
   }
   const options: MemoryOptions = { python: config.python, config: config.config, access: config.access,
-    entry: config.entry, streamMode: config.streamMode };
+    entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication };
   async function manage(input: RecordValue, signal?: AbortSignal) {
     if (running.size >= 4) throw new Error('evernook:management_busy');
     const promise = runLocalCli(options, config.maintenanceAccess, 'manage', input,

@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { verifyHost } from './verify.mjs';
+import { applyPublicationPatch } from './patch.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const checkout = realpathSync.native(resolve(here, '../../..'));
@@ -24,7 +25,14 @@ const install = spawnSync(process.execPath, [process.env.npm_execpath, 'ci', '--
   cwd: target, stdio: 'inherit', timeout: 180_000,
 });
 assert.equal(install.status, 0, 'Host install failed/timed out; the partial external directory is retained for diagnosis');
+console.log(JSON.stringify(applyPublicationPatch(target)));
 await verifyHost(target);
+const regression = spawnSync(process.execPath, ['--test', '--test-timeout=20000',
+  ...['publication', 'loop', 'crash', 'patch', 'ptc'].map(name => join(here, 'test', name + '.test.mjs'))], {
+  cwd: target, stdio: 'inherit', timeout: 30_000,
+  env: { ...process.env, EVERNOOK_DSH_TEST_HOST: target, EVERNOOK_DSH_TEST_OUTPUT: join(target, '.evernook-install-probe') },
+});
+assert.equal(regression.status, 0, 'Publication regression did not pass; this host is not admitted');
 const audit = spawnSync(process.execPath, [process.env.npm_execpath, 'audit', '--omit=dev'], {
   cwd: target, stdio: 'inherit', timeout: 60_000,
 });
