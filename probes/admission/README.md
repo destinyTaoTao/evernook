@@ -203,3 +203,28 @@ writes. All nine asset hashes still run before load and every generation. Check 
 8 MiB path-only regression (original fails, verified passes), requiring no model generation.
 See [full evidence and limits](../../docs/reports/m58-followup-86-path-cache.md).
 This profile remains experimental and over the memory gate; no daily provider is switched.
+
+## Same-machine external/prepacked weights candidate (#86)
+
+`node plugins/harnesses/probes/export-external-qwen.ts LAST_HIDDEN_PROFILE NEW_EXTERNAL_ROOT`
+exports a distinct pinned ONNX graph and external original/prepacked weights. Use
+`monitor.py --max-seconds 45`; export itself exceeds 2 GiB and is offline preparation.
+The exporter requires a fresh external output, rejects overlap with source, verifies the
+parent assets, and accepts only the independently pinned output bytes. No quantization,
+weights, tokenizer, context or output allowance is reduced. All runtime assets stay external.
+
+The generated profile is explicitly
+`qwen3-0.6b-last-hidden-external-prepacked-experimental-v1`. It requires the verified local
+path strategy, full hashes of all ten assets before loading and each generation, and uses
+CPU arena disabled as part of this independent profile. Because optimized/prepacked outputs
+may be hardware-specific, the loader/exporter reject environments outside the pinned
+Windows x64/i5-13600K/Transformers.js4.2.0/ORT1.24.3 combination. Existing profiles retain
+their original behavior. There is no automatic profile selection or model admission.
+
+For this candidate run `prefill-resources.ts PROFILE REQUEST NEW_EXTERNAL baseline` under
+35 seconds, or `model-resources.ts PROFILE REQUEST NEW_EXTERNAL reuse default` under
+100 seconds. Here `default` preserves the candidate's explicit noarena setting; check actual
+session options and startup metadata. Fixed-request Private Bytes is now below 2 GiB,
+but working set is still about 2.41 GB and strict quality still fails. ORT-format direct-byte
+loading was measured and rejected for higher memory. See
+[measurements, integrity and native cancellation/replay](../../docs/reports/m58-followup-86-external-prepacked.md).

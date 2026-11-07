@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { withModelFileAccess, type ModelFileEnvironment } from '../probes/model-file-access.ts';
-import { LocalQwenChat } from '../probes/local-qwen.ts';
+import { externalPackedProfile, LocalQwenChat } from '../probes/local-qwen.ts';
 
 const model = resolve(process.env.EVERNOOK_TEST_OUTPUT ?? process.env.TEMP!, 'synthetic-pinned-model');
 const environment = (): ModelFileEnvironment => ({ useCustomCache: false, customCache: null,
@@ -76,10 +76,23 @@ test('concurrent verified loads never resolve one model through another model pa
 test('malformed explicit file access is rejected before model assets or dependencies are read', async () => {
   const output = resolve(process.env.EVERNOOK_TEST_OUTPUT ?? process.env.TEMP!, 'model-file-profile-tests');
   await mkdir(output, { recursive: true }); const root = await mkdtemp(join(output, 'profiles-'));
-  for (const value of [null, false, 1, {}, 'unsupported']) {
+  for (const profile of ['qwen3-0.6b-last-hidden-experimental-v1', externalPackedProfile]) {
+    for (const value of [null, false, 1, {}, 'unsupported']) {
+      const path = join(root, 'profile.json');
+      await writeFile(path, JSON.stringify({ profile,
+        model_dir: join(root, 'must-not-be-read'), transformers_dir: join(root, 'must-not-be-imported'), file_access: value }));
+      await assert.rejects(LocalQwenChat.create(path), /model_file_access_mismatch/);
+    }
+  }
+});
+
+test('external prepacked profile requires its verified path policy before reading any model assets', async () => {
+  const output = resolve(process.env.EVERNOOK_TEST_OUTPUT ?? process.env.TEMP!, 'model-file-profile-tests');
+  await mkdir(output, { recursive: true }); const root = await mkdtemp(join(output, 'external-'));
+  for (const file_access of [undefined, 'library-default']) {
     const path = join(root, 'profile.json');
-    await writeFile(path, JSON.stringify({ profile: 'qwen3-0.6b-last-hidden-experimental-v1',
-      model_dir: join(root, 'must-not-be-read'), transformers_dir: join(root, 'must-not-be-imported'), file_access: value }));
-    await assert.rejects(LocalQwenChat.create(path), /model_file_access_mismatch/);
+    await writeFile(path, JSON.stringify({ profile: externalPackedProfile, file_access,
+      model_dir: join(root, 'must-not-be-read'), transformers_dir: join(root, 'must-not-be-imported') }));
+    await assert.rejects(LocalQwenChat.create(path), /external_model_(verified_path_required|environment_mismatch)/);
   }
 });

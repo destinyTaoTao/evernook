@@ -1,5 +1,7 @@
 # #86 — 路径加载时未使用正文的额外模型读取
 
+后续：[外置权重与预处理权重候选](m58-followup-86-external-prepacked.md)将固定请求的完整生成Private Bytes采样降至2GiB内；工作集/质量及完整准入仍未通过。下文保留本批原始边界。
+
 2026-11-08，接续[arena对照](m58-followup-86-arena-comparison.md)。定位并消除一个明确的额外JS文件流读取；模型资源/质量准入仍未通过。新策略只在独立实验profile显式选择，缺省profile保持`library-default`。未修改第三方包、原图/候选图、精度、默认日常profile或冻结评分。
 
 ## 触发条件与证据
