@@ -1,5 +1,7 @@
 # 当前实现与架构图
 
+> **2026-11-08 Windows启动竞争：** Core0.1.2修复SQLite可选日志并发消失时的本机盘符路径误判，并仅对该日志的精确FileNotFound异常有界重查完整ACL。源码和独立安装各100次并发启动零错误，真实权限拒绝保持；见[#103记录](reports/windows-sqlite-path-race.md)。dsh长跑尚未据此宣告通过。
+
 > **2026-11-08 隔离宿主切库：** [#100](reports/dsh-runtime-cutover.md)已用实际独立wheel与同一dsh测试profile验证停止旧入口、重新配对并切向新运行库；原话/控制/可靠流和只读恢复保留，旧库哈希冻结。仅合成数据，未验收用户库/跨机器/实际OS及新的长跑。
 
 > **2026-11-08 推理协议兼容：** preview.18 的 `durable_tools` 增加[有界推理块](reports/dsh-reasoning-stream.md)：完整结构回执后才展示推理，答案文本流独立，保留原生重放元数据。真实 DeepSeek 传输适配器已连本地合成 Messages 端点核对；这不是真实远端模型或质量准入，附件/重叠非工具块仍拒绝。
