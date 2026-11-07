@@ -118,10 +118,11 @@ export async function createRecovery(ctx: Context, config: MemoryConfig, control
     if (live) {
       const first = live.snapshotEvents().map(pluginRecordOf).find(value => value?.type === marker);
       if (first?.type !== marker || hash(first.data) !== hash(expected)) throw new Error('evernook:invalid_recovery_target');
-      await ctx.sessions.flush(live); return;
+      if (operation.state !== 'complete') await ctx.sessions.flush(live);
+      return;
     }
     let handle;
-    try { handle = await ctx.sessionPersistence.open(id, 'write'); }
+    try { handle = await ctx.sessionPersistence.open(id, operation.state === 'complete' ? 'read' : 'write'); }
     catch (error) {
       if (!(error instanceof SessionPersistenceNotFoundError)) throw error;
       if (operation.state === 'complete') throw new Error('evernook:recovery_target_unavailable');
@@ -141,7 +142,7 @@ export async function createRecovery(ctx: Context, config: MemoryConfig, control
       } else {
         if (first?.type !== marker || hash(first.data) !== hash(expected)) throw new Error('evernook:invalid_recovery_target');
       }
-      await handle.flush();
+      if (operation.state !== 'complete') await handle.flush();
     } finally { await handle.close(); }
   }
   async function confirm(id: string, proposal: string, fingerprint: string): Promise<Operation> {

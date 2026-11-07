@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -1992,6 +1992,11 @@ test('trusted recovery creates one durable read-only continuation without replay
     await recovery.close(); fresh = await createRecovery(host.ctx, host.config, control);
     const repeated = await fresh.preview(view.session_id);
     assert.equal((await fresh.confirm(view.session_id, String(repeated.proposal_id), view.fingerprint)).target_session, results[0].target_session);
+    const ownedTarget = await host.ctx.sessionPersistence.open(SessionId(results[0].target_session), 'write');
+    try {
+      assert.equal((await fresh.confirm(view.session_id, preview.proposal_id, view.fingerprint)).target_session, results[0].target_session,
+        'Reading a completed recovery receipt must not compete for the target writer lease');
+    } finally { await ownedTarget.close(); }
     resumed = await host.ctx.agents.resume({ resumeSessionId: SessionId(results[0].target_session), agentOptions: { provider: 'synthetic', model: 'local-test' } });
     assert.equal(adapter.requests.length, 1, 'Creating and resuming an empty recovery never invokes the provider');
     resumed.agent.followup(user('recovery-discussion', '只讨论已经保存的证据，不做任何操作。'));
@@ -2008,7 +2013,7 @@ test('trusted recovery creates one durable read-only continuation without replay
   } finally { await resumed?.dispose(); await fresh?.close(); await recovery.close(); await source.dispose(); await host.close(); }
 });
 
-for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-suppressed']) test(`trusted recovery handles ${failure} without replaying side effects`,
+for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-suppressed', 'missing-target', 'invalid-target']) test(`trusted recovery handles ${failure} without replaying side effects`,
     { skip: Reflect.get(ToolRuntime, 'evernookRecoveryVersion') !== 1 }, async () => {
   const adapter = new Synthetic(); adapter.toolOnce = true;
   const host = await boot(adapter, failure === 'counter-suppressed', false, { toolPublication: true });
@@ -2050,6 +2055,27 @@ for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-supp
       await assert.rejects(host.ctx.sessionPersistence.open(SessionId(preview.target_session), 'read'));
     } else {
       const result = await recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint);
+      if (failure === 'missing-target' || failure === 'invalid-target') {
+        const files = (await readdir(join(host.root, 'sessions'), { recursive: true }))
+          .filter(path => path.split(/[\\/]/).includes(result.target_session) && path.endsWith('session.v4.jsonl'));
+        assert.equal(files.length, 1);
+        const file = join(host.root, 'sessions', files[0]);
+        const original = await readFile(file);
+        try {
+          if (failure === 'missing-target') await rename(file, file + '.withheld');
+          else {
+            const rows = original.toString('utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+            const marker = rows.find(row => row.type === 'plugin:dsh-evernook/recovery-readonly'); assert.ok(marker);
+            marker.data.fingerprint = '0'.repeat(64);
+            await writeFile(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+          }
+          await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint),
+            failure === 'missing-target' ? /recovery_target_unavailable/ : /invalid_recovery_target/);
+        } finally {
+          if (failure === 'missing-target') await rename(file + '.withheld', file);
+          else await writeFile(file, original);
+        }
+      }
       assert.equal(result.read_only, true);
       if (failure === 'counter-suppressed') {
         const counter = host.config.memoryBudget!.countRequest;
