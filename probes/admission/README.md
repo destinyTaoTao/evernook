@@ -48,6 +48,17 @@ No accepted records means automatic acceptance precision is undefined.
 
 ## Scale
 
+### Bounded embedding file-access diagnostic
+
+`embedding_file_access.py --embedding-config EXTERNAL_PROFILE --output NEW_EXTERNAL_DIR`
+runs three public MiniLM calls against the pinned real assets. A diagnostic Node preload
+records worker starts and closed JavaScript ONNX read streams without consuming them.
+The assertion requires three starts and zero such graph bytes; it does not measure ORT's
+native file access or the mandatory Python asset hashes. Optional `--baseline EXTERNAL_JSON`
+also checks the vector-space identity, fixed synthetic inputs and every returned vector
+against a previous report with the same `space`, `texts` and three `records[].vectors`.
+Use the normal outer monitor with a 30-second cap. This is not a scale or p95 gate.
+
 ```powershell
 .venv\Scripts\python.exe probes/admission/scale_ingest.py --messages 100000 --output E:\lab\scale-100k-01
 .venv\Scripts\python.exe probes/admission/scale_index.py --fixture E:\lab\scale-100k-01 --embedding-config E:\models\embedding-profile.json --output E:\lab\index-01
