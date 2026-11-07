@@ -275,10 +275,12 @@ def _control_head(db: sqlite3.Connection, key: bytes) -> str:
                   "text_streams_v1", "text_stream_chunks_v1",
                   "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1", "profile_events_v1",
                   "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1", "continuation_checkpoints_v1",
-                  "preference_updates_settings_v1"):
+                  "preference_updates_settings_v1", "management_previews_v1",
+                  "host_recovery_previews_v1", "host_recovery_operations_v1"):
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()
         # Preserve older control-head identities when this optional feature was never used.
-        if table in {'continuation_checkpoints_v1', 'preference_updates_settings_v1'} and not exists:
+        if table in {'continuation_checkpoints_v1', 'preference_updates_settings_v1', 'management_previews_v1',
+                     'host_recovery_previews_v1', 'host_recovery_operations_v1'} and not exists:
             continue
         digest.update(table.encode() + b"\0")
         if exists:

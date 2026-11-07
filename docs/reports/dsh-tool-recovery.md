@@ -1,5 +1,7 @@
 # 失败工具发布的可信核对与只读续接
 
+后续：[#98](dsh-control-restore.md)已补齐 Core 发布水位对页面/恢复授权表的比较，并验证当前快照保留；本页末尾的迁移限制是 #97 当批边界，真实宿主切库仍未验收。
+
 2026-11-08，实施 [#97](https://github.com/destinyTaoTao/evernook/issues/97)，属于 #94/#88，接续 #95/#96。用户确认首版只创建禁止工具执行的新会话。目标为 Node 24.12.0、Python 3.14.4、Windows 本机 dsh Web 0.2.1-rc.5；使用隔离宿主/profile、合成 provider 和仓库外临时文件，不调用真实聊天模型，不修改日常 profile。
 
 ## 实际行为

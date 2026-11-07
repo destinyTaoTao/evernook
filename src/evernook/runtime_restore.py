@@ -123,7 +123,8 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
                                   "consolidation_results_v1", "consolidation_settings_v1", "preset_settings_v1",
                                   "navigation_policies_v1", "navigation_jobs_v1", "navigation_sources_v1",
                                   "scheduler_settings_v1", "scheduler_progress_v1", "scheduler_sessions_v1", "continuation_checkpoints_v1",
-                                  "preference_updates_settings_v1"):
+                                  "preference_updates_settings_v1", "management_previews_v1",
+                                  "host_recovery_previews_v1", "host_recovery_operations_v1"):
                         def rows(db: sqlite3.Connection) -> set[tuple[object, ...]]:
                             exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
                             return {tuple(row) for row in db.execute(f"SELECT * FROM {table}")} if exists else set()
