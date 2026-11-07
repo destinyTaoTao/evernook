@@ -184,3 +184,12 @@ the observation is explicitly an error/diagnostic, never a successful quality an
 See [candidate results and remaining gates](../../docs/reports/m58-followup-86-last-head-candidate.md).
 These experiment scripts use actual APIs and SDKs for measurement; synthetic or component
 success does not establish real daily use, physical power-loss safety or model admission.
+
+For the same-request allocator control, use `prefill-resources.ts ... noarena`, or
+`model-resources.ts PROFILE REQUEST NEW_EXTERNAL reuse default|noarena`. The optional
+allocator argument defaults to the original behavior. Each invocation records actual session
+options and requires its own fresh directory and 35/100-second monitor budget. The prefill
+probe also records the model argument kind at the actual ORT creation boundary, without
+logging a path string or retaining model buffers for measurement. See the
+[arena comparison and rejected hashing hypothesis](../../docs/reports/m58-followup-86-arena-comparison.md).
+The candidate remains over the frozen 2 GiB gate; these switches are diagnostic only.

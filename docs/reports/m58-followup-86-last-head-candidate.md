@@ -99,6 +99,8 @@ generation modes, varying-input retention and formal quality/resource admission 
 The next investigation can address dense/shared weights and KV/output ownership separately,
 with fresh bounded evidence; no such extra change is bundled here.
 
+2026-11-08：[独立arena对照](m58-followup-86-arena-comparison.md)保留同一1321token输入和512输出额度，两轮完整输出一致；关闭arena降低采样峰值但仍约3.22GB，未晋升。复验前已存在约919MB ArrayBuffer的所有权仍待确认，固定缓冲区哈希假设经反例撤回，没有更改默认校验。
+
 Node typecheck/build, strict source/tests mypy (94 files), isolated strict exporter mypy,
 three loader refusal cases, actual model-stage/full-generation/native/cancel/resume and
 fresh MCP replay checks pass. No full suite or 224-case/scale campaign is run in this slice.
