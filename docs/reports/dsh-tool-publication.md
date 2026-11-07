@@ -2,6 +2,8 @@
 
 日期：2026-11-07。对应 [#95](https://github.com/destinyTaoTao/evernook/issues/95)，属于 [#94](https://github.com/destinyTaoTao/evernook/issues/94)；不关闭 #81/#82 的正式日用门禁。
 
+后续 #96 的显式受限混合流见[独立记录](dsh-mixed-stream.md)；下文保留首批 preview.11 当时的交付与验收边界。
+
 ## 交付边界
 
 独立 Windows Web 宿主固定 dsh 0.2.1-rc.5、Node 24.12.0，插件 preview.11。原版的 `tools/result` 是不等待异步观察者的通知，无法阻止未保存结果返回。本批对 Tools/AgentLoop 两个确切 JS 产物及一处类型声明增加发布屏障 v1。补丁按原始与目标 SHA-256 校验，不修改全局 dsh，不猜测兼容新版本；上游 MIT 声明随补丁保留。

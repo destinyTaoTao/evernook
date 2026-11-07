@@ -10,13 +10,13 @@ export const name = 'dsh-evernook';
 export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config {
   python: string; config: string; access: string; maintenanceAccess: string; entry: string;
-  streamMode: 'buffered' | 'durable_text';
+  streamMode: 'buffered' | 'durable_text' | 'durable_tools';
   toolPublication?: boolean;
 }
 export const Config: z<Config> = z.object({
   python: z.string().default(''), config: z.string().default(''), access: z.string().default(''),
   maintenanceAccess: z.string().default(''), entry: z.string().default('dsh'),
-  streamMode: z.union(['durable_text', 'buffered']).default('durable_text'),
+  streamMode: z.union(['durable_text', 'buffered', 'durable_tools']).default('durable_text'),
   toolPublication: z.boolean().default(false),
 });
 interface Connection {

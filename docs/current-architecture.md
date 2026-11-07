@@ -1,6 +1,6 @@
 # 当前实现与架构图
 
-> **2026-11-07 工具屏障首批：** 独立宿主已加入确切文件哈希固定的可等待发布补丁，显式 `buffered + toolPublication` 可在完整回执后发布原生工具/PTC 结果；保存失败及残留调用阻止自动重跑。[首批记录](reports/dsh-tool-publication.md)保留真实宿主、Core 与原生工具验证。混合可靠流、核对后恢复和正式日用仍未交付，#94/#81/#82 保持开放。
+> **2026-11-07 工具屏障与混合流：** 独立宿主已加入确切文件哈希固定的可等待发布补丁；工具/PTC 结果先取得完整回执，保存失败与残留调用阻止自动重跑。[首批记录](reports/dsh-tool-publication.md)描述缓冲模式；后续显式 `durable_tools + toolPublication` 支持安全文本与工具帧的[受限混合可靠流](reports/dsh-mixed-stream.md)，仍拒绝 reasoning/附件。核对后解封和正式日用未交付，#94/#81/#82 保持开放。
 
 > **2026-11-07 宿主依赖批次：** 新增[独立补丁宿主](../plugins/dsh/host/README.md)，锁定dsh0.2.1-rc.5及四项修复依赖，实际宿主/profile生产审计均0条；启动器规避Windows短路径导致的双模块实例。[当批记录](reports/dsh-host-dependencies.md)中的“缺少发布钩子”由上述首批补丁继续处理，#81/#82/#92尚未整体关闭。
 

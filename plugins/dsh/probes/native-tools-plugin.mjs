@@ -31,11 +31,18 @@ export async function apply(ctx, config) {
       plan.requests++;
       const step = plan.steps[plan.requests - 1];
       if (step) {
+        if (plan.preface) {
+          yield { type: 'block-start', index: 0, blockType: 'text' };
+          yield { type: 'text-delta', index: 0, text: plan.preface };
+          plan.livePrefixObserved = plan.liveText.includes(plan.preface);
+          yield { type: 'block-end', index: 0, block: { type: 'text', text: plan.preface } };
+        }
+        const index = plan.preface ? 1 : 0;
         const id = ToolCallId('synthetic-native-call-' + plan.requests);
         const args = JSON.stringify(step.args);
-        yield { type: 'block-start', index: 0, blockType: 'tool-call' };
-        yield { type: 'tool-call-delta', index: 0, id, name: step.tool, argumentsDelta: args };
-        yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: step.tool, arguments: args } };
+        yield { type: 'block-start', index, blockType: 'tool-call' };
+        yield { type: 'tool-call-delta', index, id, name: step.tool, argumentsDelta: args };
+        yield { type: 'block-end', index, block: { type: 'tool-call', id, name: step.tool, arguments: args } };
         yield { type: 'finish', reason: { kind: 'tool-calls' } };
       } else {
         const text = '合成工具验证完成。';
@@ -47,6 +54,10 @@ export async function apply(ctx, config) {
     }
   }
   ctx.llm.registerAdapter(['synthetic-native94'], new Synthetic());
+  ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+    const plan = plans.get(String(agent.session.id));
+    if (plan && frame.type === 'chunk' && frame.chunk.type === 'text-delta') plan.liveText += frame.chunk.text;
+  });
   const json = (value, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
   function substitute(value) {
     if (typeof value === 'string') return value.replaceAll('$WORK_JSON', JSON.stringify(work.replaceAll('\\', '/'))).replaceAll('$WORK', work.replaceAll('\\', '/'));
@@ -85,6 +96,7 @@ export async function apply(ctx, config) {
       let timedOut = false;
       try {
         const entry = selected.cases[input.case];
+        if (entry.preface !== undefined && (typeof entry.preface !== 'string' || entry.preface.length > 4096)) return json({ error: 'invalid_synthetic_preface' }, 400);
         const steps = entry.steps ?? [{ tool: entry.tool, args: entry.args }];
         if (!Array.isArray(steps) || !steps.length || steps.length > 8
             || steps.some(step => !['read', 'write', 'edit', 'pwsh', 'run_code'].includes(step.tool))) return json({ error: 'unsupported_synthetic_tool' }, 400);
@@ -92,7 +104,7 @@ export async function apply(ctx, config) {
           setup: async agentCtx => { await ctx.get('agentPresets')?.mount(agentCtx, entry.preset); },
           agentOptions: { provider: 'synthetic-native94', model: 'local-test' } });
         const id = String(handle.agent.session.id);
-        const plan = { steps: substitute(steps), requests: 0, trace: [] };
+        const plan = { steps: substitute(steps), requests: 0, trace: [], preface: entry.preface, liveText: '', livePrefixObserved: false };
         plans.set(id, plan);
         removeMode = handle.agent.ctx.tools.presentAs(entry.mode ?? 'native');
         const errors = [];
@@ -111,6 +123,7 @@ export async function apply(ctx, config) {
         const events = handle.agent.session.snapshotEvents();
         plans.delete(id);
         return json({ synthetic: true, case: input.case, session: id, workspace: work, requests: plan.requests, timed_out: timedOut, errors,
+          expected_preface: entry.preface, live_prefix_observed: plan.livePrefixObserved,
           trace: plan.trace, event_types: [...new Set(events.map(value => value.type))],
           expected_error: entry.expectError === true, expected_text: entry.expectText, expected_file: entry.expectedFile,
           expected_requests: entry.cancelAfterMs ? 1 : steps.length + 1,

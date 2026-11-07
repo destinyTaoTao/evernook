@@ -15,7 +15,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.11.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.13.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'
@@ -61,7 +61,7 @@ dsh --profile evernook --no-open
 
 ## 显式工具发布屏障
 
-preview.11增加可选的`toolPublication: true`，仅用于已应用发布补丁并通过回归的独立宿主。默认仍关闭；非补丁宿主启用时拒绝启动记忆连接。配置示例：
+当前包包含可选的`toolPublication: true`，仅用于已应用发布补丁并通过回归的独立宿主。默认仍关闭；非补丁宿主启用时拒绝启动记忆连接。配置示例：
 
 ```yaml
 - id: dsh-evernook
@@ -78,6 +78,10 @@ preview.11增加可选的`toolPublication: true`，仅用于已应用发布补�
 
 该组合对参数、最终结果、PTC调用展示与最终日志先取得完整保存回执，再允许发布；保存失败停止本轮。工具副作用可能已经发生，不能直接重试或假称回滚。失败/中止的原始会话保持待核对状态，可只读检查；没有自动补造结果或自动解封恢复入口。
 
-此模式的模型响应仍整段保存后显示。`durable_text`继续只支持单文本块，启用工具屏障不会解除其工具/推理限制。文本与工具混合可靠流、完整恢复及正式日用仍按#94/#81/#82推进；[本批验证](../../docs/reports/dsh-tool-publication.md)列出实际通过范围。
+上述`buffered`模式的模型响应仍整段保存后显示。`durable_text`继续只支持单文本块，启用工具屏障不会解除其工具/推理限制；[首批验证](../../docs/reports/dsh-tool-publication.md)列出实际通过范围。
+
+preview.13另增显式`streamMode: durable_tools`，同样必须`toolPublication: true`。它让安全文本取得分块回执后连续显示；工具调用、完整参数和provider结束/重放元数据在真实结束并取得完整结构保存回执后发布，再复用最终结果屏障。顺序文本块和交错工具参数受支持，reasoning、附件、重叠文本块和未知结构明确拒绝。截断/取消/错误不伪造完成，已显示的安全前缀可通过原有流回取入口读取；部分文本可能因敏感尾部或前面的结构块暂缓显示。默认模式仍未改变。
+
+此模式仍未通过真实聊天模型、核对后解封或正式日用验收，参见[混合流验证](../../docs/reports/dsh-mixed-stream.md)和#94/#81/#82。没有外部副作用回滚保证。
 
 机制参考：[dsh官方UI插件指南](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset/skills/cordis-plugin-development/references/ui-plugin.md)、[dsh-context](https://github.com/bowenliang123/dsh-context)。本插件沿宿主slot/locale/生命周期API独立实现，没有搬入其缓存、上下文压缩或记忆核心。

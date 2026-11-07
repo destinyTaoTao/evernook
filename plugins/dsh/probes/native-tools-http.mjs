@@ -31,6 +31,7 @@ async function main() {
   assert.equal(result.blocked.length, 0);
   assert.equal(result.errors.length, 0);
   assert.ok(result.results.length >= 1);
+  if (result.expected_preface) assert.equal(result.live_prefix_observed, true, 'Saved text was not visible before the provider finished');
   const rootResult = result.results.find(value => value.type === 'tool/result');
   assert.ok(rootResult);
   assert.equal(Boolean(rootResult.data.message.isError), result.expected_error);
@@ -71,8 +72,18 @@ async function main() {
     }
     result.ledger_snapshots = snapshots.length;
     result.exact_native_results_checked = true;
+    if (result.expected_preface) {
+      const found = await reader.streamAttempts('evernook_dsh_text_stream_v1', 'dsh', result.session);
+      const streams = await Promise.all(found.sources.map(source => reader.readStream({ ...source, event: source.event.replace(/:start$/, ':display') })));
+      const stream = streams.find(value => value.text === result.expected_preface);
+      assert.ok(stream, 'The displayed preface has no authoritative text stream');
+      assert.equal(stream.state, 'complete');
+      assert.equal((await reader.read(stream.final_message_id)).event.text, result.expected_preface);
+      result.live_prefix_saved = true;
+    }
     writeFileSync(reportPath, JSON.stringify(result, null, 2));
-    console.log(JSON.stringify({ exact_native_results_checked: true, ledger_snapshots: snapshots.length }));
+    console.log(JSON.stringify({ exact_native_results_checked: true, ledger_snapshots: snapshots.length,
+      ...(result.live_prefix_saved ? { live_prefix_saved: true } : {}) }));
   } finally { await reader.close(); }
 }
 await main().catch(error => { console.error(error.message); process.exitCode = 1; });

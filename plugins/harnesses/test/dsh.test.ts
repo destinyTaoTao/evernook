@@ -43,10 +43,15 @@ class Synthetic extends LlmAdapter {
   interrupt = false;
   afterFirst?: () => Promise<void>;
   chunks?: StreamChunk[];
+  afterChunk?: (index: number) => Promise<void>;
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
     this.inspect?.(options);
-    if (this.chunks) { yield* this.chunks; return; }
+    if (this.chunks) {
+      let index = 0;
+      for (const chunk of this.chunks) { yield chunk; await this.afterChunk?.(index++); }
+      return;
+    }
     if (this.toolOnce && !this.toolUsed) {
       this.toolUsed = true;
       const id = ToolCallId('synthetic-call');
@@ -66,7 +71,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -80,7 +85,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   await ctx.plugin(ToolRuntime).await();
   await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
   await ctx.plugin(persistence, { root: join(root, 'sessions'), compression: 'none' }).await();
-  await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
+  await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: lifecycle.maxParallelToolCalls ?? 1 }).await();
   if (lifecycle.compaction) {
     await ctx.plugin(TokenMeter).await();
     await ctx.plugin(BasicCompaction, { auto: false, maxTokens: 512, headroomTokens: 512,
@@ -95,6 +100,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   }
   if (durable) Object.assign(config, { streamMode: 'durable_text' });
   if (lifecycle.toolPublication) Object.assign(config, { toolPublication: true });
+  if (lifecycle.streamMode) Object.assign(config, { streamMode: lifecycle.streamMode });
   let target: Tokenizer | undefined;
   if (budgeted) {
     const tokenizer = { model: { type: 'WordLevel', vocab: { '[UNK]': 0, hello: 1, world: 2 }, unk_token: '[UNK]' },
@@ -163,9 +169,10 @@ for (const budgeted of [false, true]) test(`current input receipt stays native a
     && message.content.some(block => block.type === 'text' && block.text === text)));
 });
 
-test('real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget', async t => {
+for (const mode of ['durable_text', 'durable_tools'] as const) test(`real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget (${mode})`,
+    { skip: mode === 'durable_tools' && Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1 }, async t => {
   const adapter = new Synthetic();
-  const host = await boot(adapter, true, true, { compaction: true });
+  const host = await boot(adapter, true, true, { compaction: true, streamMode: mode, toolPublication: mode === 'durable_tools' });
   t.after(() => host.close());
   const sessionId = SessionId('work-' + 'a'.repeat(205));
   const handle = await host.create(sessionId);
@@ -800,7 +807,8 @@ test('a truncated provider finish keeps the withheld tail incomplete rather than
   } finally { await handle.dispose(); await host.close(); }
 });
 
-test('budgeted durable text preserves split UTF-16 pairs and splits large provider deltas at the core byte limit', async () => {
+for (const mode of ['durable_text', 'durable_tools'] as const) test(`budgeted durable text preserves split UTF-16 pairs and splits large provider deltas at the core byte limit (${mode})`,
+    { skip: mode === 'durable_tools' && Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1 }, async () => {
   const adapter = new Synthetic();
   const text = '安全🙂' + '字'.repeat(22000) + '。';
   adapter.chunks = [
@@ -810,7 +818,7 @@ test('budgeted durable text preserves split UTF-16 pairs and splits large provid
     { type: 'block-end', index: 0, block: { type: 'text', text } },
     { type: 'finish', reason: { kind: 'stop' } },
   ];
-  const host = await boot(adapter, true, true);
+  const host = await boot(adapter, true, true, { streamMode: mode, toolPublication: mode === 'durable_tools' });
   const visible: string[] = [];
   host.ctx.on('agent/assistant-stream', ({ frame }) => {
     if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') visible.push(frame.chunk.text);
@@ -1626,12 +1634,222 @@ for (const failure of ['protected', 'oversized']) test(`patched tool publication
 });
 
 
-test('tool publication refuses an unpatched host before starting the memory transport', { skip: patchedPublication }, async () => {
+for (const streamMode of ['buffered', 'durable_tools'] as const) test(`tool publication refuses an unpatched host before starting the memory transport (${streamMode})`, { skip: patchedPublication }, async () => {
   const ctx = new Context();
   try {
     await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
     await ctx.plugin(ToolRuntime).await();
     await assert.rejects(installMemory(ctx, { python: python!, config: join(output!, 'unused-runtime.json'),
-      access: join(output!, 'unused-access.json'), entry: 'dsh', toolPublication: true }), /evernook:tool_publication_patch_required/);
+      access: join(output!, 'unused-access.json'), entry: 'dsh', streamMode, toolPublication: true }), /evernook:tool_publication_patch_required/);
   } finally { await ctx.fiber.dispose(); }
+});
+
+test('mixed reliable mode refuses missing tool publication before starting the memory transport', async () => {
+  const ctx = new Context();
+  try {
+    await assert.rejects(installMemory(ctx, { python: python!, config: join(output!, 'unused-runtime.json'),
+      access: join(output!, 'unused-access.json'), entry: 'dsh', streamMode: 'durable_tools' }), /evernook:invalid_host_config/);
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test('mixed durable stream saves visible text before provider finish and saves exact tool frames before execution', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('mixed-call');
+  const frames: StreamChunk[] = [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text: '合成前缀🙂。' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '合成前缀🙂。' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '37.50元。\r\n' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '37.50元。\r\n' } },
+    { type: 'block-start', index: 2, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ];
+  adapter.chunks = frames;
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('mixed-complete');
+  const visible: StreamChunk[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  let effects = 0;
+  let liveChecked = false;
+  adapter.afterChunk = async index => {
+    if (index === 1) {
+      assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), '合成前缀🙂。');
+      const found = await host.memory.streams(handle.agent.session.id);
+      assert.equal(found.streams.length, 1);
+      const saved = await reader.readStream(found.streams[0]);
+      assert.equal(saved.text, '合成前缀🙂。'); assert.equal(saved.state, 'open');
+      liveChecked = true;
+    }
+    if (index === 7) {
+      assert.equal(visible.some(value => value.type === 'tool-call-delta'), false);
+      assert.equal(effects, 0);
+    }
+  };
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic mixed workflow',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        const found = await reader.call<{ hits: { message_id: string; source: { session: string } }[] }>('search',
+          { query: 'evernook_dsh_tool_frames_v1', mode: 'exact', limit: 100 });
+        const hit = found.hits.find(value => value.source.session === String(handle.agent.session.id)); assert.ok(hit);
+        const saved = JSON.parse(execFileSync(python!, ['-c', "import json,sys; from pathlib import Path; from evernook import MemoryRuntime; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); sys.stdout.buffer.write(r.read_attachment(a,sys.argv[3],'raw-tool-stream-v1'))", host.config.config, host.config.access, hit.message_id], { cwd: checkout, encoding: 'utf8' }));
+        assert.deepEqual(saved, frames);
+        const attempts = await host.memory.streams(handle.agent.session.id);
+        const complete = await reader.readStream(attempts.streams[0]);
+        assert.equal(complete.state, 'complete'); assert.equal(complete.text, '合成前缀🙂。37.50元。\r\n');
+        effects++; adapter.chunks = undefined;
+        return [{ type: 'text', text: '合成工具结果。' }];
+      } }));
+    handle.agent.followup(user('mixed-input', '合成：可靠文本加工具。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.equal(liveChecked, true); assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 2);
+    assert.equal(visible.filter(value => value.type === 'tool-call-delta').length, 1);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+test('mixed durable stream never publishes unsaved provider fields attached to live text frames', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  adapter.chunks = [
+    Object.assign({ type: 'block-start' as const, index: 0, blockType: 'text' as const }, { providerHint: 'password=synthetic-metadata-secret' }),
+    Object.assign({ type: 'text-delta' as const, index: 0, text: '合成安全前缀。' }, { providerHint: 'password=synthetic-metadata-secret' }),
+    { type: 'block-end', index: 0, block: { type: 'text', text: '合成安全前缀。' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ];
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const handle = await host.create('mixed-extra-fields');
+  const visible: StreamChunk[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  try {
+    handle.agent.followup(user('mixed-metadata-input', '合成：不能展示尚未保存的额外字段。'));
+    await handle.agent.whenIdle();
+    assert.doesNotMatch(JSON.stringify(visible), /providerHint|synthetic-metadata-secret/);
+    assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), '合成安全前缀。');
+    assert.equal(visible.some(value => value.type === 'finish'), false);
+    assert.ok(host.errors.length);
+    const found = await host.memory.streams(handle.agent.session.id);
+    const saved = await host.memory.readStream(found.streams[0]);
+    assert.equal(saved.state, 'failed'); assert.equal(saved.final_message_id, null);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('mixed durable stream rejects duplicate provider call identities before any side effect', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('duplicate-mixed-call');
+  adapter.chunks = [0, 1].flatMap((index): StreamChunk[] => [
+    { type: 'block-start', index, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+  ]);
+  adapter.chunks.push({ type: 'finish', reason: { kind: 'tool-calls' } });
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const handle = await host.create('mixed-duplicate-call');
+  let effects = 0;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic duplicate identity',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return [{ type: 'text', text: 'synthetic result' }]; } }));
+    handle.agent.followup(user('mixed-duplicate-input', '合成：重复调用身份必须阻断。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/call').length, 0);
+    assert.ok(host.errors.length);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+for (const failure of ['cross-block', 'escaped-arguments', 'malformed-arguments', 'canceled', 'interrupted', 'truncated', 'mismatch', 'oversized', 'save-revoked', 'reasoning']) {
+  test(`mixed durable stream preserves only saved prefixes on ${failure}`, { skip: !patchedPublication }, async () => {
+    const adapter = new Synthetic();
+    const prefix = '合成前缀🙂。';
+    const first = prefix + (failure === 'cross-block' ? 'pass' : '');
+    const id = ToolCallId('mixed-failure-call');
+    const args = failure === 'escaped-arguments' ? '{"pass\\u0077ord":"synthetic-stream-secret"}'
+      : failure === 'malformed-arguments' ? 'password=synthetic-invalid-json' : '{"amount":37.50}';
+    adapter.chunks = [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: first },
+      { type: 'block-end', index: 0, block: { type: 'text', text: failure === 'mismatch' ? 'changed final text' : first } },
+    ];
+    if (failure === 'cross-block') adapter.chunks.push(
+      { type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'word=synthetic-stream-secret' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'word=synthetic-stream-secret' } });
+    if (failure === 'oversized') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'x'.repeat(800000) });
+    if (failure === 'reasoning') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 1, text: 'unadmitted reasoning' });
+    adapter.chunks.push(
+      { type: 'block-start', index: 2, blockType: 'tool-call' },
+      { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: args },
+      { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: args } },
+      { type: 'finish', reason: { kind: failure === 'truncated' ? 'max-tokens' : 'tool-calls' } });
+    const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+    const handle = await host.create('mixed-failure-' + failure);
+    const visible: StreamChunk[] = [];
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+    let effects = 0;
+    adapter.afterChunk = async index => {
+      if (index !== 1) return;
+      if (failure === 'interrupted') throw new Error('synthetic provider interruption');
+      if (failure === 'canceled') handle.agent.cancel({ kind: 'user' });
+      if (failure === 'save-revoked') execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+    };
+    let fresh: Awaited<ReturnType<typeof installMemory>> | undefined;
+    const reader = new MemoryClient(host.config); await reader.connect();
+    try {
+      host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic rejected stream',
+        parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return [{ type: 'text', text: 'must not run' }]; } }));
+      handle.agent.followup(user('mixed-failure-input', '合成：失败前缀必须能回取，不执行工具。'));
+      await handle.agent.whenIdle();
+      assert.equal(effects, 0);
+      assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), prefix);
+      assert.equal(visible.some(value => value.type === 'tool-call-delta' || value.type === 'finish'), false);
+      assert.doesNotMatch(JSON.stringify(visible), /synthetic-stream-secret|unadmitted reasoning/);
+      assert.doesNotMatch(host.errors.map(String).join('\n'), /password|synthetic-invalid-json/);
+      const found = await host.memory.streams(handle.agent.session.id);
+      assert.equal(found.streams.length, 1);
+      const saved = await reader.readStream(found.streams[0]);
+      assert.equal(saved.text, prefix); assert.equal(saved.final_message_id, null);
+      assert.equal(saved.state, failure === 'cross-block' ? 'protected' : failure === 'canceled' ? 'canceled' : failure === 'save-revoked' ? 'open' : 'failed');
+      if (failure !== 'save-revoked') {
+        await host.memory.close(); fresh = await installMemory(host.ctx, host.config);
+        await fresh.rescan(handle.agent.session.id); await fresh.rescan(handle.agent.session.id);
+        assert.deepEqual(await fresh.readStream(found.streams[0]), saved);
+      }
+      assert.deepEqual(await reader.readStream(found.streams[0]), saved);
+    } finally { await fresh?.close(); await reader.close(); await handle.dispose(); await host.close(); }
+  });
+}
+
+test('mixed durable stream accepts interleaved tool deltas and publishes parallel results in model order', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const first = ToolCallId('mixed-parallel-first'); const second = ToolCallId('mixed-parallel-second');
+  adapter.chunks = [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 0, id: first, name: 'first', argumentsDelta: '{"amount":' },
+    { type: 'block-start', index: 1, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 1, id: second, name: 'second', argumentsDelta: '{"amount":48.75}' },
+    { type: 'block-end', index: 1, block: { type: 'tool-call', id: second, name: 'second', arguments: '{"amount":48.75}' } },
+    { type: 'tool-call-delta', index: 0, id: first, argumentsDelta: '37.50}' },
+    { type: 'block-end', index: 0, block: { type: 'tool-call', id: first, name: 'first', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ];
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools', maxParallelToolCalls: 2 });
+  const handle = await host.create('mixed-parallel');
+  const secondDone = Promise.withResolvers<void>();
+  const bodies: string[] = [];
+  try {
+    for (const name of ['first', 'second']) host.ctx.tools.register({ ...defineContentToolFixture({ name,
+      description: 'Synthetic parallel mixed stream', parameters: { amount: { type: 'number' } }, execute: async () => {
+        if (name === 'first') await secondDone.promise;
+        bodies.push(name); if (name === 'second') secondDone.resolve(); adapter.chunks = undefined;
+        return [{ type: 'text', text: name + '合成结果。' }];
+      } }), isConcurrencySafe: () => true });
+    handle.agent.followup(user('mixed-parallel-input', '合成：交错参数与并行执行。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.deepEqual(bodies, ['second', 'first']);
+    assert.deepEqual(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').map(value => value.data.message.toolCallId), [first, second]);
+  } finally { secondDone.resolve(); await handle.dispose(); await host.close(); }
 });

@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt';
 import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source, type WorkView } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { durableText } from './durable-text.ts';
+import { durableTools } from './durable-tools.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 import { DshWork } from './dsh-work.ts';
 import { renderWork } from './work-continuation.ts';
@@ -30,7 +31,7 @@ export interface Config extends MemoryConfig {
   /** Requires the pinned private-host patch; buffered output remains buffered. */
   toolPublication?: boolean;
   /** Explicit text-only publication. Buffered mode remains the compatibility/validation path. */
-  streamMode?: 'buffered' | 'durable_text';
+  streamMode?: 'buffered' | 'durable_text' | 'durable_tools';
   /** Hard bound on provider frame JSON bytes in either publication mode. */
   maxStreamBytes?: number;
   /** Bound only the optional evidence contribution; full token budgeting belongs to context construction. */
@@ -83,7 +84,8 @@ function event(config: Config, session: string, id: string, role: Event['role'],
 /** Fixed dsh 0.2.1-rc.3 adapter. No host configuration or user data directory is mutated here. */
 export async function installMemory(ctx: Context, config: Config) {
   const streamMode = config.streamMode ?? 'buffered';
-  if (!['buffered', 'durable_text'].includes(streamMode)) throw new Error('evernook:invalid_host_config');
+  if (!['buffered', 'durable_text', 'durable_tools'].includes(streamMode)
+      || streamMode === 'durable_tools' && !config.toolPublication) throw new Error('evernook:invalid_host_config');
   if (config.toolPublication !== undefined && typeof config.toolPublication !== 'boolean') throw new Error('evernook:invalid_host_config');
   if (config.toolPublication && (!ctx.get('tools') || Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1)) {
     throw new Error('evernook:tool_publication_patch_required');
@@ -481,7 +483,11 @@ export async function installMemory(ctx: Context, config: Config) {
     const display = event(config, source, `attempt:${attempt}:display`, 'assistant', '', 1, timestamp, 'partial');
     await work?.link(source, display.source, streamMode);
     await client.remember(event(config, source, `attempt:${attempt}:start`, 'system',
-      stable({ kind: streamMode === 'durable_text' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+      stable({ kind: streamMode !== 'buffered' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+    if (streamMode === 'durable_tools') {
+      yield* durableTools(client, incoming, display, input.receipt.message_id, maxStreamBytes, options.signal);
+      return;
+    }
     if (streamMode === 'durable_text') {
       yield* durableText(client, incoming,
         display,
