@@ -1,5 +1,7 @@
 # 受控运行库发布 v1
 
+2026-11-08：[隔离dsh切换验证](../reports/dsh-runtime-cutover.md)已核对实际wheel、新配对、同一测试profile重启、重要原话/控制/可靠流与只读恢复，旧源库保持冻结；该合成验证不代表用户库、跨机器或物理系统验收。
+
 对应 #66。可信 Python 维护入口 `evernook.runtime_restore.publish_replayed_runtime(runtime, access, source, destination, checkpoint=..., client_id=..., entry=...)` 返回新配置路径和新 `Access`。调用者必须具有 `admin` 与 `archive_review` 权限，提供独立保存的认证检查点及经过 #65 控制重放的归档。
 
 发布前锁定来源账本写入，并重新核对归档认证、完整性与检查点。普通消息、重要交代和关键持久化版本必须完整；快照缺少后续普通证据或版本时返回 `archive_evidence_incomplete`，应重新导出并重放，不能通过忽略缺口发布。当前任务状态从受锁来源同步，避免恢复旧进度或漏掉新增控制证据的处理任务。派生索引可以通过正常维护入口重建。

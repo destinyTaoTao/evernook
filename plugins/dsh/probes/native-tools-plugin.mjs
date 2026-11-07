@@ -24,7 +24,8 @@ export async function apply(ctx, config) {
       modelRequests++;
       const plan = plans.get(String(options.sessionId));
       if (!plan) throw new Error('missing synthetic session plan');
-      plan.trace.push({ purpose: options.purpose, agent_loop: isAgentLoopRequest(options), tool_count: options.tools?.length ?? 0 });
+      plan.trace.push({ purpose: options.purpose, agent_loop: isAgentLoopRequest(options), tool_count: options.tools?.length ?? 0,
+        recovery_context: JSON.stringify(options).includes('untrusted_read_only_recovery') });
       if (!isAgentLoopRequest(options)) {
         yield { type: 'block-start', index: 0, blockType: 'text' };
         yield { type: 'text-delta', index: 0, text: 'Synthetic auxiliary result' };
@@ -116,9 +117,18 @@ export async function apply(ctx, config) {
         const steps = entry.steps ?? [{ tool: entry.tool, args: entry.args }];
         if (!Array.isArray(steps) || !steps.length || steps.length > 8
             || steps.some(step => !['read', 'write', 'edit', 'pwsh', 'run_code'].includes(step.tool))) return json({ error: 'unsupported_synthetic_tool' }, 400);
-        handle = await ctx.agents.create({ sessionId: SessionId(randomUUID()), meta: { cwd: work, delegationDepth: 0 },
-          setup: async agentCtx => { await ctx.get('agentPresets')?.mount(agentCtx, entry.preset); },
-          agentOptions: { provider: 'synthetic-native94', model: 'local-test' } });
+        const setup = async agentCtx => { await ctx.get('agentPresets')?.mount(agentCtx, entry.preset); };
+        const agentOptions = { provider: 'synthetic-native94', model: 'local-test' };
+        if (entry.resumeSession !== undefined) {
+          if (!/^evernook-recovery-[0-9a-f]{40}$/.test(entry.resumeSession)) return json({ error: 'synthetic_readonly_target_required' }, 400);
+          const saved = await ctx.sessionPersistence.open(SessionId(entry.resumeSession), 'read');
+          try {
+            if (!(await saved.read()).events.some(event => event.type === 'plugin:dsh-evernook/recovery-readonly')) {
+              return json({ error: 'synthetic_readonly_policy_required' }, 400);
+            }
+          } finally { await saved.close(); }
+          handle = await ctx.agents.resume({ resumeSessionId: SessionId(entry.resumeSession), setup, agentOptions });
+        } else handle = await ctx.agents.create({ sessionId: SessionId(randomUUID()), meta: { cwd: work, delegationDepth: 0 }, setup, agentOptions });
         const id = String(handle.agent.session.id);
         const plan = { steps: substitute(steps), requests: 0, trace: [], preface: entry.preface, liveText: '', livePrefixObserved: false,
           reasoning: entry.reasoning, liveReasoning: '', reasoningHeld: false };
@@ -147,6 +157,7 @@ export async function apply(ctx, config) {
           expected_reasoning: entry.reasoning?.repeat(steps.length), live_reasoning: plan.liveReasoning, reasoning_held: plan.reasoningHeld,
           trace: plan.trace, event_types: [...new Set(events.map(value => value.type))],
           expected_error: entry.expectError === true, expected_text: entry.expectText, expected_file: entry.expectedFile,
+          expected_readonly: entry.resumeSession !== undefined,
           expected_requests: entry.cancelAfterMs || entry.blockPublication ? 1 : steps.length + 1,
           calls: events.filter(value => value.type === 'tool/call' || value.type === 'tool/ptc-dispatch-start').map(value => ({ type: value.type, data: value.data })),
           results: events.filter(value => value.type === 'tool/result' || value.type === 'tool/ptc-dispatch').map(value => ({ type: value.type, data: value.data })),

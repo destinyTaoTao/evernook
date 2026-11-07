@@ -12,14 +12,18 @@ async function main() {
   const initial = await fetch(launch, { redirect: 'manual' });
   const cookie = initial.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
   assert.ok(cookie);
-  const response = await fetch(base + '/api/evernook-synthetic94/probe', { method: 'POST',
-    headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify(action === 'inventory' ? { action } : { case: action }),
-  });
-  const body = await response.text();
-  const result = body ? JSON.parse(body) : { synthetic: true, error: 'empty native host response' };
-  writeFileSync(reportPath, JSON.stringify(result, null, 2));
-  assert.equal(response.status, 200);
+  let result;
+  if (action === 'verify-saved') result = JSON.parse(readFileSync(reportPath, 'utf8'));
+  else {
+    const response = await fetch(base + '/api/evernook-synthetic94/probe', { method: 'POST',
+      headers: { Origin: base, Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify(action === 'inventory' ? { action } : { case: action }),
+    });
+    const body = await response.text();
+    result = body ? JSON.parse(body) : { synthetic: true, error: 'empty native host response' };
+    writeFileSync(reportPath, JSON.stringify(result, null, 2));
+    assert.equal(response.status, 200);
+  }
   assert.equal(result.synthetic, true);
   if (action === 'inventory') {
     console.log(JSON.stringify({ synthetic: true, tools: result.tools.map(value => value.name) })); return;
@@ -39,6 +43,10 @@ async function main() {
   const rootResult = result.results.find(value => value.type === 'tool/result');
   assert.ok(rootResult);
   assert.equal(Boolean(rootResult.data.message.isError), result.expected_error);
+  if (result.expected_readonly) {
+    assert.equal(rootResult.data.error?.code, 'EVERNOOK_RECOVERY_READ_ONLY');
+    assert.ok(result.trace.some(item => item.agent_loop && item.recovery_context));
+  }
   if (result.expected_text) assert.ok(JSON.stringify(result.results).includes(result.expected_text), 'Expected synthetic output is missing');
   if (result.expected_file) {
     const file = resolve(result.workspace, result.expected_file.path);
@@ -70,6 +78,20 @@ async function main() {
     for (const event of result.calls ?? []) {
       const snapshot = snapshots.find(value => value.call_id === (event.data.subCallId ?? event.data.callId)
         && value.phase === (event.type === 'tool/call' ? 'call' : 'ptc-call'));
+      if (!snapshot && result.expected_readonly && event.type === 'tool/call') {
+        // The hard read-only guard deliberately skips pre-execute hooks. The final
+        // barrier captures the native call before publishing the saved denial.
+        const found = await reader.call('search', { query: event.data.arguments, mode: 'exact', limit: 100 });
+        const native = found.hits.find(hit => hit.source.session === result.session && hit.role === 'tool'
+          && hit.source.event.startsWith('tool:'));
+        assert.ok(native, 'The blocked call has no saved native argument evidence');
+        assert.equal((await reader.read(native.message_id)).event.text, event.data.arguments);
+        const receipt = await reader.readCapture(native.message_id);
+        assert.equal(receipt.complete, true); assert.equal(receipt.kind, 'tool_call');
+        assert.equal(receipt.tool_name, event.data.name);
+        assert.equal((await reader.read(receipt.input_id)).event.role, 'user');
+        continue;
+      }
       assert.ok(snapshot, 'A visible call has no ledger snapshot');
       if (event.type === 'tool/call') assert.deepEqual(JSON.parse(event.data.arguments), snapshot.result.arguments);
       else assert.deepEqual(event.data, snapshot.result.value);
