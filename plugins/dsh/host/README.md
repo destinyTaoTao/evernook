@@ -50,3 +50,5 @@ node ./host/launch.mjs $verifiedHost plugin --profile evernook remove dsh-everno
 ```
 
 安装、升级、卸载后重启 profile 并重新加载页面。外部证据库保留；不要对现有宿主目录运行原地覆盖安装。复现路径、验证结果及未通过项见 [本批记录](../../../docs/reports/dsh-host-dependencies.md)。
+
+Core0.1.3/preview.19的实际独立安装组合已完成[1800秒/180回合稳定性验证](../../../docs/reports/dsh-installed-stability.md)，含宿主强停/重启、客户端重连、取消/拒绝及只读续接；保留此前失败与采样边界。此记录不替代真实模型、质量/规模或物理OS验收。

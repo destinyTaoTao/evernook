@@ -159,7 +159,7 @@ export async function apply(ctx, config) {
           expected_error: entry.expectError === true, expected_text: entry.expectText, expected_file: entry.expectedFile,
           expected_readonly: entry.resumeSession !== undefined,
           expected_requests: entry.cancelAfterMs || entry.blockPublication ? 1 : steps.length + 1,
-          calls: events.filter(value => value.type === 'tool/call' || value.type === 'tool/ptc-dispatch-start').map(value => ({ type: value.type, data: value.data })),
+          calls: events.filter(value => value.type === 'tool/call' || value.type === 'tool/ptc-dispatch-start').map(value => ({ type: value.type, seq: value.seq, data: value.data })),
           results: events.filter(value => value.type === 'tool/result' || value.type === 'tool/ptc-dispatch').map(value => ({ type: value.type, data: value.data })),
           blocked: events.filter(value => value.type === 'plugin:dsh-evernook/publication-blocked').map(value => value.data) });
       } catch (error) { return json({ synthetic: true, error: error.message }, 500); }
