@@ -246,7 +246,10 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     if host_context is not None:
         operations["evernook_v1_context"] = (BuildContext, lambda args: host_context.build(access, **args.model_dump()),
             "Construct a budgeted low-trust memory payload using the configured local target tokenizer and current saved policy. Cannot change policy, accept facts or grant permission.")
-    recall_tools = {"evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
+    if profile == "trusted-host":
+        operations["evernook_v1_read_capture"] = (Read, lambda args: _required(runtime.read_capture(access, args.message_id)),
+            "Trusted host only: recheck a saved capture receipt and attachment integrity without exposing attachment contents. No execution or permission grant.")
+    recall_tools = {"evernook_v1_read_capture", "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
                     "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience", "evernook_v1_context"}
     restricted = set(operations) - recall_tools
     if profile == "recall":

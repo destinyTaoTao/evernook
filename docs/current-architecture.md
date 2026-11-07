@@ -1,5 +1,7 @@
 # 当前实现与架构图
 
+> **2026-11-08 可信核对：** [#97 的只读续接](reports/dsh-tool-recovery.md)已接入独立页面和会话侧栏。预览绑定当前保存回执及来源版本，确认后持久创建禁止工具执行的新会话；旧失败会话不解封，不重跑副作用。限制由固定宿主跨重启、分叉和插件卸载执行。真实聊天模型兼容、运行库迁移及正式日用仍受 #94/#81/#82 限制。
+
 > **2026-11-07 工具屏障与混合流：** 独立宿主已加入确切文件哈希固定的可等待发布补丁；工具/PTC 结果先取得完整回执，保存失败与残留调用阻止自动重跑。[首批记录](reports/dsh-tool-publication.md)描述缓冲模式；后续显式 `durable_tools + toolPublication` 支持安全文本与工具帧的[受限混合可靠流](reports/dsh-mixed-stream.md)，仍拒绝 reasoning/附件。核对后解封和正式日用未交付，#94/#81/#82 保持开放。
 
 > **2026-11-07 宿主依赖批次：** 新增[独立补丁宿主](../plugins/dsh/host/README.md)，锁定dsh0.2.1-rc.5及四项修复依赖，实际宿主/profile生产审计均0条；启动器规避Windows短路径导致的双模块实例。[当批记录](reports/dsh-host-dependencies.md)中的“缺少发布钩子”由上述首批补丁继续处理，#81/#82/#92尚未整体关闭。
@@ -12,7 +14,7 @@
 
 ## 系统结构
 
-当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；没有已部署的守护服务、HTTP 监听或日常宿主启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认十个只读工具，可信启动端选择 trusted-host 才增加七个普通写入/批量工具，事实/经验接纳和保险库解锁均不作为模型工具开放。
+当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；核心没有独立守护服务或 HTTP 监听，dsh 预览复用宿主鉴权通道，日常宿主未启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认十个只读工具，trusted-host 额外提供采集/批量操作、工作续接及只读 capture 回执查询；事实/经验接纳、恢复确认和保险库解锁均不作为模型工具开放。
 
 ```mermaid
 flowchart TB
@@ -188,7 +190,7 @@ flowchart TD
 | R4 跨入口与长期运行 | 真实 stdio、dsh/pi SDK、共享召回与保存/发布/取消，dsh/pi压缩/分叉/重载续接（合成provider） | 日常安装、多插件全验收、桌宠目标、升级/系统离线与长期运行 |
 | 独立安全与质量 | 有限分流/ACL；加密Event收件、本地主口令单次显示；普通来源确认删除与派生清理 | 自动分流/附件、IPC逐次授权、WTS锁定、轮换/恢复/泄露治理、受保护/备份删除与正式质量集 |
 
-MCP 默认十个查询工具，可信宿主模式十七项，包含有限 capture/capture_stream 及可靠文本 capture_chunk/read_stream（显式 contextConfig 另加 context）；候选/事实/经验接纳、彻底删除、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
+MCP 默认十个查询工具，可信宿主模式二十一项，包含有限 capture/capture_stream、只读 read_capture 及可靠文本 capture_chunk/read_stream（显式 contextConfig 另加 context）；候选/事实/经验接纳、彻底删除、恢复确认、配对、索引维护、归档导出及保险库明文操作均不对模型开放。协议与SDK回归通过不表示日常宿主已经安装、启用或完成产品验收。
 
 核心支持[可靠文本分块](contracts/durable-stream-v1.md)：逐块事务回执、幂等顺序、未完成终态和重启分页回放；待消歧敏感尾部由宿主持有，库内仅保存校验及长度。完整结束同事务生成普通助手原文，删除/抑制和恢复核验包含流状态。dsh/pi 显式单文本块发布已接线；dsh 有真实 SDK 子进程强杀回放，pi 有 reload/新 MCP 客户端回放，默认兼容模式仍整段缓冲。验证与限制见 [#72 报告](reports/m58-14-dsh-durable-stream.md)与 [#73 报告](reports/m58-15-pi-durable-stream.md)。
 

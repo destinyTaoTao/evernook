@@ -17,8 +17,11 @@ export async function apply(ctx, config) {
   const work = mkdtempSync(join(root, 'synthetic-work-'));
   writeFileSync(join(work, 'probe-read.txt'), '合成读取🙂\r\n37.50元。\r\n', { flag: 'wx' });
   const plans = new Map();
+  let modelRequests = 0; let toolExecutions = 0;
+  ctx.on('tools/execute', (exec, next) => { toolExecutions++; return next(); });
   class Synthetic extends LlmAdapter {
     async *stream(options) {
+      modelRequests++;
       const plan = plans.get(String(options.sessionId));
       if (!plan) throw new Error('missing synthetic session plan');
       plan.trace.push({ purpose: options.purpose, agent_loop: isAgentLoopRequest(options), tool_count: options.tools?.length ?? 0 });
@@ -75,6 +78,7 @@ export async function apply(ctx, config) {
       const body = await request.text();
       if (Buffer.byteLength(body) > 4096) return json({ error: 'oversized' }, 413);
       const input = JSON.parse(body);
+      if (input.action === 'recovery_counters') return json({ synthetic: true, model_requests: modelRequests, tool_executions: toolExecutions });
       if (input.action === 'inventory') {
         const presets = ctx.get('agentPresets');
         const scope = await presets?.acquireScope();
@@ -92,6 +96,7 @@ export async function apply(ctx, config) {
       let removeMode;
       let removeExecute;
       let removeDeny;
+      let removePublication;
       let cancelTimer;
       let timedOut = false;
       try {
@@ -109,6 +114,9 @@ export async function apply(ctx, config) {
         removeMode = handle.agent.ctx.tools.presentAs(entry.mode ?? 'native');
         const errors = [];
         removeErrors = ctx.on('agent/error', ({ agent, error }) => { if (String(agent.id) === String(handle.agent.id)) errors.push(error.message); });
+        if (entry.blockPublication) removePublication = ctx.on('evernook/tools/before-publish', async exec => {
+          if (String(exec.agent?.session.id) === id) throw new Error('synthetic publication failure after saving');
+        });
         if (entry.cancelAfterMs) removeExecute = ctx.on('tools/execute', async (exec, next) => {
           if (String(exec.agent?.session.id) === id) cancelTimer = setTimeout(() => handle.agent.cancel({ kind: 'user' }), entry.cancelAfterMs);
           return next();
@@ -126,12 +134,12 @@ export async function apply(ctx, config) {
           expected_preface: entry.preface, live_prefix_observed: plan.livePrefixObserved,
           trace: plan.trace, event_types: [...new Set(events.map(value => value.type))],
           expected_error: entry.expectError === true, expected_text: entry.expectText, expected_file: entry.expectedFile,
-          expected_requests: entry.cancelAfterMs ? 1 : steps.length + 1,
+          expected_requests: entry.cancelAfterMs || entry.blockPublication ? 1 : steps.length + 1,
           calls: events.filter(value => value.type === 'tool/call' || value.type === 'tool/ptc-dispatch-start').map(value => ({ type: value.type, data: value.data })),
           results: events.filter(value => value.type === 'tool/result' || value.type === 'tool/ptc-dispatch').map(value => ({ type: value.type, data: value.data })),
           blocked: events.filter(value => value.type === 'plugin:dsh-evernook/publication-blocked').map(value => value.data) });
       } catch (error) { return json({ synthetic: true, error: error.message }, 500); }
-      finally { clearTimeout(timer); clearTimeout(cancelTimer); removeErrors?.(); removeExecute?.(); removeDeny?.(); removeMode?.(); await handle?.dispose(); busy = false; }
+      finally { clearTimeout(timer); clearTimeout(cancelTimer); removeErrors?.(); removeExecute?.(); removeDeny?.(); removePublication?.(); removeMode?.(); await handle?.dispose(); busy = false; }
     },
   });
   ctx.effect(() => remove);

@@ -71,3 +71,19 @@ test('dependencies linked outside the private host are never patched', async () 
   assert.throws(() => applyPublicationPatch(clone), /linked outside/);
   assert.deepEqual(await hashes(root), before);
 });
+
+test('only the pinned previous publication artifacts can upgrade to recovery guards', async () => {
+  const clone = await copyHost();
+  for (const patch of publicationPatch.filter(value => value.previous)) {
+    const path = join(clone, 'node_modules', patch.package, patch.file);
+    let previous = await readFile(path, 'utf8');
+    for (const [before, after] of [...patch.previous.hunks].reverse()) {
+      assert.equal(previous.split(after).length, 2);
+      previous = previous.replace(after, before);
+    }
+    assert.equal(createHash('sha256').update(previous).digest('hex'), patch.previous.hash);
+    await writeFile(path, previous);
+  }
+  assert.equal(applyPublicationPatch(clone).modified_files, 2);
+  assert.deepEqual(await hashes(clone), await hashes(root));
+});

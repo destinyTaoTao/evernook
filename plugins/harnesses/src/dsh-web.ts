@@ -5,9 +5,11 @@ import z from '@deepseek-ai/schemastery';
 import { installMemory, type Config as MemoryOptions } from './dsh.ts';
 import { runLocalCli } from './local-cli.ts';
 import { MemoryClient } from './client.ts';
+import ToolRuntime from '@deepseek-ai/dsh-tools';
+import { createRecovery } from './dsh-recovery.ts';
 
 export const name = 'dsh-evernook';
-export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
+export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPrompt', 'llm', 'agents'];
 export interface Config {
   python: string; config: string; access: string; maintenanceAccess: string; entry: string;
   streamMode: 'buffered' | 'durable_text' | 'durable_tools';
@@ -33,6 +35,7 @@ export async function installWeb(ctx: Context, config: Config) {
   const lifetime = new AbortController();
   let closed = false;
   let memory: Awaited<ReturnType<typeof installMemory>> | undefined;
+  let recovery: Awaited<ReturnType<typeof createRecovery>> | undefined;
   const running = new Set<Promise<unknown>>();
   const csrf = randomBytes(32).toString('hex');
   const configured = [config.python, config.config, config.access, config.maintenanceAccess].every(Boolean);
@@ -41,9 +44,9 @@ export async function installWeb(ctx: Context, config: Config) {
   }
   const options: MemoryOptions = { python: config.python, config: config.config, access: config.access,
     entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication };
-  async function manage(input: RecordValue, signal?: AbortSignal) {
+  async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' = 'manage') {
     if (running.size >= 4) throw new Error('evernook:management_busy');
-    const promise = runLocalCli(options, config.maintenanceAccess, 'manage', input,
+    const promise = runLocalCli(options, config.maintenanceAccess, operation, input,
       signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal);
     running.add(promise);
     try { return await promise; } finally { running.delete(promise); }
@@ -66,6 +69,9 @@ export async function installWeb(ctx: Context, config: Config) {
       await manage({ action: 'read', view: 'status' });
     } finally { await ordinary.close(); }
     memory = await installMemory(ctx, options);
+    if (config.toolPublication && Reflect.get(ToolRuntime, 'evernookRecoveryVersion') === 1) {
+      recovery = await createRecovery(ctx, options, input => manage(input, lifetime.signal, 'host-recovery'));
+    }
   }
   async function handle(request: Request): Promise<Response> {
     if (closed) return json({ error: 'adapter_closed' }, 503);
@@ -103,13 +109,28 @@ export async function installWeb(ctx: Context, config: Config) {
       const input: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
       if (!object(input)) return json({ error: 'invalid_request' }, 400);
       if (input.action === 'bootstrap' && Object.keys(input).length === 1) {
-        return json({ csrf, configured, preview: true, daily_admitted: false, stream_mode: config.streamMode });
+        return json({ csrf, configured, preview: true, daily_admitted: false, stream_mode: config.streamMode,
+          entry: config.entry, recovery_supported: Boolean(recovery) });
       }
       const supplied = request.headers.get('x-evernook-csrf') ?? '';
       if (!/^[a-f0-9]{64}$/.test(supplied) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(csrf))) {
         return json({ error: 'forbidden' }, 403);
       }
       if (!configured) return json({ error: 'configuration_required' }, 409);
+      if (String(input.action).startsWith('recovery_')) {
+        if (!recovery) throw new Error('evernook:recovery_patch_required');
+        if (input.action === 'recovery_cancel' && Object.keys(input).length === 2 && typeof input.proposal_id === 'string') {
+          return json({ result: await recovery.cancel(input.proposal_id) });
+        }
+        if (typeof input.session_id !== 'string' || !/^[\w:.-]{1,256}$/.test(input.session_id)) throw new Error('evernook:invalid_session');
+        if (input.action === 'recovery_read' && Object.keys(input).length === 2) return json({ result: await recovery.read(input.session_id) });
+        if (input.action === 'recovery_preview' && Object.keys(input).length === 2) return json({ result: await recovery.preview(input.session_id) });
+        if (input.action === 'recovery_confirm' && Object.keys(input).length === 4 && typeof input.proposal_id === 'string'
+            && typeof input.fingerprint === 'string' && /^[0-9a-f]{64}$/.test(input.fingerprint)) {
+          return json({ result: await recovery.confirm(input.session_id, input.proposal_id, input.fingerprint) });
+        }
+        throw new Error('evernook:invalid_recovery_action');
+      }
       if (input.action === 'session' && typeof input.session_id === 'string' && Object.keys(input).length === 2) {
         if (!/^[\w:.-]{1,256}$/.test(input.session_id)) return json({ error: 'invalid_session' }, 400);
         return json({ result: memory?.status(input.session_id as Parameters<NonNullable<typeof memory>['status']>[0]) });
@@ -126,10 +147,11 @@ export async function installWeb(ctx: Context, config: Config) {
   try {
     if (!connection?.fetch?.register) throw new Error('evernook:web_connection_unavailable');
     unregister = connection.fetch.register({ path: '/api/evernook/manage', methods: ['POST'], requestBody: 'streaming', fetch: handle });
-  } catch (error) { lifetime.abort(); await memory?.close(); throw error; }
+  } catch (error) { lifetime.abort(); await recovery?.close(); await memory?.close(); throw error; }
   return { handle, async close() {
     if (closed) return;
     closed = true; unregister?.(); lifetime.abort();
+    await recovery?.close();
     await Promise.allSettled([...running]);
     await memory?.close();
   } };

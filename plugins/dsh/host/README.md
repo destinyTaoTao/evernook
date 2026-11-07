@@ -1,6 +1,6 @@
 # 固定补丁宿主（Windows Web 受限预览）
 
-对应 [#92](https://github.com/destinyTaoTao/evernook/issues/92)、[#94](https://github.com/destinyTaoTao/evernook/issues/94)与首批[#95](https://github.com/destinyTaoTao/evernook/issues/95)。独立目录中固定依赖，并对确切上游产物应用发布屏障v1；不替换全局dsh。目标Node >=24.11 <25、dsh0.2.1-rc.5、Cordis4.0.5、schemastery3.18.5、插件preview.13。新版0.2.2-rc.1仍固定Zod4.4.3，本批没有把升级当成依赖修复。
+对应 [#92](https://github.com/destinyTaoTao/evernook/issues/92)、[#94](https://github.com/destinyTaoTao/evernook/issues/94)与[#95/#97](https://github.com/destinyTaoTao/evernook/issues/97)。独立目录中固定依赖，并对确切上游产物应用发布屏障及只读恢复限制；不替换全局dsh。目标Node >=24.11 <25、dsh0.2.1-rc.5、Cordis4.0.5、schemastery3.18.5、插件preview.17。当批核对的0.2.2-rc.1仍固定Zod4.4.3，没有把升级本身当成依赖修复。
 
 | 固定覆盖 | 原因 |
 |---|---|
@@ -11,7 +11,7 @@
 
 锁文件包含完整解析版本与 integrity。`provision` 只接受**不存在、父目录已存在、位于 checkout 外**的绝对路径；`npm ci --ignore-scripts` 有 180 秒安装界限，审计有 60 秒界限，失败保留外部诊断目录并以非零退出，不自动降级或运行 audit fix。版本覆盖只用于本清单，不应复制到任意用户依赖树。
 
-发布补丁只修改Tools/AgentLoop两个JS产物及scheduler.finish的类型声明。应用前校验确切版本、每个原始文件SHA-256和全部替换锚点，变更后的SHA-256也固定；拒绝指向宿主目录外的依赖链接。所有文件预检后逐个原子替换，部分I/O失败时不声明成功。重复应用不改字节；未知文件/版本不尝试猜测迁移。启动器每次校验已补丁文件，缺失或被改写就拒绝启动。许可证见[上游声明](UPSTREAM-NOTICE.md)。
+补丁只修改Tools/AgentLoop两个JS产物及scheduler.finish的类型声明。应用前校验确切版本、原始或明确允许的上一版补丁文件SHA-256和全部替换锚点，目标SHA-256也固定；拒绝指向宿主目录外的依赖链接。所有文件预检后逐个原子替换，部分I/O失败时不声明成功。重复应用不改字节；未知文件/版本不猜测迁移。启动器每次校验全部目标文件。只读会话跳过工具执行钩子和最终格式化器；AgentLoop在派生会话中保留只读标记，即使分叉点在标记之前。许可证见[上游声明](UPSTREAM-NOTICE.md)。
 
 新安装自动应用补丁并运行限时30秒的真实宿主回归（每项另有界限），回归或审计失败均拒绝准入。升级旧的独立宿主时，先停止该宿主所有进程，再从仓库调用：
 
@@ -19,10 +19,10 @@
 node ./host/patch.mjs '<stopped private host directory>'
 $env:EVERNOOK_DSH_TEST_HOST = '<private host directory>'
 $env:EVERNOOK_DSH_TEST_OUTPUT = '<external synthetic test output directory>'
-node --test --test-timeout=20000 ./host/test/publication.test.mjs ./host/test/loop.test.mjs ./host/test/ptc.test.mjs ./host/test/crash.test.mjs ./host/test/patch.test.mjs
+node --test --test-timeout=20000 ./host/test/publication.test.mjs ./host/test/loop.test.mjs ./host/test/ptc.test.mjs ./host/test/crash.test.mjs ./host/test/patch.test.mjs ./host/test/recovery.test.mjs
 ```
 
-工具结果保存失败会留下待核对会话，工具副作用可能已发生。不要通过删除失败标记、降级回原版或强制重跑工具绕过核对；没有实现自动恢复/解封。默认不启用工具功能；`buffered`加`toolPublication: true`的实际范围见[验证记录](../../../docs/reports/dsh-tool-publication.md)，仍不等于可靠混合流或正式日用。
+工具结果保存失败会留下待核对会话，工具副作用可能已发生。不要通过删除失败标记、降级回原版或强制重跑工具绕过核对；只支持可信核对后创建新的只读续接，没有原会话自动解封或工具解禁。默认不启用工具功能；支持范围分别见[发布屏障](../../../docs/reports/dsh-tool-publication.md)、[受限混合流](../../../docs/reports/dsh-mixed-stream.md)及[只读续接](../../../docs/reports/dsh-tool-recovery.md)，仍不代表正式日用。
 
 从 `plugins/dsh` 执行，先按插件 README 构建 tgz：
 
@@ -32,7 +32,7 @@ $verifiedHost = '<external host directory>'
 $env:DSH_HOME = '<existing dedicated external DSH_HOME directory>'
 $env:DSH_TELEMETRY_MODE = 'DISABLED'
 node ./host/launch.mjs $verifiedHost --profile evernook --from-default-profile web --dump-config
-node ./host/launch.mjs $verifiedHost plugin --profile evernook add '<absolute preview.13 tgz path>'
+node ./host/launch.mjs $verifiedHost plugin --profile evernook add '<absolute preview.17 tgz path>'
 node ./host/verify.mjs $verifiedHost "$env:DSH_HOME/profiles/evernook"
 pnpm --dir "$env:DSH_HOME/profiles/evernook" audit --prod
 # Add the explicit external EverNook paths to cordis.patch.yml, as in ../README.md.

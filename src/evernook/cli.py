@@ -97,6 +97,7 @@ def _parser() -> Parser:
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
+        ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
         ("change", "Trusted source correction, suppression or revocation using JSON stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
@@ -249,6 +250,9 @@ def _execute(args: argparse.Namespace) -> object:
         if action == "cancel":
             return management.cancel(access, **value)
         raise MemoryFailure("invalid_management_action")
+    if args.command == "host-recovery":
+        from .host_recovery import HostRecovery
+        return HostRecovery(runtime).run(access, _input())
     if args.command == "capture-chunk":
         value = _input()
         event = value.pop("event")

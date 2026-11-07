@@ -1,5 +1,7 @@
 # 本地 CLI v1
 
+`host-recovery --config <runtime.json> --access <maintenance-access.json>` 接收严格 JSON stdin，提供 `preview/confirm/cancel/complete` 的持久核对回执。仅可信宿主可调用，身份须 recall/maintain/accept；不作为模型工具，不自行执行工具或创建宿主会话。目标会话持久化由已打补丁的宿主完成，Core 的 confirmed/complete 分别表示授权与完成回执，不能混为同一事务。输入、幂等、取消和验证边界见[只读续接](../reports/dsh-tool-recovery.md)。
+
 对应 [Issue #30](https://github.com/destinyTaoTao/evernook/issues/30)。CLI 是可信本机操作端，复用 [Python 核心契约](python-text-v1.md)，不增加数据库、网络服务、保险库或自动采集/注入。仍只支持 Python 3.14、Windows 本机固定 NTFS。
 
 ## 安装与初始化

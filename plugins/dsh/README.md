@@ -15,7 +15,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.13.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.17.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'
@@ -82,6 +82,16 @@ dsh --profile evernook --no-open
 
 preview.13另增显式`streamMode: durable_tools`，同样必须`toolPublication: true`。它让安全文本取得分块回执后连续显示；工具调用、完整参数和provider结束/重放元数据在真实结束并取得完整结构保存回执后发布，再复用最终结果屏障。顺序文本块和交错工具参数受支持，reasoning、附件、重叠文本块和未知结构明确拒绝。截断/取消/错误不伪造完成，已显示的安全前缀可通过原有流回取入口读取；部分文本可能因敏感尾部或前面的结构块暂缓显示。默认模式仍未改变。
 
-此模式仍未通过真实聊天模型、核对后解封或正式日用验收，参见[混合流验证](../../docs/reports/dsh-mixed-stream.md)和#94/#81/#82。没有外部副作用回滚保证。
+此模式仍未通过真实聊天模型、工具解禁或正式日用验收，参见[混合流验证](../../docs/reports/dsh-mixed-stream.md)和#94/#81/#82。没有外部副作用回滚保证。
+
+## 失败后的可信核对与只读续接
+
+preview.17在已升级的独立宿主中提供“核对工具发布”：会话侧栏直接核对当前会话，独立页面可从本入口的时间线条目进入。只显示账本当前允许读取的调用参数、原始输入、结果回执和来源；完整回执、保存缺口和未确认分开显示。工具报告并不独立证明外部状态，副作用仍需核对。
+
+用户先预览，再明确确认“创建只读续接”。旧失败会话保持锁定，不补造工具结果；新会话只保存来源引用和核对元数据，创建动作不调用模型或工具。点击“打开只读会话”后，可主动讨论已保存证据。宿主禁止该会话的所有工具执行，换调用ID、重启、分叉或卸载EverNook均不解除限制；首版没有工具解禁入口。
+
+核对授权与创建完成分开记入同一账本；创建持久化后才返回成功。来源版本变化、取消、过期或创建完成回执失败均明确处理，相同确认重试不会重跑旧操作。已删除的完成目标不会因重复确认自动重建。该能力要求本提交的Core及宿主只读限制补丁，旧宿主不提供入口；更新前须停止独立宿主，按[安装说明](host/README.md)校验和回归。
+
+这是工具发布失败后的受限续接，未代替#82的运行库恢复或完整安装准入。边界与实测见[核对恢复记录](../../docs/reports/dsh-tool-recovery.md)。
 
 机制参考：[dsh官方UI插件指南](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset/skills/cordis-plugin-development/references/ui-plugin.md)、[dsh-context](https://github.com/bowenliang123/dsh-context)。本插件沿宿主slot/locale/生命周期API独立实现，没有搬入其缓存、上下文压缩或记忆核心。

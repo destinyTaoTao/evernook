@@ -1,6 +1,6 @@
 # dsh 正常工具工作流：发布边界与下一批验收
 
-日期：2026-11-07。实施跟踪 [#94](https://github.com/destinyTaoTao/evernook/issues/94)，关联 #88/#92/#81/#82。用户已授权独立宿主最小发布补丁；首批 [#95](https://github.com/destinyTaoTao/evernook/issues/95) 的缓冲工具屏障见[验证记录](dsh-tool-publication.md)，[#96](https://github.com/destinyTaoTao/evernook/issues/96) 补入显式[受限混合可靠流](dsh-mixed-stream.md)。可信核对解封和完整日用工作流仍未交付。
+日期：2026-11-08。实施跟踪 [#94](https://github.com/destinyTaoTao/evernook/issues/94)，关联 #88/#92/#81/#82。用户已授权独立宿主最小发布补丁；首批 [#95](https://github.com/destinyTaoTao/evernook/issues/95) 的缓冲工具屏障见[验证记录](dsh-tool-publication.md)，[#96](https://github.com/destinyTaoTao/evernook/issues/96) 补入显式[受限混合可靠流](dsh-mixed-stream.md)，[#97](https://github.com/destinyTaoTao/evernook/issues/97) 提供[可信核对与只读续接](dsh-tool-recovery.md)。旧会话不解封，首版没有工具解禁；完整日用工作流仍未交付。
 
 ## 已确认的缺口
 

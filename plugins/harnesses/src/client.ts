@@ -24,7 +24,7 @@ export interface Event {
   protected_source?: boolean;
 }
 export interface Receipt { message_id: string; original_saved: boolean; representation: string; status: string }
-export interface CaptureReceipt { message: Receipt; complete: boolean; gaps: string[] }
+export interface CaptureReceipt { message: Receipt; complete: boolean; gaps: string[]; input_id?: string; tool_name?: string }
 export interface StreamReceipt {
   stream_id: string; index: number; state: 'open' | 'complete' | 'canceled' | 'failed' | 'protected';
   released_chars: number; committed_chars: number; pending_chars: number;
@@ -141,6 +141,7 @@ export class MemoryClient {
   capture(event: Event, kind: 'message' | 'tool_call' | 'tool_result', attachments: Attachment[] = [], input_id?: string, tool_name?: string) {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
+  readCapture(message_id: string) { return this.call<CaptureReceipt>('read_capture', { message_id }); }
   recall(query: string, limit = 8, current_input_id?: string) {
     return this.call<RecallResult>('recall', { query, limit, current_input_id });
   }

@@ -23,6 +23,8 @@ import BasicCompaction, { type BasicCompactionConfig } from '@deepseek-ai/dsh-co
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction';
 import { installMemory } from '../src/dsh.ts';
 import type { Config } from '../src/dsh.ts';
+import { createRecovery } from '../src/dsh-recovery.ts';
+import { runLocalCli } from '../src/local-cli.ts';
 import { Tokenizer } from '@huggingface/tokenizers';
 import { MemoryClient } from '../src/client.ts';
 
@@ -1852,4 +1854,124 @@ test('mixed durable stream accepts interleaved tool deltas and publishes paralle
     assert.deepEqual(host.errors, []); assert.deepEqual(bodies, ['second', 'first']);
     assert.deepEqual(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').map(value => value.data.message.toolCallId), [first, second]);
   } finally { secondDone.resolve(); await handle.dispose(); await host.close(); }
+});
+
+test('trusted recovery creates one durable read-only continuation without replaying the failed tool',
+    { skip: Reflect.get(ToolRuntime, 'evernookRecoveryVersion') !== 1 }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const source = await host.create('recovery-source');
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))", host.config.config, owner], { cwd: checkout });
+  let failCompletion = true;
+  const control = (input: Record<string, unknown>) => {
+    if (input.action === 'complete' && failCompletion) { failCompletion = false; return Promise.reject(new Error('synthetic completion receipt lost')); }
+    return runLocalCli(host.config, owner, 'host-recovery', input);
+  };
+  const recovery = await createRecovery(host.ctx, host.config, control);
+  let effects = 0;
+  let fresh: Awaited<ReturnType<typeof createRecovery>> | undefined;
+  let resumed: Awaited<ReturnType<typeof host.ctx.agents.resume>> | undefined;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic recovery side effect',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; return [{ type: 'text', text: '合成副作用已经发生一次。' }]; } }));
+    host.ctx.on('evernook/tools/before-publish', async exec => {
+      if (exec.agent?.session.id === source.agent.session.id) throw new Error('synthetic lost publication after a real capture');
+    });
+    source.agent.followup(user('recovery-input', '合成任务：操作一次，然后核对证据。'));
+    await source.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    const original = source.agent.session.snapshotEvents();
+    const view = await recovery.read(String(source.agent.session.id));
+    assert.equal(view.blocked, true); assert.equal(view.calls[0].result, 'complete');
+    assert.ok(view.evidence.some(value => value.phase === 'input'));
+    const preview = await recovery.preview(String(source.agent.session.id));
+    await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint), /synthetic completion receipt lost/);
+    const persisted = await host.ctx.sessionPersistence.open(SessionId(preview.target_session), 'read');
+    try { assert.ok((await persisted.read()).events.some(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/recovery-readonly')); }
+    finally { await persisted.close(); }
+    const results = await Promise.all([0, 1].map(() => recovery.confirm(view.session_id, String(preview.proposal_id), view.fingerprint)));
+    assert.deepEqual(results[0], results[1]); assert.equal(results[0].state, 'complete');
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    assert.deepEqual(source.agent.session.snapshotEvents(), original);
+    await recovery.close(); fresh = await createRecovery(host.ctx, host.config, control);
+    const repeated = await fresh.preview(view.session_id);
+    assert.equal((await fresh.confirm(view.session_id, String(repeated.proposal_id), view.fingerprint)).target_session, results[0].target_session);
+    resumed = await host.ctx.agents.resume({ resumeSessionId: SessionId(results[0].target_session), agentOptions: { provider: 'synthetic', model: 'local-test' } });
+    assert.equal(adapter.requests.length, 1, 'Creating and resuming an empty recovery never invokes the provider');
+    resumed.agent.followup(user('recovery-discussion', '只讨论已经保存的证据，不做任何操作。'));
+    await resumed.agent.whenIdle();
+    assert.equal(adapter.requests.length, 2);
+    assert.match(JSON.stringify(adapter.requests.at(-1)), /untrusted_read_only_recovery/);
+    assert.match(JSON.stringify(adapter.requests.at(-1)), /合成副作用已经发生一次/);
+    assert.equal(effects, 1);
+    await host.memory.close();
+    const denied = await host.ctx.tools.execute({ callId: ToolCallId('different-identity-after-unload'),
+      name: 'synthetic-tool', arguments: { amount: 37.5 }, agent: resumed.agent, signal: AbortSignal.timeout(5000) });
+    assert.equal(denied.isError, true); assert.equal(denied.error?.info?.code, 'EVERNOOK_RECOVERY_READ_ONLY');
+    assert.equal(effects, 1);
+  } finally { await resumed?.dispose(); await fresh?.close(); await recovery.close(); await source.dispose(); await host.close(); }
+});
+
+for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-suppressed']) test(`trusted recovery handles ${failure} without replaying side effects`,
+    { skip: Reflect.get(ToolRuntime, 'evernookRecoveryVersion') !== 1 }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, failure === 'counter-suppressed', false, { toolPublication: true });
+  const source = await host.create('recovery-' + failure);
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))", host.config.config, owner], { cwd: checkout });
+  const recovery = await createRecovery(host.ctx, host.config, input => runLocalCli(host.config, owner, 'host-recovery', input));
+  const started = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  let effects = 0;
+  let resumed: Awaited<ReturnType<typeof host.ctx.agents.resume>> | undefined;
+  function suppress(id: string) {
+    execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import MemoryRuntime,Event,Source,Change; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); c=r.submit(a,Event(Source('owner','synthetic-review','main','confirmation'),'user',1,None,'complete','合成确认停止召回结果')); r.change(a,Change('suppress-reviewed-result',sys.argv[3],1,'suppress',c.message_id,'synthetic confirmation'))", host.config.config, owner, id], { cwd: checkout });
+  }
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic recovery failure cases',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        effects++; started.resolve(); if (failure === 'active') await release.promise;
+        return [{ type: 'text', text: failure === 'protected' ? 'password=synthetic-unpublished-recovery-secret' : '合成待核对结果。' }];
+      } }));
+    host.ctx.on('evernook/tools/before-publish', async exec => {
+      if (exec.agent?.session.id === source.agent.session.id) throw new Error('synthetic blocked publication');
+    });
+    source.agent.followup(user('recovery-failure-input', '合成：只执行一次。'));
+    if (failure === 'active') {
+      await started.promise;
+      await assert.rejects(recovery.read(String(source.agent.session.id)), /evernook:recovery_busy/);
+      release.resolve();
+    }
+    await source.agent.whenIdle();
+    const view = await recovery.read(String(source.agent.session.id));
+    assert.doesNotMatch(JSON.stringify(view), /synthetic-unpublished-recovery-secret/);
+    if (failure === 'protected') assert.equal(view.calls[0].result, 'unconfirmed');
+    const preview = await recovery.preview(view.session_id);
+    if (failure === 'stale') suppress(view.evidence.find(item => item.phase === 'result')!.message_id);
+    if (failure === 'canceled') await recovery.cancel(preview.proposal_id);
+    if (failure === 'stale' || failure === 'canceled') {
+      await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint),
+        failure === 'stale' ? /evernook:recovery_stale/ : /evernook:recovery_canceled/);
+      await assert.rejects(host.ctx.sessionPersistence.open(SessionId(preview.target_session), 'read'));
+    } else {
+      const result = await recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint);
+      assert.equal(result.read_only, true);
+      if (failure === 'counter-suppressed') {
+        const counter = host.config.memoryBudget!.countRequest;
+        let changed = false;
+        host.config.memoryBudget!.countRequest = request => {
+          if (!changed && JSON.stringify(request).includes('untrusted_read_only_recovery')) {
+            changed = true; suppress(view.evidence.find(item => item.phase === 'result')!.message_id);
+          }
+          return counter(request);
+        };
+        resumed = await host.ctx.agents.resume({ resumeSessionId: SessionId(result.target_session), agentOptions: { provider: 'synthetic', model: 'local-test' } });
+        resumed.agent.followup(user('review-counter-input', '只读讨论证据。'));
+        await resumed.agent.whenIdle();
+        assert.equal(changed, true);
+      }
+    }
+    assert.equal(adapter.requests.length, 1);
+    assert.equal(effects, 1);
+  } finally { release.resolve(); await resumed?.dispose(); await recovery.close(); await source.dispose(); await host.close(); }
 });

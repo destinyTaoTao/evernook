@@ -36,8 +36,9 @@ export function applyPublicationPatch(root) {
   const changes = targets(root).flatMap(patch => {
     const original = readFileSync(patch.path);
     if (digest(original) === patch.after) return [];
-    assert.equal(digest(original), patch.before, `Unrecognized upstream artifact: ${patch.package}`);
-    const source = transformPublicationSource(original.toString('utf8'), patch.hunks);
+    const previous = patch.previous && digest(original) === patch.previous.hash;
+    assert.ok(previous || digest(original) === patch.before, `Unrecognized upstream artifact: ${patch.package}`);
+    const source = transformPublicationSource(original.toString('utf8'), previous ? patch.previous.hunks : patch.hunks);
     assert.equal(digest(source), patch.after, 'Transformed publication patch hash differs');
     return [{ path: patch.path, source }];
   });

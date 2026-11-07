@@ -28,7 +28,7 @@ assert.equal(install.status, 0, 'Host install failed/timed out; the partial exte
 console.log(JSON.stringify(applyPublicationPatch(target)));
 await verifyHost(target);
 const regression = spawnSync(process.execPath, ['--test', '--test-timeout=20000',
-  ...['publication', 'loop', 'crash', 'patch', 'ptc'].map(name => join(here, 'test', name + '.test.mjs'))], {
+  ...['publication', 'loop', 'crash', 'patch', 'ptc', 'recovery'].map(name => join(here, 'test', name + '.test.mjs'))], {
   cwd: target, stdio: 'inherit', timeout: 30_000,
   env: { ...process.env, EVERNOOK_DSH_TEST_HOST: target, EVERNOOK_DSH_TEST_OUTPUT: join(target, '.evernook-install-probe') },
 });

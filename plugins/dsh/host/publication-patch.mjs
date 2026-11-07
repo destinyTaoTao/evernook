@@ -4,7 +4,7 @@ export const publicationPatch = [
     "package": "@deepseek-ai/dsh-tools",
     "file": "lib/index.js",
     "before": "1e53932e7c4213ea24a7d87f06960b7a7702cb21f8a5741c97242b4a470a442a",
-    "after": "7f991f40d8f912c24f703e9aaa7bad3edb8662f0fa57d0f9b6e0adbce7f7121a",
+    "after": "dce51eb4ea56f9b2475de6b067bfc89d837e890180e41495de4e5ba6e7193750",
     "hunks": [
       [
         "var ToolRuntime = class extends Service {",
@@ -69,14 +69,35 @@ export const publicationPatch = [
       [
         "\t\t\t\t\t\t} finally {\n\t\t\t\t\t\t\tdriving = false;",
         "\t\t\t\t\t\t} catch (error) {\n\t\t\t\t\t\t\tdriverFailure = error;\n\t\t\t\t\t\t\trunController.abort(error);\n\t\t\t\t\t\t\tawait Promise.allSettled([...inFlight]);\n\t\t\t\t\t\t\tthrow error;\n\t\t\t\t\t\t} finally {\n\t\t\t\t\t\t\tdriving = false;"
+      ],
+      [
+        "\tstatic evernookPublicationVersion = 1;",
+        "\tstatic evernookPublicationVersion = 1;\n\tstatic evernookRecoveryVersion = 1;"
+      ],
+      [
+        "\t\tconst exec = created.exec;\n\t\tif (this.callerCancelled(exec)) return next({",
+        "\t\tconst exec = created.exec;\n\t\tif (input.agent && (String(input.agent.session.id).startsWith(\"evernook-recovery-\") || input.agent.session.snapshotEvents().some((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\"))) {\n\t\t\tthis.contentFinalizers.delete(exec);\n\t\t\treturn next({ kind: \"final-result\", exec, result: this.materializeFinalResult({ isError: true, content: [{ type: \"text\", text: \"Recovery session is read-only. Tools are disabled.\" }], error: { message: \"Recovery session is read-only. Tools are disabled.\", info: { name: \"EverNookRecoveryReadOnly\", code: \"EVERNOOK_RECOVERY_READ_ONLY\" } } }) });\n\t\t}\n\t\tif (this.callerCancelled(exec)) return next({"
       ]
-    ]
+    ],
+    "previous": {
+      "hash": "7f991f40d8f912c24f703e9aaa7bad3edb8662f0fa57d0f9b6e0adbce7f7121a",
+      "hunks": [
+        [
+          "\tstatic evernookPublicationVersion = 1;",
+          "\tstatic evernookPublicationVersion = 1;\n\tstatic evernookRecoveryVersion = 1;"
+        ],
+        [
+          "\t\tconst exec = created.exec;\n\t\tif (this.callerCancelled(exec)) return next({",
+          "\t\tconst exec = created.exec;\n\t\tif (input.agent && (String(input.agent.session.id).startsWith(\"evernook-recovery-\") || input.agent.session.snapshotEvents().some((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\"))) {\n\t\t\tthis.contentFinalizers.delete(exec);\n\t\t\treturn next({ kind: \"final-result\", exec, result: this.materializeFinalResult({ isError: true, content: [{ type: \"text\", text: \"Recovery session is read-only. Tools are disabled.\" }], error: { message: \"Recovery session is read-only. Tools are disabled.\", info: { name: \"EverNookRecoveryReadOnly\", code: \"EVERNOOK_RECOVERY_READ_ONLY\" } } }) });\n\t\t}\n\t\tif (this.callerCancelled(exec)) return next({"
+        ]
+      ]
+    }
   },
   {
     "package": "@deepseek-ai/dsh-agent-loop",
     "file": "lib/index.js",
     "before": "cf57e3ecd487ac5c2553455aaa5cef2c6fb41e6bd61be5aa455675d1d7193033",
-    "after": "c340f734fe36fcf06144fbf4ea159fad01e82a0f8ce477b41b97d5c6a3c38b40",
+    "after": "9420a1091be04d1396eb6a8ca03b48abae9b612f0385438c893e52c698911b19",
     "hunks": [
       [
         "async function executeToolCalls(ctx, turn, step, toolCalls, signal, acceptContext) {",
@@ -122,8 +143,21 @@ export const publicationPatch = [
       [
         "\t\t\t\tthis.session.append(\"turn/end\", {",
         "\t\t\t\tif (!publicationBlocked) this.session.append(\"turn/end\", {"
+      ],
+      [
+        "\tasync createAgent(ownerCtx, options) {\n\t\tconst preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {\n\t\t\t...options.seed === void 0 ? {} : { seed: options.seed },\n\t\t\t...options.meta === void 0 ? {} : { meta: options.meta },\n\t\t\t...options.inheritedEventCount === void 0 ? {} : { inheritedEventCount: options.inheritedEventCount }\n\t\t}));\n\t\tconst published = (async () => {\n\t\t\tlet stored;\n\t\t\ttry {",
+        "\tasync createAgent(ownerCtx, options) {\n\t\tconst preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {\n\t\t\t...options.seed === void 0 ? {} : { seed: options.seed },\n\t\t\t...options.meta === void 0 ? {} : { meta: options.meta },\n\t\t\t...options.inheritedEventCount === void 0 ? {} : { inheritedEventCount: options.inheritedEventCount }\n\t\t}));\n\t\tconst published = (async () => {\n\t\t\tlet stored;\n\t\t\ttry {\n\t\t\t\tconst parentId = options.meta?.parentSession;\n\t\t\t\tif (parentId && !preparation.session.snapshotEvents().some((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\")) {\n\t\t\t\t\tconst live = this.runtime.ctx.sessions.get(parentId);\n\t\t\t\t\tlet policy = live?.snapshotEvents().find((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\");\n\t\t\t\t\tif (!live && !String(parentId).startsWith(\"evernook-recovery-\")) {\n\t\t\t\t\t\tconst parent = await this.runtime.ctx.sessionPersistence.open(parentId, \"read\");\n\t\t\t\t\t\ttry { policy = (await parent.read()).events.find((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\"); } finally { await parent.close(); }\n\t\t\t\t\t}\n\t\t\t\t\tif (policy || String(parentId).startsWith(\"evernook-recovery-\")) appendPluginRecord(preparation.session, \"plugin:dsh-evernook/recovery-readonly\", policy?.data ?? { version: 1, source_session: String(parentId), fingerprint: \"0\".repeat(64), references: [], evidence: [], outcome_unknown: true });\n\t\t\t\t}"
       ]
-    ]
+    ],
+    "previous": {
+      "hash": "c340f734fe36fcf06144fbf4ea159fad01e82a0f8ce477b41b97d5c6a3c38b40",
+      "hunks": [
+        [
+          "\tasync createAgent(ownerCtx, options) {\n\t\tconst preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {\n\t\t\t...options.seed === void 0 ? {} : { seed: options.seed },\n\t\t\t...options.meta === void 0 ? {} : { meta: options.meta },\n\t\t\t...options.inheritedEventCount === void 0 ? {} : { inheritedEventCount: options.inheritedEventCount }\n\t\t}));\n\t\tconst published = (async () => {\n\t\t\tlet stored;\n\t\t\ttry {",
+          "\tasync createAgent(ownerCtx, options) {\n\t\tconst preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {\n\t\t\t...options.seed === void 0 ? {} : { seed: options.seed },\n\t\t\t...options.meta === void 0 ? {} : { meta: options.meta },\n\t\t\t...options.inheritedEventCount === void 0 ? {} : { inheritedEventCount: options.inheritedEventCount }\n\t\t}));\n\t\tconst published = (async () => {\n\t\t\tlet stored;\n\t\t\ttry {\n\t\t\t\tconst parentId = options.meta?.parentSession;\n\t\t\t\tif (parentId && !preparation.session.snapshotEvents().some((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\")) {\n\t\t\t\t\tconst live = this.runtime.ctx.sessions.get(parentId);\n\t\t\t\t\tlet policy = live?.snapshotEvents().find((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\");\n\t\t\t\t\tif (!live && !String(parentId).startsWith(\"evernook-recovery-\")) {\n\t\t\t\t\t\tconst parent = await this.runtime.ctx.sessionPersistence.open(parentId, \"read\");\n\t\t\t\t\t\ttry { policy = (await parent.read()).events.find((event) => event.type === \"plugin:dsh-evernook/recovery-readonly\"); } finally { await parent.close(); }\n\t\t\t\t\t}\n\t\t\t\t\tif (policy || String(parentId).startsWith(\"evernook-recovery-\")) appendPluginRecord(preparation.session, \"plugin:dsh-evernook/recovery-readonly\", policy?.data ?? { version: 1, source_session: String(parentId), fingerprint: \"0\".repeat(64), references: [], evidence: [], outcome_unknown: true });\n\t\t\t\t}"
+        ]
+      ]
+    }
   },
   {
     "package": "@deepseek-ai/dsh-tools",

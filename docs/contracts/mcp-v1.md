@@ -1,5 +1,7 @@
 # T11：统一记忆 MCP v1
 
+2026-11-08：trusted-host 另提供只读 `evernook_v1_read_capture({message_id})`，重新校验现存 capture 清单与附件完整性，受来源当前控制过滤；默认 recall 模式不开放。该查询不能确认恢复或授权工具。恢复预览/确认/完成仅由持有独立维护身份的本地 `host-recovery` CLI 执行，见[只读续接记录](../reports/dsh-tool-recovery.md)。默认模型工具列表不变。
+
 对应 [Issue #12](https://github.com/destinyTaoTao/evernook/issues/12)。T11 仅依赖已实现的 T07，不依赖仍待备份验收的 T09/T10。本次提供本机 stdio 适配，不注册日常宿主、不监听网络，也不绕过 [Python 核心契约](python-text-v1.md)。
 
 ## 安装与可信配对

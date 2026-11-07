@@ -12,6 +12,7 @@ import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachm
 import { loadTargetCounter } from './tokenizer.ts';
 import { durableText } from './durable-text.ts';
 import { durableTools } from './durable-tools.ts';
+import { recoveryContext } from './dsh-recovery.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 import { DshWork } from './dsh-work.ts';
 import { renderWork } from './work-continuation.ts';
@@ -108,6 +109,7 @@ export async function installMemory(ctx: Context, config: Config) {
   catch (error) { await client.close(); throw error; }
   const through = new Map<string, number>();
   const latest = new Map<string, { text: string; receipt: Receipt }>();
+  const recoverySnapshots = new Map<string, string>();
   const disposers: (() => void)[] = [];
   let closed = false;
   const captureRuns = new Map<string, Promise<void>>();
@@ -342,8 +344,13 @@ export async function installMemory(ctx: Context, config: Config) {
     }));
   }
   disposers.push(ctx.on('system-prompt/assemble', async (assembly, context, next) => {
-    const result = await next();
+    let result = await next();
     if (!context.agent) return result;
+    const recovered = await recoveryContext(client, context.agent.session, maxEvidenceChars);
+    if (recovered) {
+      recoverySnapshots.set(String(context.agent.session.id), recovered);
+      result = { ...result, contexts: [...result.contexts, { name: 'evernook-recovery', text: recovered, interpolate: false }] };
+    } else recoverySnapshots.delete(String(context.agent.session.id));
     context.signal?.throwIfAborted();
     await capture(context.agent.session);
     const input = latest.get(String(context.agent.session.id));
@@ -476,6 +483,13 @@ export async function installMemory(ctx: Context, config: Config) {
       admittedDispatches.add(prepared);
       incoming = call.stream(prepared);
     } else incoming = safe.omitted ? ctx.llm.stream(prepared) : next();
+    const recoverySnapshot = recoverySnapshots.get(sessionId);
+    if (recoverySnapshot) {
+      const session = ctx.sessions.get(options.sessionId);
+      if (!session || await recoveryContext(client, session, maxEvidenceChars) !== recoverySnapshot) {
+        throw new Error('evernook:recovery_sources_changed');
+      }
+    }
     if (auxiliary) { yield* incoming; return; }
     const attempt = randomUUID();
     const timestamp = Date.now();
@@ -543,6 +557,8 @@ export async function installMemory(ctx: Context, config: Config) {
     status(sessionId: SessionId) {
       const key = String(sessionId);
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
+        recovery_read_only: key.startsWith('evernook-recovery-') || Boolean(ctx.sessions.get(sessionId)?.snapshotEvents()
+          .some(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/recovery-readonly')),
         stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked'
           : config.toolPublication ? 'saved_before_publish' : 'buffered_calls_results_unverified',
         context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',

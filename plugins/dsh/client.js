@@ -26,6 +26,11 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     textOnly: '可靠文本流模式：工具、推理块与多文本块尚不支持', buffered: '整段保存后显示：通用工具结果发布屏障尚未验收',
     bufferedTools: '整段保存后显示，工具调用和结果也须先取得保存回执；正式日用仍待验收',
     durableTools: '可靠文本与工具模式：安全文本先保存再显示，工具调用等待完整保存；推理块与附件尚不支持，正式日用仍待验收',
+    recovery: '核对工具发布', recoveryHelp: '旧会话继续锁定。这里不重跑工具、不补造结果。核对后只创建禁止工具执行的新会话，用于阅读和讨论证据。',
+    recoveryUnknown: '副作用仍可能未知；已保存的工具报告不等于外部状态已独立确认。', recoveryNone: '当前没有待核对的工具发布',
+    recoveryPreview: '预览只读续接', recoveryConfirm: '已核对，创建只读续接', recoveryCreated: '只读续接已保存', recoveryOpen: '打开只读会话',
+    recoveryComplete: '完整结果回执', recoveryPartial: '结果有保存缺口', recoveryUnconfirmed: '结果保存未确认', recoveryReadOnly: '只读续接：工具执行被宿主禁止',
+    recoveryInput: '原始用户输入', recoveryCall: '调用参数', recoveryResult: '工具报告', recoveryPtcCall: 'PTC 调用', recoveryPtcLog: 'PTC 日志',
     encryption: '普通记忆未做全库加密，凭证不通过本页面展示', sourceUnavailable: '该来源已不可读取，可能已更正或停止召回',
     clarification: '此项需要专门的冲突澄清，不能作为普通草案直接接纳', page: '页', result: '实际结果',
   };
@@ -52,6 +57,11 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     textOnly: 'Reliable text mode: tools, reasoning, and multiple text blocks are unsupported', buffered: 'Saved before display: the general tool-result publication barrier is unverified',
     bufferedTools: 'Buffered display with saved tool calls and results. Daily-use acceptance is pending.',
     durableTools: 'Saved text streams live; tool calls wait for complete storage. Reasoning and attachments are unsupported. Daily-use acceptance is pending.',
+    recovery: 'Review tool publication', recoveryHelp: 'The original session stays blocked. No tool retries or invented results. Confirmation only creates a new tool-disabled session for evidence review and discussion.',
+    recoveryUnknown: 'Side effects may remain unknown. A saved tool report is not independent confirmation of external state.', recoveryNone: 'No unresolved tool publication in this session',
+    recoveryPreview: 'Preview read-only continuation', recoveryConfirm: 'Reviewed: create read-only continuation', recoveryCreated: 'Read-only continuation saved', recoveryOpen: 'Open read-only session',
+    recoveryComplete: 'Complete result receipt', recoveryPartial: 'Incomplete result capture', recoveryUnconfirmed: 'Result storage unconfirmed', recoveryReadOnly: 'Read-only continuation: the host disables tool execution',
+    recoveryInput: 'Original user input', recoveryCall: 'Call arguments', recoveryResult: 'Tool report', recoveryPtcCall: 'PTC call', recoveryPtcLog: 'PTC log',
     encryption: 'Ordinary memory is not fully encrypted at rest. This page never displays vault credentials.', sourceUnavailable: 'Source unavailable. It may have been corrected or suppressed.',
     clarification: 'This item needs the dedicated conflict-clarification flow, not ordinary acceptance.', page: 'Page', result: 'Actual result',
   };
@@ -63,7 +73,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     .en-notice{padding:12px 15px;border-left:3px solid var(--en-accent);background:var(--en-soft);font-size:12px;margin-bottom:20px;border-radius:0 9px 9px 0}.en-values{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:22px;color:var(--en-accent);font-size:12px}
     .en-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid color-mix(in srgb,currentColor 13%,transparent);padding-bottom:10px;margin-bottom:20px}.en-mem button,.en-mem input,.en-mem select,.en-mem textarea{font:inherit;color:inherit}
     .en-mem button{border:1px solid color-mix(in srgb,currentColor 16%,transparent);background:transparent;border-radius:7px;padding:7px 11px;font-size:12px;cursor:pointer}.en-mem button:hover{background:var(--en-soft)}.en-mem button:disabled{opacity:.4;cursor:wait}
-    .en-mem button[aria-selected=true],.en-mem .en-primary{background:var(--en-accent);border-color:var(--en-accent);color:white}.dark .en-mem .en-primary,.dark .en-mem button[aria-selected=true]{color:#13251c}
+    .en-mem button[aria-selected=true],.en-mem .en-primary,.en-mem .en-primary:hover,.en-mem button[aria-selected=true]:hover{background:var(--en-accent);border-color:var(--en-accent);color:white}.dark .en-mem .en-primary,.dark .en-mem button[aria-selected=true]{color:#13251c}
     .en-mem button:focus-visible,.en-mem input:focus-visible,.en-mem textarea:focus-visible,.en-mem select:focus-visible{outline:2px solid var(--en-accent);outline-offset:3px}
     .en-toolbar{display:flex;gap:8px;margin-bottom:20px;align-items:center;flex-wrap:wrap}.en-mem input,.en-mem select,.en-mem textarea{background:var(--en-soft);border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;padding:8px 11px;min-width:0;font-size:13px}.en-mem input{flex:1;min-width:130px}
     .en-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px}.en-card{border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:12px;padding:17px;background:color-mix(in srgb,currentColor 1%,transparent);overflow-wrap:anywhere}.en-card header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.en-label{font-size:16px;font-weight:550;margin:8px 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}.en-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
@@ -99,7 +109,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       if (!response.ok) { if (response.status === 403) bootstrap = undefined; throw new Error(body.error ?? 'management_unavailable'); }
       return body.result;
     }
-    const errorText = code => t(code === 'management_preview_stale' ? 'changed' : code === 'management_preview_expired' ? 'expired'
+    const errorText = code => t(['management_preview_stale', 'recovery_stale'].includes(code) ? 'changed' : ['management_preview_expired', 'recovery_expired'].includes(code) ? 'expired'
       : code === 'forbidden' ? 'forbidden' : code === 'source_unavailable' ? 'sourceUnavailable'
       : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
     const time = value => value ? new Date(value).toLocaleString() : t('unknown');
@@ -125,6 +135,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [notice, setNotice] = useState('');
       const [revision, setRevision] = useState(0);
       const [sessionStatus, setSessionStatus] = useState(null);
+      const [recovery, setRecovery] = useState(null);
+      const [recoverySupported, setRecoverySupported] = useState(false);
+      const [currentEntry, setCurrentEntry] = useState('dsh');
       const [review, setReview] = useState(null);
       const [editing, setEditing] = useState(null);
       const [source, setSource] = useState(null);
@@ -152,6 +165,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           const boot = await call({ action: 'bootstrap' }, controller.signal);
           if (controller.signal.aborted) return;
           setConfigured(boot.configured);
+          setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
           const result = await call({ action: 'read', view: tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
@@ -190,7 +204,15 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         const result = await call({ action: 'read', view: 'history', tag_id: tagId, limit: 50 }, signal);
         if (alive.current) setHistory(result);
       }); }
-      const changeTab = name => { setTab(name); setCategory(''); setFilter(''); setQuery(''); setOffsets([0]); setNotice(''); };
+      function openRecovery(id) { return perform(async signal => {
+        const result = await call({ action: 'recovery_read', session_id: id }, signal);
+        if (alive.current) setRecovery(result);
+      }); }
+      function closeRecovery() { return perform(async signal => {
+        if (recovery.proposal_id && !recovery.result) await call({ action: 'recovery_cancel', proposal_id: recovery.proposal_id }, signal);
+        if (alive.current) setRecovery(null);
+      }); }
+      const changeTab = name => { setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setOffsets([0]); setNotice(''); };
       const sourceButtons = record => h('div', { className: 'en-actions' }, ...record.draft.sources.map((item, index) =>
         button(`${t('source')} ${index + 1}`, () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy })));
       const profileCard = record => h('article', { className: 'en-card', key: record.tag_id },
@@ -209,7 +231,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         h('header', null, h('span', { className: 'en-pill' }, t(item.role)), h('span', { className: 'en-muted' }, item.source.entry)),
         h('p', { className: 'en-label' }, item.excerpt),
         h('div', { className: 'en-meta' }, h('span', null, `${t('occurred')} · ${time(item.occurred_at)}`), h('span', null, `${t('received')} · ${time(item.received_at)}`)),
-        h('div', { className: 'en-actions' }, button(t('source'), () => openSource(item.message_id), { disabled: busy })));
+        h('div', { className: 'en-actions' }, button(t('source'), () => openSource(item.message_id), { disabled: busy }),
+          recoverySupported && item.source.entry === currentEntry ? button(t('recovery'), () => openRecovery(item.source.session), { disabled: busy }) : null));
       if (!enabled) return null;
       return h('section', { className: 'en-mem' + (host === 'sidebar' ? ' en-side' : ''), 'aria-label': t('title') },
         h('style', null, css), h('div', { className: 'en-wrap' },
@@ -219,6 +242,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           h('div', { className: 'en-notice' }, t('notice')),
           h('div', { className: 'en-values' }, ...['local', 'evidence', 'control'].map(key => h('span', { key }, '✓ ' + t(key)))),
           host === 'sidebar' ? h('p', { className: 'en-muted' }, t('sessionHelp')) : null,
+          sessionStatus?.recovery_read_only ? h('p', { className: 'en-notice' }, t('recoveryReadOnly')) : null,
+          recoverySupported && sessionId ? h('div', { className: 'en-actions' }, button(t('recovery'), () => openRecovery(sessionId), { disabled: busy })) : null,
           sessionStatus ? h('details', { className: 'en-notice' }, h('summary', null, t('status')),
             h('p', null, t(sessionStatus.stream_mode === 'durable_text' ? 'textOnly'
               : sessionStatus.stream_mode === 'durable_tools' ? 'durableTools'
@@ -264,6 +289,29 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                 const outcome = await call({ action: 'confirm', proposal_id: review.proposal_id, operation: review.operation }, signal);
                 if (alive.current) { setReview(null); setNotice(t('saved') + ' · ' + t('version') + ' ' + outcome.revision); updates.dispatchEvent(new Event('changed')); }
               }), { className: 'en-primary', disabled: busy }))) : null,
+          recovery ? h(Modal, { title: t('recovery'), close: closeRecovery, busy, error },
+            h('p', null, t('recoveryHelp')), h('p', { className: 'en-notice' }, t('recoveryUnknown')),
+            !recovery.blocked ? h('p', null, t(recovery.read_only ? 'recoveryReadOnly' : 'recoveryNone')) :
+            h('div', { className: 'en-rows' }, ...recovery.calls.map(item => h('article', { className: 'en-card', key: item.key },
+              h('h2', null, item.name), h('p', null, t(item.result === 'complete' ? 'recoveryComplete' : item.result === 'partial' ? 'recoveryPartial' : 'recoveryUnconfirmed'))))),
+            ...recovery.evidence.map(item => h('article', { className: 'en-card', key: item.message_id },
+              h('p', { className: 'en-muted' }, t(({ input: 'recoveryInput', call: 'recoveryCall', result: 'recoveryResult', 'ptc-call': 'recoveryPtcCall', 'ptc-log': 'recoveryPtcLog' })[item.phase])),
+              h('pre', null, item.excerpt), button(t('source'), () => openSource(item.message_id), { disabled: busy }))),
+            recovery.result ? h('div', { role: 'status' }, h('p', null, t('recoveryCreated')), h('p', { className: 'en-muted' }, recovery.result.target_session),
+              button(t('recoveryOpen'), () => perform(async () => {
+                await ctx.get('sessions').refresh(); ctx.get('uiWorkspace').openSession(recovery.result.target_session); setRecovery(null);
+              }), { disabled: busy || !ctx.get?.('uiWorkspace') })) :
+            recovery.blocked && !recovery.read_only ? h('div', { className: 'en-footer' },
+              button(t('cancel'), closeRecovery, { disabled: busy }),
+              button(t(recovery.proposal_id ? 'recoveryConfirm' : 'recoveryPreview'), () => perform(async signal => {
+                if (!recovery.proposal_id) {
+                  const preview = await call({ action: 'recovery_preview', session_id: recovery.session_id }, signal);
+                  if (alive.current) setRecovery(preview);
+                } else {
+                  const result = await call({ action: 'recovery_confirm', session_id: recovery.session_id, proposal_id: recovery.proposal_id, fingerprint: recovery.fingerprint }, signal);
+                  if (alive.current) setRecovery({ ...recovery, result });
+                }
+              }), { className: 'en-primary', disabled: busy })) : null) : null,
           source ? h(Modal, { title: t(source.representation === 'original' ? 'raw' : 'projection'), close: () => setSource(null), busy, error },
             h('div', { className: 'en-meta' }, `${source.source.entry} · ${source.source.session}`, h('span', null, `${t('received')} · ${time(source.received_at)}`)),
             h('pre', null, source.text), source.next_cursor !== null ? button(t('more'), () => openSource(source.message_id, source.next_cursor), { disabled: busy }) : null,
@@ -290,5 +338,5 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       for (const dispose of resources.reverse()) await dispose();
     });
   }
-  return { name: 'dsh-evernook-client', inject: ['slots', 'locale'], apply };
+  return { name: 'dsh-evernook-client', inject: ['slots', 'locale', 'sessions', 'uiWorkspace'], apply };
 } });
