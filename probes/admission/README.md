@@ -17,6 +17,7 @@ From the repository root, run each phase into a **new** external directory:
 ```powershell
 .venv\Scripts\python.exe probes/admission/quality.py core --output E:\lab\core-01
 .venv\Scripts\python.exe probes/admission/quality.py automatic --output E:\lab\auto-01
+.venv\Scripts\python.exe probes/admission/quality.py lexical --output E:\lab\lexical-modes-01
 .venv\Scripts\python.exe probes/admission/quality.py prepare --entry dsh --embedding-config E:\models\embedding-profile.json --output E:\lab\dsh-fixtures-01
 ```
 
@@ -45,6 +46,19 @@ observations and invokes the frozen public scorer. Run it separately for dsh and
 The automatic collector explicitly enables only the existing rules processor in isolated
 fixtures. Its conservative `review` fallback is a collector mapping, not a model classification.
 No accepted records means automatic acceptance precision is undefined.
+
+The `lexical` phase creates a fresh public-API fixture with the frozen sources and
+replays each literal retrieval case in seven modes: unbuilt, behind legacy,
+ready legacy, covering index, both optional accelerations, FTS ID only, and legacy
+restored. Each mode is scored separately and compared with the unbuilt page's
+complete hits/spans/order/pagination and unchanged source count/watermark. A failed
+mode saves its evidence and exits with an error; it cannot silently pass because
+the final mode recovered. `lexical-mode-summary.json` separates unique cases from
+repeated mode observations; `lexical-modes/*.json` retains actual pages and scores.
+The standard root observations/report contain only the final mode's retrieval
+rows and remain incomplete (exit 2) for other unrun dimensions. This small fixture
+is not the 100k/1M semantic/host, concurrent rebuild or p95 matrix. All enable/disable
+operations affect only its new external synthetic runtime.
 
 ## Scale
 

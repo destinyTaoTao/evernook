@@ -244,3 +244,25 @@ Native host reports are complete; the stopped scale campaign remains partial. No
 million-target matrix, complete-memory latency pass, full-history semantic coverage, physical
 OS disconnection, desktop UI or physical power-loss acceptance is claimed. The installed
 candidate is separately bounded in [M58-24](m58-24-installed-profile.md).
+
+## Core0.1.12冻结本地质量与索引模式补验（2026-11-09）
+
+在新的仓库外合成夹具复跑当前非editable Core0.1.12；运行前后45个代码成员与Git/wheel/实装逐字节相同，wheel SHA-256为`3face086b7e877953d5b3891e58d3f25edc60dbc46863c2dd39f30ed06bffa6e`。原suite身份`b487e1777bd06eef30a50c3fc6811ef54e801c8bc00b3d46e00c6388b8d9886b`、原policy文件和计分器保持，语料仍是委派AI复核版，人工复核pending；没有运行模型或重新采集dsh/pi回答，也没有将历史宿主结果合入这次新评分。
+
+| 当前实际分项 | passed / failed / missing | 边界 |
+|---|---|---|
+| 保存 | 136 / 0 / 0 | 公开submit/read、原文/受保护投影 |
+| 字面检索 | 60 / 0 / 0 | 原冻结exact/lexical查询，不是语义召回 |
+| 时态 | 108 / 0 / 0 | 显式事实种子，不是自动抽取 |
+| 自动规则 | 21 / 39 / 0 | 60个独立允许上下文，全部实际为review；候选和接纳画像均0，处理错误0 |
+| 宿主回答 | 0 / 0 / 224 | 本批未运行，保持missing |
+
+当前合并364份真实观察后，325通过、39失配、224缺失，outcome=failed；27个canonical阻断项保留。有限canary扫描仅覆盖本批已提供观察，违规0，不是未知秘密零泄露保证。自动规则期望accept12/review21/reject19/clarify8，而实际均review；无真实接纳，precision未定义，不能把保守回退当作拒绝/澄清识别成功。该结果与旧有限规则分项相同，不因Core查询优化而放宽门槛。
+
+新增`quality.py lexical`可复跑阶段：在新的136来源公开API夹具，按未建、旧格式落后10/136、旧格式追平、仅覆盖、两项加速、仅FTS ID、反向恢复旧格式依次核对。每种60题均独立计分60/60，完整命中/片段/顺序/分页及来源计数/水位与未建状态相同；共420次重复模式观察，不是420个独立问题，也不是重建竞争或100k/1M矩阵。每模式原始页和评分分别保留，任一模式失败即保存进度并报错，根结果只含最后模式60条检索观察、其他分项仍missing，正常退出2。
+
+接入后用真实安装包再跑新阶段，7模式完整通过；另做一次探针负向对照，故意只破坏behind模式的一段返回片段、保持来源ID。冻结来源评分仍60/60，但完整页守卫在第2/7模式明确失败，后续未执行，错误页和进度保留。它是验证探针检错能力的注入，不是Core真实损坏。新probe SHA-256 `0ebccaf4bd7f18a830379d9c5b298f4b77b845a9a033efd286a5b1eefe6fa331`；既有save/seed/automatic/prepare函数AST未变。strict mypy该文件通过；首次未配置源码搜索路径出现import-untyped，按项目源码设置MYPYPATH后通过，没有忽略类型错误或给安装包补标记。
+
+资源monitor均在原上限内自然结束：Core7.270秒/29采样/观察峰86466560字节/退出2（另284项未运行）；automatic40.067秒/160采样/峰89825280/退出1（39失配），3次进程采样查询失败保留；先行模式探针5.769秒/23采样/峰23330816/退出0；接入后的正式脚本6.272秒/25采样/峰87977984/退出2；负向对照捕获预期错误3.518秒/14采样/峰72622080/退出0。除automatic的3次采样失败外，其余0。PowerShell对非零子进程的外层汇总退出1不覆盖monitor记录的实际2/1；不将观察峰称作硬峰值或p95。
+
+后验复算合并评分/全部模式页和原始资源样本、61份Core/自动夹具DB quick_check/FK通过，接入阶段的单独后验及负向对照核对通过，相关Node/Python进程0。冻结脚本/语料/清单、原始观察、完整页、失败、后验与清理在`Documents/Codex/2026-11-09/evernook-81-quality012-01`保留；未提交运行库或访问材料。本批仅增加验收探针与记录，无Core/插件/模型策略变更，不改日用profile。完整宿主质量、语义/规模/正式时延和物理OS门禁仍开放；新检查点持久格式及ORT原生提案未接入，#105等待原生计数，PR93保持draft。
