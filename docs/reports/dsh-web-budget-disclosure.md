@@ -44,6 +44,21 @@ owner bootstrap新增`context_mode`，从实际安装选项和连接状态派生
 
 公开产物核对SHA-256：token-meter `lib/index.js`为`b76a27f84d1f733c4a760e36fcc0491f807b32d51055703feb0fed1643cc2e05`；llm `lib/types/index.d.ts`为`895a2d357b3da2d2ec18eada1271274d43169acaa6591d57bb6e84878e1b88fe`。
 
+### 配套发布产物复核（2026-11-08）
+
+当前registry的dsh `latest/next`均指向`0.2.2-rc.1`。另行读取同版[LLM发布元数据](https://registry.npmjs.org/@deepseek-ai/dsh-llm/0.2.2-rc.1)与[token-meter发布元数据](https://registry.npmjs.org/@deepseek-ai/dsh-token-meter/0.2.2-rc.1)，显式匹配版本，不用子包各自的latest标签代替宿主配套版本。仅以`npm pack --ignore-scripts`获取源码归档，并按registry的SHA-512 integrity逐一核对；未安装、导入执行或升级宿主。
+
+| 官方归档 | SHA-256 |
+|---|---|
+| dsh-llm0.2.2-rc.1 | `cbf45039d3ef63e26987de514928a847a8c2d0b049df8fb24c11684e203b05d4` |
+| dsh-token-meter0.2.2-rc.1 | `03f8a1ad6868f57ab9684b45c804d97e59491e4b4d631876289dd3b5fdc30194` |
+
+核对公开exports、完整LLM调用/adapter声明与token-meter公开声明，并读取对应计量实现：`estimateContent/estimateMessage/estimateToolsTokens`仍按四字符密度及固定结构开销估算；`measure(session, requestHeader)`按当前surface定价，在满足已有header/usage条件时复用先前usage，再叠加估算的surface差值，否则采用估算基准。它不是对新完整provider请求进行目标tokenizer复算的接口。
+
+`LlmRuntime/LlmAdapter/PreparedLlmCall`公开能力仍是模型元数据、配置/注册代际绑定和派发；同版LLM主声明SHA-256与上述固定rc.5声明相同。`imageRequestPricing`只提供图片出现次数对齐的图片价格，文件投影和图片附带文本仍进入估算路径，不能将其借作完整文本/工具framing计数。没有发现满足#105完整请求预算要求的这组原生接口；结论限于上述已发布产物，不推及未发布main或任意provider的私有扩展。
+
+公开源码与核对元数据保存在仓库外`Documents/Codex/2026-11-08/evernook-105-native-decision-01/published-rc1`。本次为静态源码/接口核对，没有新的运行时或兼容性验收；#105继续按已确认决策等待适用的原生接口，不能把该版本的usage/pressure展示当作目标预算已可接入。
+
 ## 已确认路线（2026-11-08）
 
 用户选择等待dsh原生计数接口，不增加自维护的provider计数服务。当前Web保留明确披露的`legacy_character_cap`，`daily_admitted=false`；#105保持开放，改为等待上游能力，不再等待本项路线答复。既有显式SDK目标预算能力保留。
