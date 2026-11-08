@@ -1177,8 +1177,18 @@ class MemoryRuntime:
         if len(present) != 2:
             return LexicalStatus("not_built", source, 0, source, counts[1], None)
         try:
-            indexed = db.execute("SELECT count(*),max(received) FROM temp.evernook_search_valid_v1" if materialized else
-                f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
+            if materialized:
+                indexed = db.execute("SELECT count(*),max(received) FROM temp.evernook_search_valid_v1").fetchone()
+            else:
+                indexed = None
+                if MemoryRuntime._lexical_acceleration_valid(db):
+                    try:
+                        indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_ACCELERATED_ROWS} AND {_RECALLABLE}").fetchone()
+                    except sqlite3.Error:
+                        if not db.in_transaction:
+                            raise
+                if indexed is None:
+                    indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
         except sqlite3.Error:
             return LexicalStatus("unavailable", source, 0, source, counts[1], None)
         covered = int(indexed[0])
@@ -1251,6 +1261,22 @@ class MemoryRuntime:
             message_id TEXT PRIMARY KEY REFERENCES messages(id), content_version INTEGER NOT NULL,
             normalization_version INTEGER NOT NULL)""")
 
+    @staticmethod
+    def _lexical_pending(db: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+        # The caller holds one read snapshot across index validation and selection.
+        if MemoryRuntime._lexical_acceleration_valid(db):
+            try:
+                return db.execute(f"""SELECT event,receipt FROM messages JOIN (
+                    SELECT id FROM messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX}
+                    WHERE {_RECALLABLE} AND id NOT IN (SELECT d.message_id {_LEXICAL_ACCELERATED_ROWS})
+                    ORDER BY received,id LIMIT ?) selected ON messages.id=selected.id
+                    ORDER BY messages.received,messages.id""", (limit,)).fetchall()
+            except sqlite3.Error:
+                if not db.in_transaction:
+                    raise
+        return db.execute(f"""SELECT event,receipt FROM messages
+            WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+
     def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
         self._require_scope(access, "maintain", "refresh_lexical")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1261,8 +1287,9 @@ class MemoryRuntime:
                 db.execute("BEGIN IMMEDIATE")
                 self._lexical_schema(db)
                 db.execute("COMMIT")
-                rows = db.execute(f"""SELECT event,receipt FROM messages
-                    WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+                db.execute("BEGIN")
+                rows = self._lexical_pending(db, limit)
+                db.execute("COMMIT")
                 prepared = True
                 # Sample before the lookup, and compare only on this same connection.
                 # A peer commit invalidates the optimization, including equal-version

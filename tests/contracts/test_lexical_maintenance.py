@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -22,6 +23,133 @@ class LexicalMaintenanceTests(unittest.TestCase):
         self.event = Event(Source("test", "session", "main", "first"), "user", 1, None, "complete", "合成：原始索引记录。")
         self.first = self.runtime.submit(self.access, self.event)
         self.runtime.refresh_lexical(self.access)
+
+    def test_accelerated_batch_fetches_only_selected_original_bodies(self) -> None:
+        large = self.runtime.submit(self.access, replace(self.event,
+            source=replace(self.event.source, event="large-later"), sequence=2, text="合成：" + "长" * 10000))
+        # A valid earlier receiving clock puts this small source before the large
+        # pending original, whose physical row was inserted first.
+        with patch("evernook.runtime.datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2000, 1, 1, tzinfo=timezone.utc)
+            small = self.runtime.submit(self.access, replace(self.event,
+                source=replace(self.event.source, event="small-earlier"), sequence=3))
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            db: sqlite3.Connection = real_connect(*args, **kwargs)
+            db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8192)
+            return db
+        # SQLite rejects a fetched oversized body even if it would later be
+        # discarded by sorting. Selecting IDs before fetching bodies must avoid it.
+        with patch("sqlite3.connect", side_effect=connect):
+            state = self.runtime.refresh_lexical(self.access, limit=1)
+        self.assertEqual((state.state, state.indexed_messages, state.pending_messages), ("behind", 2, 1))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            self.assertIsNotNone(db.execute("SELECT 1 FROM lexical_docs WHERE message_id=?", (small.message_id,)).fetchone())
+            self.assertIsNone(db.execute("SELECT 1 FROM lexical_docs WHERE message_id=?", (large.message_id,)).fetchone())
+        original = self.runtime.read(self.access, large.message_id)
+        assert original is not None
+        self.assertEqual(original.event.text, "合成：" + "长" * 10000)
+
+    def test_accelerated_pending_sql_failure_falls_back_to_complete_selection(self) -> None:
+        self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="pending"), sequence=2))
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        failures: list[bool] = []
+        class FailedSelection(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("SELECT event,receipt FROM messages JOIN ("):
+                    failures.append(True)
+                    raise sqlite3.OperationalError("synthetic optional selection failure")
+                return super().execute(sql, parameters)
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=FailedSelection)
+        with patch("sqlite3.connect", side_effect=connect):
+            state = self.runtime.refresh_lexical(self.access)
+        self.assertEqual(failures, [True])
+        self.assertEqual((state.state, state.indexed_messages), ("ready", 2))
+
+    def test_accelerated_status_sql_failure_uses_original_coverage(self) -> None:
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        expected = self.runtime.lexical_status(self.access)
+        real_connect = sqlite3.connect
+        failures: list[bool] = []
+        class FailedCount(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("SELECT count(*),max(messages.received)") and "INDEXED BY evernook_message_cover_v1" in sql:
+                    failures.append(True)
+                    raise sqlite3.OperationalError("synthetic optional count failure")
+                return super().execute(sql, parameters)
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=FailedCount)
+        with patch("sqlite3.connect", side_effect=connect):
+            self.assertEqual(self.runtime.lexical_status(self.access), expected)
+        self.assertEqual(failures, [True])
+
+    def test_concurrent_index_removal_keeps_selection_snapshot(self) -> None:
+        self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="pending"), sequence=2))
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        removed: list[bool] = []
+        runtime, access = self.runtime, self.access
+        class RemovedIndex(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                cursor = super().execute(sql, parameters)
+                if sql.startswith("SELECT type,tbl_name,sql FROM sqlite_master") and not removed:
+                    removed.append(True)
+                    runtime.configure_lexical_acceleration(access, enabled=False)
+                return cursor
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=RemovedIndex)
+        with patch("sqlite3.connect", side_effect=connect):
+            state = self.runtime.refresh_lexical(self.access)
+        self.assertEqual(removed, [True])
+        self.assertEqual((state.state, state.indexed_messages), ("ready", 2))
+        self.assertFalse(self.runtime.lexical_acceleration_enabled(self.access))
+
+    def test_lost_selection_transaction_does_not_retry_or_index_sources(self) -> None:
+        receipt = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="pending"), sequence=2))
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        attempted: list[str] = []
+        class LostTransaction(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("SELECT event,receipt FROM messages"):
+                    attempted.append(sql)
+                    if "JOIN (" in sql:
+                        super().execute("ROLLBACK")
+                        raise sqlite3.OperationalError("synthetic read transaction lost")
+                return super().execute(sql, parameters)
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=LostTransaction)
+        with patch("sqlite3.connect", side_effect=connect):
+            state = self.runtime.refresh_lexical(self.access)
+        self.assertEqual(len(attempted), 1)
+        self.assertEqual((state.state, state.indexed_messages, state.pending_messages), ("unavailable", 1, 1))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM lexical_docs WHERE message_id=?", (receipt.message_id,)).fetchone())
+
+    def test_accelerated_selection_rechecks_versions_fts_presence_and_duplicate_coverage(self) -> None:
+        receipts = [self.first]
+        for i in range(4):
+            receipts.append(self.runtime.submit(self.access, replace(self.event,
+                source=replace(self.event.source, event=f"version-{i}"), sequence=i+2)))
+        self.runtime.refresh_lexical(self.access)
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as db:
+            db.execute("DELETE FROM lexical WHERE message_id=?", (receipts[0].message_id,))
+            db.execute("UPDATE lexical_docs SET content_version=content_version+1 WHERE message_id=?", (receipts[1].message_id,))
+            db.execute("UPDATE lexical_docs SET normalization_version=-1 WHERE message_id=?", (receipts[2].message_id,))
+            db.execute("DELETE FROM lexical_docs WHERE message_id=?", (receipts[3].message_id,))
+            db.execute("INSERT INTO lexical SELECT message_id,terms FROM lexical WHERE message_id=?", (receipts[4].message_id,))
+        state = self.runtime.refresh_lexical(self.access, limit=2)
+        self.assertEqual((state.indexed_messages, state.pending_messages), (3, 2))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM lexical WHERE message_id=?", (receipts[0].message_id,)).fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT content_version FROM lexical_docs WHERE message_id=?", (receipts[1].message_id,)).fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT normalization_version FROM lexical_docs WHERE message_id=?", (receipts[2].message_id,)).fetchone()[0], -1)
+            self.assertIsNone(db.execute("SELECT 1 FROM lexical_docs WHERE message_id=?", (receipts[3].message_id,)).fetchone())
+        self.assertEqual(self.runtime.refresh_lexical(self.access, limit=2).state, "ready")
 
     def test_append_batch_does_not_rescan_existing_fts_for_every_new_document(self) -> None:
         with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as db:
