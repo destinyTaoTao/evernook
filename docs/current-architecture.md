@@ -1,6 +1,6 @@
 # 当前实现与架构图
 
-> **2026-11-08 预算状态披露：** preview.21在owner bootstrap及页面/侧栏明确区分实际预算模式；实装验证未配置/字符兼容、伪造模式拒绝及非准入状态。[记录](reports/dsh-web-budget-disclosure.md)。Web目标预算主体接线仍待#105；受信provider计数服务仅有生命周期原型，路线选择尚待用户答复，未按等待时间实施。
+> **2026-11-08 预算状态披露与路线决策：** preview.21在owner bootstrap及页面/侧栏明确区分实际预算模式；实装验证未配置/字符兼容、伪造模式拒绝及非准入状态。[记录](reports/dsh-web-budget-disclosure.md)。用户选择等待dsh原生完整请求计数接口，不增加自维护的provider计数服务。Web继续字符兼容且未获日用准入；#105主体接线及完整验收保持开放。
 
 > **2026-11-08 新候选短验收：** Core0.1.5/preview.20在新隔离dsh0.2.1-rc.5 profile完成原生8工作流、发布失败后的只读创建/重启/新写拒绝、owner边界、设置和卸载核对；[记录](reports/dsh-candidate20-validation.md)。页面提示已纠正顺序推理范围，但浏览器验收因Computer Use无法识别URL而停止。Web仍为字符兼容模式，真实目标预算接线单列#105；这不替代旧组合长跑或#81/#82/#94正式准入。
 

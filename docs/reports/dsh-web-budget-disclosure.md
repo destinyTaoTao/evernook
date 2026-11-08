@@ -29,9 +29,15 @@ owner bootstrap新增`context_mode`，从实际安装选项和连接状态派生
 
 公开产物核对SHA-256：token-meter `lib/index.js`为`b76a27f84d1f733c4a760e36fcc0491f807b32d51055703feb0fed1643cc2e05`；llm `lib/types/index.d.ts`为`895a2d357b3da2d2ec18eada1271274d43169acaa6591d57bb6e84878e1b88fe`。
 
-## 未采用的接线提案
+## 已确认路线（2026-11-08）
 
-已向用户提交路线选择，尚未取得选择结果，不按等待时间推定采用。建议由实际provider的受信插件提供一个计数服务，Web只接收provider/model、外部context设置和预算等纯数据；不新增任意函数/模块路径加载入口。复用SDK的完整请求计数与Core资产校验，缺失、不匹配或服务替换时拒绝，替换后重启profile。代价是维护并验证每个实际provider的framing适配，不能承诺任意模型开箱即用。
+用户选择等待dsh原生计数接口，不增加自维护的provider计数服务。当前Web保留明确披露的`legacy_character_cap`，`daily_admitted=false`；#105保持开放，改为等待上游能力，不再等待本项路线答复。既有显式SDK目标预算能力保留。
+
+后续须先核对原生接口能否按实际provider/model覆盖完整聊天模板、历史、工具声明与输出预留，并验证计数身份、路由变化、取消和来源失效边界，再决定最小接线。原生接口存在、字符启发式或模式标签本身均不能作为准入证据；本次不升级宿主、不注册生产计数服务，也不启用日用profile。
+
+## 未采用的计数服务提案与原型证据
+
+此前建议由实际provider的受信插件提供一个计数服务，Web只接收provider/model、外部context设置和预算等纯数据；不新增任意函数/模块路径加载入口。复用SDK的完整请求计数与Core资产校验，缺失、不匹配或服务替换时拒绝，替换后重启profile。该路线需要逐provider维护并验证framing适配，本次未采用。
 
 真实Cordis4.0.5的仓库外小原型验证4项：普通服务对象身份稳定、模型不匹配时不调用计数器、注销后已有guard拒绝、同名对象替换后已有guard拒绝。使用现有`ctx.get/provide`，没有声明可因计数服务注销而一并卸载guard的依赖。原型计数函数故意只是合成字符长度；它仅验证服务生命周期，不是tokenizer、provider framing、实际Web派发或质量准入证据。原型位于`evernook-105-counter-seam-01`，生产未注册此服务。
 

@@ -2,6 +2,8 @@
 
 这里的dsh目标预算指显式SDK接线；当前Web插件的Config尚未转交contextConfig/memoryBudget，实际仍为`legacy_character_cap`，见[#105](https://github.com/destinyTaoTao/evernook/issues/105)。Web安装成功或Core计数优化不等于Web已经具备真实目标token预算。
 
+2026-11-08路线决策：Web等待dsh原生完整请求计数接口，不增加自维护provider计数服务。既有显式SDK能力保留；原生接口适用性与完整接线仍须验证，当前Web保持字符模式披露和`daily_admitted=false`。
+
 `contextConfig` 与 `memoryBudget` 同时启用 dsh 的目标 tokenizer 模式。Python MCP 的 `--context-config` 指向仓库外可信设置文件；每次调用重新读取设置，复用 `ContextBuilder` 组合置顶、人设、画像、指定事实及经验和相关证据。查询超过 256 code point 时保留完整原始输入，省略查询召回并在 payload 中披露 `query_too_long`，不会截取前缀冒充完整查询。
 
 设置文件示例（路径与散列均需替换）：
