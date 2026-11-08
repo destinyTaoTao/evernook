@@ -29,12 +29,19 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `capture-chunk` / `read-stream` | `--config --access`；stdin 为分块或来源分页参数 | [提交后可发布片段与明确未完成状态](durable-stream-v1.md) |
 | `status` | `--config --access` | 核心能力、账本数量、词法水位、消费者未运行状态 |
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
+| `refresh-index-window` | `--config --access`；可选`--limit`（默认5000）、`--budget-seconds`（默认120） | maintain身份的显式有界补跑，返回实际全局LexicalStatus |
 | `prepare-search-acceleration` / `remove-search-acceleration` | `--config --access`；身份须 maintain | 显式创建/移除可选覆盖索引，返回 `{ "enabled": true/false }` |
 | `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |
 | `refresh-semantic` / `semantic-status` | `--config --access`；可选 `--embedding-config` | 当前模型空间的一批最多 16 个片段维护或覆盖状态 |
 | `backup-init/create/restore/retain` | 本地路径及必要归档身份；口令仅真实 TTY 隐藏输入 | [认证加密备份、受控恢复与保留](encrypted-backup-v1.md)，不自动注册计划 |
 
 `rebuild-index` 先重置派生索引，再处理首批；`pending_messages > 0` 时继续运行 `refresh-index`，不要反复执行重建。维护成功返回不等于全库已经追平，必须读取 `state/pending_messages`。操作期间原文仍遵守既有提交与过滤语义。
+
+Core0.1.10候选增加`refresh-index-window`：一次选取最多5000个候选ID，每组最多加载100条原文、复核后续组权限，仍逐条提交；复用候选选取并仅在结束时统计全局状态，减少大账本每100条重复扫描的开销。`--limit`范围1–5000；`--budget-seconds`为(0,120]的软预算，过期后不开始下一条写入，当前SQL/事务和最终统计可能超出。返回behind表示仍有缺口，应核对后再显式补跑；没有自动创建可选覆盖索引、清空原文或开放模型工具。原`refresh-index/rebuild-index`限制不变。
+
+```powershell
+evernook refresh-index-window --config E:\evernook-lab\synthetic-cli-data\runtime.json --access E:\evernook-lab\synthetic-cli-data\mcp-access-owner.json --limit 5000 --budget-seconds 120
+```
 
 Core0.1.7增加可选词法加速；`status.result.lexical_acceleration`披露是否识别到当前受支持的覆盖索引。旧库启动、普通查询和`refresh-index`均不自动创建该索引；只由可信本地维护命令显式启停，不作为MCP模型工具。创建可能暂时阻塞写入并增加数据库已用空间，建议在采集暂停的维护窗口执行。它不补建FTS、不改变存储版本5、原文、来源控制或准入门槛；索引存在时，查询在同一读快照内使用仅含ID/received的内存临时集合，连接关闭即销毁。缺失或不匹配时保留原路径；同名异构对象不会被覆盖或移除，而是报告`lexical_acceleration_conflict`。提交前SQL异常的回归核对DDL已回滚；真实存储错误应先读取status核对当前状态，不自动重试构建。移除索引不删除证据，也不承诺数据库文件自动缩小。
 

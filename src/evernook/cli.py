@@ -107,6 +107,7 @@ def _parser() -> Parser:
         ("state", "Read evidence visibility and version"),
         ("status", "Report core and lexical processing status"),
         ("refresh-index", "Refresh the rebuildable lexical index"),
+        ("refresh-index-window", "Trusted bounded lexical catch-up with one pending-ID window"),
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
         ("prepare-search-acceleration", "Trusted optional covering-index build; may temporarily block writers"),
         ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
@@ -160,6 +161,9 @@ def _parser() -> Parser:
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
+        if name == "refresh-index-window":
+            command.add_argument("--limit", type=int, default=5000)
+            command.add_argument("--budget-seconds", type=float, default=120)
         if name in ("recall", "refresh-semantic", "semantic-status"):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
@@ -466,6 +470,8 @@ def _execute(args: argparse.Namespace) -> object:
         return runtime.state(access, args.message_id)
     if args.command == "refresh-index":
         return runtime.refresh_lexical(access)
+    if args.command == "refresh-index-window":
+        return runtime.refresh_lexical_window(access, limit=args.limit, budget_seconds=args.budget_seconds)
     if args.command == "rebuild-index":
         return runtime.rebuild_lexical(access)
     if args.command in ("prepare-search-acceleration", "remove-search-acceleration"):

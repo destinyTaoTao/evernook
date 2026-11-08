@@ -1262,19 +1262,23 @@ class MemoryRuntime:
             normalization_version INTEGER NOT NULL)""")
 
     @staticmethod
-    def _lexical_pending(db: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+    def _lexical_pending(db: sqlite3.Connection, limit: int, *, ids_only: bool = False) -> list[sqlite3.Row]:
         # The caller holds one read snapshot across index validation and selection.
         if MemoryRuntime._lexical_acceleration_valid(db):
             try:
-                return db.execute(f"""SELECT event,receipt FROM messages JOIN (
-                    SELECT id FROM messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX}
+                selected = f"""SELECT id FROM messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX}
                     WHERE {_RECALLABLE} AND id NOT IN (SELECT d.message_id {_LEXICAL_ACCELERATED_ROWS})
-                    ORDER BY received,id LIMIT ?) selected ON messages.id=selected.id
+                    ORDER BY received,id LIMIT ?"""
+                if ids_only:
+                    return db.execute(selected, (limit,)).fetchall()
+                return db.execute(f"""SELECT event,receipt FROM messages JOIN (
+                    {selected}) selected ON messages.id=selected.id
                     ORDER BY messages.received,messages.id""", (limit,)).fetchall()
             except sqlite3.Error:
                 if not db.in_transaction:
                     raise
-        return db.execute(f"""SELECT event,receipt FROM messages
+        projection = "id" if ids_only else "event,receipt"
+        return db.execute(f"""SELECT {projection} FROM messages
             WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
 
     def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
@@ -1291,34 +1295,77 @@ class MemoryRuntime:
                 rows = self._lexical_pending(db, limit)
                 db.execute("COMMIT")
                 prepared = True
-                # Sample before the lookup, and compare only on this same connection.
-                # A peer commit invalidates the optimization, including equal-version
-                # FTS replacements or a rebuild that reuses old rowids.
-                version = int(db.execute("PRAGMA data_version").fetchone()[0])
-                rowids = self._lexical_rowids(db, rows)
-                for row in rows:
-                    message = self._stored(row)
-                    terms = index_terms(message.event.text)  # No write transaction during derivation.
-                    db.execute("BEGIN IMMEDIATE")
-                    current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
-                    if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
-                        db.execute("ROLLBACK")
-                        continue
-                    if rowids is not None and int(db.execute("PRAGMA data_version").fetchone()[0]) != version:
-                        rowids = None
-                    if rowids is None:
-                        db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
-                    else:
-                        db.executemany("DELETE FROM lexical WHERE rowid=? AND message_id=?",
-                            ((rowid, message.receipt.message_id) for rowid in rowids.get(message.receipt.message_id, ())))
-                    db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
-                    db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
-                    db.execute("COMMIT")
+                self._refresh_lexical_rows(db, rows)
         except MemoryFailure as error:
             if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
         return self.lexical_status(access)
+
+    def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120) -> LexicalStatus:
+        self._require_scope(access, "maintain", "refresh_lexical_window")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        if type(budget_seconds) not in (int, float) or not 0 < budget_seconds <= 120:
+            raise MemoryFailure("invalid_maintenance_budget")
+        deadline = time.monotonic() + budget_seconds
+        def expired() -> bool:
+            return time.monotonic() >= deadline
+        prepared = False
+        try:
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                self._lexical_schema(db)
+                db.execute("COMMIT")
+                db.execute("BEGIN")
+                ids = [] if expired() else [row[0] for row in self._lexical_pending(db, limit, ids_only=True)]
+                db.execute("COMMIT")
+                prepared = True
+                for offset in range(0, len(ids), 100):
+                    if expired():
+                        break
+                    if offset:
+                        self._require_scope(access, "maintain", "refresh_lexical_window")
+                    selected = ids[offset:offset+100]
+                    rows = db.execute(f"SELECT event,receipt FROM messages WHERE id IN ({','.join('?' for _ in selected)}) "
+                        f"AND {_RECALLABLE} ORDER BY received,id", selected).fetchall()
+                    if not self._refresh_lexical_rows(db, rows, expired=expired):
+                        break
+        except MemoryFailure as error:
+            if prepared or error.code != "storage_unavailable":
+                raise
+            return replace(self.lexical_status(access), state="unavailable")
+        return self.lexical_status(access)
+
+    def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None) -> bool:
+        # Sample before the lookup, and compare only on this same connection.
+        # A peer commit invalidates the optimization, including equal-version
+        # FTS replacements or a rebuild that reuses old rowids.
+        version = int(db.execute("PRAGMA data_version").fetchone()[0])
+        rowids = self._lexical_rowids(db, rows)
+        for row in rows:
+            if expired is not None and expired():
+                return False
+            message = self._stored(row)
+            terms = index_terms(message.event.text)  # No write transaction during derivation.
+            if expired is not None and expired():
+                return False
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
+            if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
+                db.execute("ROLLBACK")
+                continue
+            if rowids is not None and int(db.execute("PRAGMA data_version").fetchone()[0]) != version:
+                rowids = None
+            if rowids is None:
+                db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
+            else:
+                db.executemany("DELETE FROM lexical WHERE rowid=? AND message_id=?",
+                    ((rowid, message.receipt.message_id) for rowid in rowids.get(message.receipt.message_id, ())))
+            db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
+            db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+            db.execute("COMMIT")
+        return True
 
     @staticmethod
     def _lexical_rowids(db: sqlite3.Connection, rows: list[sqlite3.Row]) -> dict[str, list[int]] | None:

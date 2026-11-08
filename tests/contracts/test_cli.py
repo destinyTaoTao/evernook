@@ -166,5 +166,23 @@ class CLITests(unittest.TestCase):
         self.assertNotIn(runtime.access_from_file(peer_path).token.encode(), first.stdout + second.stdout)
 
 
+    def test_trusted_lexical_window_flags_preserve_originals_and_validate_budget(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        event = Event(Source("test", "window-cli", "main", "first"), "user", 1, None, "complete", "合成：CLI窗口🙂，保留\r\n换行。")
+        first = runtime.submit(self.access, event)
+        second = runtime.submit(self.access, replace(event, source=replace(event.source, event="second"), sequence=2))
+        _, one = self.invoke("refresh-index-window", extra=("--limit", "1", "--budget-seconds", "10"))
+        self.assertEqual((one["result"]["indexed_messages"], one["result"]["pending_messages"]), (1, 1))
+        _, done = self.invoke("refresh-index-window")
+        self.assertEqual((done["result"]["state"], done["result"]["indexed_messages"]), ("ready", 2))
+        _, invalid = self.invoke("refresh-index-window", extra=("--budget-seconds", "0"))
+        self.assertEqual(invalid["error"]["code"], "invalid_maintenance_budget")
+        self.assertFalse(runtime.lexical_acceleration_enabled(self.access))
+        for receipt in (first, second):
+            stored = runtime.read(self.access, receipt.message_id)
+            assert stored is not None
+            self.assertEqual(stored.event.text, event.text)
+
+
 if __name__ == "__main__":
     unittest.main()
