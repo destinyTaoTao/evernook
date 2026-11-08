@@ -22,11 +22,16 @@ test('web preview rejects cross-site, missing origin, missing CSRF, oversized an
   assert.equal((await web.handle(request({ action: 'bootstrap' }, { host: 'remote.invalid', origin: 'http://remote.invalid' }))).status, 403);
   assert.equal((await web.handle(request({ action: 'bootstrap' }, { host: 'localhost:37849' }))).status, 403);
   const response = await web.handle(request({ action: 'bootstrap' }));
-  const bootstrap = await response.json() as { csrf: string; configured: boolean };
+  const bootstrap = await response.json() as { csrf: string; configured: boolean; context_mode: string; daily_admitted: boolean };
   assert.equal(bootstrap.configured, false);
+  assert.equal(bootstrap.context_mode, 'unconfigured');
+  assert.equal(bootstrap.daily_admitted, false);
+  assert.equal((await web.handle(request({ action: 'bootstrap', context_mode: 'target_tokenizer' }))).status, 403);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal((await web.handle(request({ action: 'read', view: 'status' }))).status, 403);
   assert.equal((await web.handle(request({ action: 'read', view: 'status' }, { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
+  assert.equal((await web.handle(request({ action: 'bootstrap', context_mode: 'target_tokenizer' },
+    { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
   assert.equal((await web.handle(request({ action: 'bootstrap', huge: 'a'.repeat(140000) }))).status, 413);
   await web.close();
   assert.equal(disposed, true);

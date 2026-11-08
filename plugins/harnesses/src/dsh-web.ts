@@ -110,6 +110,7 @@ export async function installWeb(ctx: Context, config: Config) {
       if (!object(input)) return json({ error: 'invalid_request' }, 400);
       if (input.action === 'bootstrap' && Object.keys(input).length === 1) {
         return json({ csrf, configured, preview: true, daily_admitted: false, stream_mode: config.streamMode,
+          context_mode: !configured ? 'unconfigured' : options.memoryBudget ? 'target_tokenizer' : 'legacy_character_cap',
           entry: config.entry, recovery_supported: Boolean(recovery) });
       }
       const supplied = request.headers.get('x-evernook-csrf') ?? '';

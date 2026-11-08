@@ -6,6 +6,8 @@
 
 ## 构建与隔离安装
 
+当前Web仍是字符兼容路径，尚未接入SDK的目标tokenizer/完整请求预算；见[#105](https://github.com/destinyTaoTao/evernook/issues/105)。preview.21起页面披露实际预算模式，未知状态不按目标模式展示。字符上限不是真实token预算，也不等于正式日用准入。
+
 Python 3.14 环境须安装本次提交的 Core（包含 `manage` CLI），例如先在仓库根目录运行 `python -m pip install -e ".[mcp]"`，再在 `../harnesses` 运行 `npm ci --ignore-scripts`。模型不随包下载。以下从本目录执行：
 
 ```powershell
@@ -15,7 +17,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.20.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.21.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'

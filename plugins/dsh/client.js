@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     saved: '操作已保存', changed: '内容已变化，请重新预览', expired: '预览已过期，请重新打开', unavailable: '记忆暂不可用，请稍后刷新',
     forbidden: '连接已失效或无权访问，请重新加载页面', config: '尚未配置记忆连接', configHelp: '请在插件配置中填写本地 Python、记忆配置、采集身份和独立维护身份。配置前不会采集或修改记忆。',
     session: '会话记忆', sessionHelp: '会话记录只显示当前会话；用户画像在已授权入口之间共享。', status: '采集状态',
+    budgetMode: '记忆预算', budgetTarget: '目标分词器模式', budgetLegacy: '字符兼容模式（不是真实 token 预算）', budgetUnknown: '未提供预算状态',
     gaps: '采集缺口', noGaps: '当前没有报告采集缺口', raw: '普通原话', projection: '脱敏投影', user: '用户', assistant: '助手', tool: '工具',
     draft: '待审', confirmed: '已接纳', version: '版本', uncertain: '时间或推断不等于已确认事实',
     textOnly: '可靠文本流模式：工具、推理块与多文本块尚不支持', buffered: '整段保存后显示：通用工具结果发布屏障尚未验收',
@@ -52,6 +53,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     saved: 'Change saved', changed: 'Content changed. Open a new preview.', expired: 'Preview expired. Open it again.', unavailable: 'Memory is unavailable. Please refresh later.',
     forbidden: 'Connection expired or access denied. Reload this page.', config: 'Memory connection is not configured', configHelp: 'Set the local Python, memory configuration, capture identity, and separate maintenance identity in plugin settings. No memory is captured or changed before configuration.',
     session: 'Session memory', sessionHelp: 'Records are scoped to this session. Your profile is shared between authorized entry points.', status: 'Capture status',
+    budgetMode: 'Memory budget', budgetTarget: 'Target tokenizer mode', budgetLegacy: 'Character compatibility mode (not a token budget)', budgetUnknown: 'Budget status unavailable',
     gaps: 'Capture gaps', noGaps: 'No capture gaps currently reported', raw: 'Original words', projection: 'Redacted projection', user: 'User', assistant: 'Assistant', tool: 'Tool',
     draft: 'Draft', confirmed: 'Accepted', version: 'Version', uncertain: 'A timestamp or inference is not a confirmed fact',
     textOnly: 'Reliable text mode: tools, reasoning, and multiple text blocks are unsupported', buffered: 'Saved before display: the general tool-result publication barrier is unverified',
@@ -131,6 +133,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [data, setData] = useState({ items: [] });
       const [loading, setLoading] = useState(true);
       const [configured, setConfigured] = useState(null);
+      const [contextMode, setContextMode] = useState(null);
       const [error, setError] = useState('');
       const [notice, setNotice] = useState('');
       const [revision, setRevision] = useState(0);
@@ -160,11 +163,12 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       useEffect(() => {
         if (!enabled) return;
         const controller = new AbortController();
-        setLoading(true); setError(''); setData({ items: [] });
+        setLoading(true); setError(''); setData({ items: [] }); setSessionStatus(null); setContextMode(null);
         (async () => {
           const boot = await call({ action: 'bootstrap' }, controller.signal);
           if (controller.signal.aborted) return;
           setConfigured(boot.configured);
+          setContextMode(boot.context_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
           const result = await call({ action: 'read', view: tab,
@@ -234,12 +238,15 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         h('div', { className: 'en-actions' }, button(t('source'), () => openSource(item.message_id), { disabled: busy }),
           recoverySupported && item.source.entry === currentEntry ? button(t('recovery'), () => openRecovery(item.source.session), { disabled: busy }) : null));
       if (!enabled) return null;
+      const budgetMode = sessionStatus?.context_mode ?? contextMode;
       return h('section', { className: 'en-mem' + (host === 'sidebar' ? ' en-side' : ''), 'aria-label': t('title') },
         h('style', null, css), h('div', { className: 'en-wrap' },
           h('div', { className: 'en-head' }, h('div', { className: 'en-brand' }, h('span', { className: 'en-mark', 'aria-hidden': true }, '❧'),
             h('div', null, h('h1', null, host === 'sidebar' ? t('session') : t('title')), h('div', { className: 'en-muted' }, t('subtitle')))),
             h('span', { className: 'en-pill' }, t('preview'))),
           h('div', { className: 'en-notice' }, t('notice')),
+          configured ? h('div', { className: 'en-notice' }, t('budgetMode') + ': ' + t(budgetMode === 'target_tokenizer'
+            ? 'budgetTarget' : budgetMode === 'legacy_character_cap' ? 'budgetLegacy' : 'budgetUnknown')) : null,
           h('div', { className: 'en-values' }, ...['local', 'evidence', 'control'].map(key => h('span', { key }, '✓ ' + t(key)))),
           host === 'sidebar' ? h('p', { className: 'en-muted' }, t('sessionHelp')) : null,
           sessionStatus?.recovery_read_only ? h('p', { className: 'en-notice' }, t('recoveryReadOnly')) : null,
