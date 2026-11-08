@@ -14,6 +14,16 @@ from contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_optional_search_acceleration_is_explicit_and_reversible(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_acceleration"])
+        _, enabled = self.invoke("prepare-search-acceleration")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, status = self.invoke("status")
+        self.assertTrue(status["result"]["lexical_acceleration"])
+        _, disabled = self.invoke("remove-search-acceleration")
+        self.assertEqual(disabled["result"], {"enabled": False})
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-cli-")
         self.addCleanup(temporary.cleanup)

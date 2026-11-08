@@ -8,7 +8,7 @@ EverNook 是供 dsh、pi、桌宠等接入的外挂长期记忆模块：通过�
 
 > **当前状态：已有本地证据账本、CLI/MCP、显式离线语义召回、加密备份、受保护收件箱/本地显示、时态事实、候选抽取、预算上下文、可补跑导航、经验草案、普通来源确认删除、dsh/pi SDK 适配，以及核心人设与用户画像版本化管理、沉淀草案审查与进程内会话/空闲调度、伴侣预设、适配器符合性套件；尚无生产启用或完整产品验收。** 真实支持范围见[当前架构](docs/current-architecture.md)与各项[契约](docs/contracts)。
 
-2026-11-08：[dsh记忆管理预览插件](plugins/dsh/README.md)提供独立页面与会话侧栏、来源/画像/兴趣/时间线、更正/来源抑制和草案审查。独立固定补丁宿主支持可靠工具发布、受限混合流与可信核对后的只读续接；当前Core0.1.5/preview.21已完成新的[真实隔离dsh的1800秒/180回合合成长跑](docs/reports/dsh-installed-stability.md)，旧组合记录保留。目标为Windows本机dsh `0.2.1-rc.5`；Web仍是字符兼容预算，真实模型完整兼容、质量/规模和物理OS门禁仍开放，未启用日常profile。[管理契约](docs/contracts/management-ui-v1.md)与[界面记录](docs/reports/dsh-ui-03-preview.md)说明页面范围。
+2026-11-08：[dsh记忆管理预览插件](plugins/dsh/README.md)提供独立页面与会话侧栏、来源/画像/兴趣/时间线、更正/来源抑制和草案审查。独立固定补丁宿主支持可靠工具发布、受限混合流与可信核对后的只读续接；Core0.1.6/preview.21已完成新的[真实隔离dsh的1800秒/180回合合成长跑](docs/reports/dsh-installed-stability.md)，旧组合记录保留。另有Core0.1.7[可选词法加速候选](docs/reports/m58-followup-84-query-budget.md)，由可信维护命令显式启停，尚未替换上述宿主。目标为Windows本机dsh `0.2.1-rc.5`；Web仍是字符兼容预算，真实模型完整兼容、质量/规模和物理OS门禁仍开放，未启用日常profile。[管理契约](docs/contracts/management-ui-v1.md)与[界面记录](docs/reports/dsh-ui-03-preview.md)说明页面范围。
 
 **2026-10-31 已从换机交接继续开发；`codex/r3-experience-drafts` 的全部增量已于同日快进合入 `main` 并推送。历史状态、依赖重建、已验证结果与待办见[换机交接](docs/handoff-2026-10-31.md)。**
 

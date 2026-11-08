@@ -108,6 +108,8 @@ def _parser() -> Parser:
         ("status", "Report core and lexical processing status"),
         ("refresh-index", "Refresh the rebuildable lexical index"),
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
+        ("prepare-search-acceleration", "Trusted optional covering-index build; may temporarily block writers"),
+        ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
@@ -466,8 +468,12 @@ def _execute(args: argparse.Namespace) -> object:
         return runtime.refresh_lexical(access)
     if args.command == "rebuild-index":
         return runtime.rebuild_lexical(access)
+    if args.command in ("prepare-search-acceleration", "remove-search-acceleration"):
+        return {"enabled": runtime.configure_lexical_acceleration(access,
+            enabled=args.command == "prepare-search-acceleration")}
     return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
-            "lexical": asdict(runtime.lexical_status(access)), "consumer_running": False}
+            "lexical": asdict(runtime.lexical_status(access)),
+            "lexical_acceleration": runtime.lexical_acceleration_enabled(access), "consumer_running": False}
 
 
 def main() -> None:

@@ -28,6 +28,8 @@ assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲�
 
 T14 的 [中文词法/精确检索](lexical-v1.md)增加 `search/lexical_status/refresh_lexical/rebuild_lexical`。可重建 FTS5 派生表按需创建，拥有独立归一化版本，不改变 v4 原文账本格式或原文提交事务；未建或落后时保留扫描原文的精确路径。MCP 仅开放查询和状态，维护端显式刷新，没有自动消费者。
 
+Core0.1.7的可选`configure_lexical_acceleration(access, enabled=bool)`须maintain权限；`lexical_acceleration_enabled(access)`只读查询已识别的索引。它不自动迁移旧库，不改变当前存储版本5或原始记录，未作为MCP模型工具开放；同一读快照内的临时派生集、失败回退与维护边界见[词法契约](lexical-v1.md#可选派生加速core017)。
+
 ## 保存、读取与失败
 
 - `submit(access, event)`：来源四元组为幂等键，整个请求内容（含角色、时间、序号和安全标记）核对一致才返回原回执；同键改变完成状态也会冲突。流片段/最终消息须分配独立源事件，不能用覆盖更新模拟原件。

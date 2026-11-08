@@ -47,6 +47,14 @@ status = memory.rebuild_lexical(access, limit=100)
 
 未建索引或索引读取失败，直接扫描当前原文作相同字面匹配，`used_index=false` 且原因分别为 `index_not_built/index_unavailable`；落后时使用已有候选并扫描所有待处理原文，`used_index=true`、原因 `index_behind`。缺失版本元数据、旧归一化版本或删除的 FTS 行均形成缺口；空结果不能被表述为事情从未发生。SQLite 原文读取本身失败仍返回核心存储失败，不伪造空结果。
 
+## 可选派生加速（Core0.1.7）
+
+`configure_lexical_acceleration(access, enabled=True/False)`仅接受bool，身份须具备`maintain`；`lexical_acceleration_enabled(access)`允许已授权读端检查当前受支持的覆盖索引。启停返回实际提交后的bool，重复请求幂等；提交失败不会声称新状态已生效。对应[可信本地CLI](cli-v1.md)的`prepare-search-acceleration/remove-search-acceleration`，未注册为MCP模型工具。
+
+它显式创建或移除`evernook_message_cover_v1`，不改变存储版本5、原始记录或FTS维护方式。启动和普通查询不自动创建持久索引；同名异构对象不被覆盖或删除。创建需要维护窗口并可能阻塞采集写入；索引有额外磁盘成本，移除后不承诺数据库文件缩小。
+
+仅识别到确切索引定义且词法派生表存在时，search才在当前读事务中构建仅含有效ID/received的内存临时表，并在该请求的覆盖统计和候选过滤间复用。内容/归一化版本、FTS行存在、去重、来源状态和精确回源不变；临时集不跨连接或请求保存。可恢复的临时表SQL失败在同一事务内回退原路径；取消/超时、事务已被SQLite整体回滚或原文存储失败继续明确失败，不返回部分结果。并发采集或维护移除索引不把两个快照混为一页；下次查询重新核对当前状态。该加速不代表冷暖、并发、规模或时延准入。
+
 ## 验证边界
 
 仅索引消息正文/安全投影；独立附件内容仍按 T08 读取，没有纳入全文检索。回归使用外部临时目录和合成中英文、短词/姓名、数值、日期、Unicode、符号/注入、无答案、并发更正/抑制、重建/重启及实际 SQLite 故障。没有接受恶意修改数据库后的任意索引损坏检测、物理掉电、大规模重建时间或存储空间上界。

@@ -34,12 +34,20 @@ if TYPE_CHECKING:
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
+_LEXICAL_CURRENT = f"""d.normalization_version={NORMALIZATION_IDENTITY}
+      AND d.content_version=json_extract(messages.receipt,'$.content_version')"""
 _LEXICAL_VALID_ROWS = f"""FROM lexical_docs d
     JOIN messages ON messages.id=d.message_id
     JOIN (SELECT DISTINCT message_id FROM lexical) tokens ON tokens.message_id=d.message_id
-    WHERE d.normalization_version={NORMALIZATION_IDENTITY}
-      AND d.content_version=json_extract(messages.receipt,'$.content_version')"""
+    WHERE {_LEXICAL_CURRENT}"""
 _LEXICAL_INDEXED = f"SELECT d.message_id {_LEXICAL_VALID_ROWS}"
+_LEXICAL_ACCELERATION_INDEX = "evernook_message_cover_v1"
+_LEXICAL_ACCELERATION_SQL = (f"CREATE INDEX {_LEXICAL_ACCELERATION_INDEX} ON "
+    "messages(id,received,json_extract(receipt,'$.content_version'))")
+_LEXICAL_ACCELERATED_ROWS = f"""FROM lexical_docs d
+    JOIN messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX} ON messages.id=d.message_id
+    JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id
+    WHERE {_LEXICAL_CURRENT}"""
 
 
 def _json(value: object) -> str:
@@ -1114,7 +1122,7 @@ class MemoryRuntime:
             raise MemoryFailure("invalid_time_range")
         with self._connection(check=budget) as db:
             db.execute("BEGIN")
-            status = self._lexical_status(db)
+            status, indexed_query = self._search_index(db, budget)
             base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
                 FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
@@ -1124,7 +1132,7 @@ class MemoryRuntime:
             used_index = status.state in {"ready", "behind"}
             reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
             try:
-                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({_LEXICAL_INDEXED}))" if used_index else ""
+                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({indexed_query}))" if used_index else ""
                 hits = self._search_hits(db, base + condition + order,
                     parameters + (query_expression(words),) if used_index else parameters, words, limit, offset, check=budget)
             except sqlite3.Error:
@@ -1161,18 +1169,73 @@ class MemoryRuntime:
         return hits
 
     @staticmethod
-    def _lexical_status(db: sqlite3.Connection) -> LexicalStatus:
+    def _lexical_status(db: sqlite3.Connection, *, materialized: bool = False) -> LexicalStatus:
         counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE}").fetchone()
         source = int(counts[0])
         present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name IN ('lexical','lexical_docs')")}
         if len(present) != 2:
             return LexicalStatus("not_built", source, 0, source, counts[1], None)
         try:
-            indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
+            indexed = db.execute("SELECT count(*),max(received) FROM temp.evernook_search_valid_v1" if materialized else
+                f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
         except sqlite3.Error:
             return LexicalStatus("unavailable", source, 0, source, counts[1], None)
         covered = int(indexed[0])
         return LexicalStatus("ready" if covered == source else "behind", source, covered, source - covered, counts[1], indexed[1])
+
+    @staticmethod
+    def _lexical_acceleration_valid(db: sqlite3.Connection) -> bool:
+        row = db.execute("SELECT type,tbl_name,sql FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ACCELERATION_INDEX,)).fetchone()
+        return (row is not None and row[0] == "index" and row[1] == "messages"
+            and row[2] == _LEXICAL_ACCELERATION_SQL)
+
+    def lexical_acceleration_enabled(self, access: Access) -> bool:
+        self._authorize(access)
+        with self._connection() as db:
+            return self._lexical_acceleration_valid(db)
+
+    def configure_lexical_acceleration(self, access: Access, *, enabled: bool) -> bool:
+        self._require_scope(access, "maintain", "configure_lexical_acceleration")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_acceleration")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ACCELERATION_INDEX,)).fetchone()
+            if exists and not self._lexical_acceleration_valid(db):
+                raise MemoryFailure("lexical_acceleration_conflict")
+            if enabled and not exists:
+                db.execute(_LEXICAL_ACCELERATION_SQL)
+            elif not enabled and exists:
+                db.execute(f"DROP INDEX {_LEXICAL_ACCELERATION_INDEX}")
+            db.execute("COMMIT")
+        return enabled
+
+    def _search_index(self, db: sqlite3.Connection, check: Callable[[], object]) -> tuple[LexicalStatus, str]:
+        if not self._lexical_acceleration_valid(db):
+            return self._lexical_status(db), _LEXICAL_INDEXED
+        present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name IN ('lexical','lexical_docs')")}
+        if len(present) != 2:
+            return self._lexical_status(db), _LEXICAL_INDEXED
+        saved = False
+        try:
+            db.execute("PRAGMA temp_store=MEMORY")
+            db.execute("SAVEPOINT evernook_search_acceleration")
+            saved = True
+            db.execute("CREATE TEMP TABLE evernook_search_valid_v1 (message_id TEXT PRIMARY KEY, received TEXT NOT NULL)")
+            db.execute(f"INSERT INTO temp.evernook_search_valid_v1 SELECT d.message_id,messages.received "
+                f"{_LEXICAL_ACCELERATED_ROWS} AND {_RECALLABLE}")
+            check()
+            status = self._lexical_status(db, materialized=True)
+            db.execute("RELEASE evernook_search_acceleration")
+            return status, "SELECT message_id FROM temp.evernook_search_valid_v1"
+        except sqlite3.Error:
+            check()
+            if not db.in_transaction:
+                raise
+            if saved:
+                db.execute("ROLLBACK TO evernook_search_acceleration")
+                db.execute("RELEASE evernook_search_acceleration")
+            return self._lexical_status(db), _LEXICAL_INDEXED
 
     def lexical_status(self, access: Access) -> LexicalStatus:
         self._authorize(access)
