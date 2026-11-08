@@ -14,7 +14,7 @@ EverNook 是供 dsh、pi、桌宠等接入的外挂长期记忆模块：通过�
 
 Core0.1.10另提供[显式维护窗口候选](docs/reports/m58-followup-84-query-budget.md)，支持最多5000个候选ID的有界补跑、逐条提交及后续组权限复核；独立安装和大合成副本验证已完成，尚未替换上述Core0.1.9宿主组合或取得新原生/长跑准入。
 
-Core0.1.11候选再提供[可选FTS消息ID加速](docs/contracts/lexical-v1.md#可选fts消息id加速core0111候选)：由可信CLI显式重建/反向恢复，保留原文与派生行号，旧库不自动迁移；与覆盖索引独立，重建需要维护窗口和额外磁盘。独立安装、故障回滚及合成大副本结果核对通过；preview.21组合已补[新原生短验收](docs/reports/dsh-candidate20-validation.md#core0111--preview21-隔离短验收)，尚无该组合自己的长跑或正式日用准入。
+Core0.1.11候选再提供[可选FTS消息ID加速](docs/contracts/lexical-v1.md#可选fts消息id加速core0111候选)：由可信CLI显式重建/反向恢复，保留原文与派生行号，旧库不自动迁移；与覆盖索引独立，重建需要维护窗口和额外磁盘。独立安装、故障回滚及合成大副本结果核对通过；preview.21组合已补[新原生短验收](docs/reports/dsh-candidate20-validation.md#core0111--preview21-隔离短验收)和[1800秒独立合成长跑](docs/reports/dsh-installed-stability.md#core0111--preview21独立窗口补验2026-11-08)，正式模型/质量/规模/物理OS与日用准入仍待完成。
 
 ## 我们希望做到什么
 
