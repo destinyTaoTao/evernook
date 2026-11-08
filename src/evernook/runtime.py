@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -49,6 +50,7 @@ _LEXICAL_ACCELERATED_ROWS = f"""FROM lexical_docs d
     JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id
     WHERE {_LEXICAL_CURRENT}"""
 _LEXICAL_ROWID_CACHE_LIMIT = 100_000
+_LEXICAL_ID_BUILD = "evernook_lexical_id_build_v1"
 
 
 def _json(value: object) -> str:
@@ -1221,6 +1223,50 @@ class MemoryRuntime:
             db.execute("COMMIT")
         return enabled
 
+    @staticmethod
+    def _lexical_id_format(db: sqlite3.Connection) -> bool | None:
+        row = db.execute("SELECT type,tbl_name,sql FROM sqlite_master WHERE name='lexical' COLLATE NOCASE").fetchone()
+        if row is None or row[0] != "table" or row[1] != "lexical":
+            return None
+        # Accept only definitions emitted by our original CREATE or SQLite's
+        # RENAME. Unknown tokenizers/options must never enable the MATCH path.
+        for enabled in (False, True):
+            columns = "message_id,terms" if enabled else "message_id UNINDEXED,terms"
+            if row[2] in (f"CREATE VIRTUAL TABLE lexical USING fts5({columns})",
+                          f'CREATE VIRTUAL TABLE "lexical" USING fts5({columns})'):
+                return enabled
+        return None
+
+    def lexical_id_acceleration_enabled(self, access: Access) -> bool:
+        self._authorize(access)
+        with self._connection() as db:
+            return self._lexical_id_format(db) is True
+
+    def configure_lexical_id_acceleration(self, access: Access, *, enabled: bool) -> bool:
+        self._require_scope(access, "maintain", "configure_lexical_id_acceleration")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_id_acceleration")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='lexical' COLLATE NOCASE").fetchone()
+            current = self._lexical_id_format(db)
+            if exists and current is None:
+                raise MemoryFailure("lexical_id_acceleration_conflict")
+            if not exists and enabled:
+                self._lexical_schema(db)
+                current = False
+            if current is not None and current is not enabled:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ID_BUILD,)).fetchone():
+                    raise MemoryFailure("lexical_id_acceleration_conflict")
+                columns = "message_id,terms" if enabled else "message_id UNINDEXED,terms"
+                db.execute(f"CREATE VIRTUAL TABLE {_LEXICAL_ID_BUILD} USING fts5({columns})")
+                db.execute(f"INSERT INTO {_LEXICAL_ID_BUILD}(rowid,message_id,terms) SELECT rowid,message_id,terms FROM lexical")
+                db.execute(f"INSERT INTO {_LEXICAL_ID_BUILD}({_LEXICAL_ID_BUILD},rank) VALUES('integrity-check',1)")
+                db.execute("DROP TABLE lexical")
+                db.execute(f"ALTER TABLE {_LEXICAL_ID_BUILD} RENAME TO lexical")
+            db.execute("COMMIT")
+        return enabled
+
     def _search_index(self, db: sqlite3.Connection, check: Callable[[], object]) -> tuple[LexicalStatus, str]:
         if not self._lexical_acceleration_valid(db):
             return self._lexical_status(db), _LEXICAL_INDEXED
@@ -1381,7 +1427,14 @@ class MemoryRuntime:
             return None
         found: dict[str, list[int]] = {}
         try:
-            with closing(db.execute(f"SELECT rowid,message_id FROM lexical WHERE message_id IN ({','.join('?' for _ in ids)})", ids)) as cursor:
+            condition = f"message_id IN ({','.join('?' for _ in ids)})"
+            parameters: tuple[object, ...] = ids
+            if (MemoryRuntime._lexical_id_format(db) is True
+                    and all(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value) for value in ids)):
+                expression = " OR ".join(f'"{value}"' for value in ids)
+                condition = f"message_id MATCH ? AND {condition}"
+                parameters = (expression, *ids)
+            with closing(db.execute(f"SELECT rowid,message_id FROM lexical WHERE {condition}", parameters)) as cursor:
                 for count, row in enumerate(cursor):
                     if count >= _LEXICAL_ROWID_CACHE_LIMIT:
                         return None

@@ -14,6 +14,17 @@ from contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_optional_fts_id_acceleration_requires_explicit_cli_and_is_reversible(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_id_acceleration"])
+        _, enabled = self.invoke("prepare-lexical-id-acceleration")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, status = self.invoke("status")
+        self.assertTrue(status["result"]["lexical_id_acceleration"])
+        self.assertFalse(status["result"]["lexical_acceleration"])
+        _, disabled = self.invoke("remove-lexical-id-acceleration")
+        self.assertEqual(disabled["result"], {"enabled": False})
+
     def test_optional_search_acceleration_is_explicit_and_reversible(self) -> None:
         _, before = self.invoke("status")
         self.assertFalse(before["result"]["lexical_acceleration"])

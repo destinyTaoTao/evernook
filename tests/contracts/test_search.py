@@ -17,6 +17,8 @@ from evernook import Change, Event, MemoryFailure, MemoryRuntime, Source, initia
 
 
 class SearchTests(unittest.TestCase):
+    initial_fts_present = False
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-search-")
         self.addCleanup(temporary.cleanup)
@@ -108,7 +110,7 @@ class SearchTests(unittest.TestCase):
             self.assertEqual((hit.spans[0].start, hit.spans[0].end, hit.spans[0].text), (start, end, query))
             self.assertEqual(self.event.text[start:end], hit.spans[0].text)
             self.assertEqual(page.index.pending_messages, 1)
-            self.assertFalse(page.used_index)
+            self.assertEqual(page.used_index, self.initial_fts_present)
         self.assertEqual(self.runtime.search(self.access, "不存在", mode="exact").hits, ())
 
     def test_lexical_words_and_compatibility_normalization_map_to_original_codepoints(self) -> None:

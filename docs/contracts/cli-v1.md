@@ -31,6 +31,7 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
 | `refresh-index-window` | `--config --access`；可选`--limit`（默认5000）、`--budget-seconds`（默认120） | maintain身份的显式有界补跑，返回实际全局LexicalStatus |
 | `prepare-search-acceleration` / `remove-search-acceleration` | `--config --access`；身份须 maintain | 显式创建/移除可选覆盖索引，返回 `{ "enabled": true/false }` |
+| `prepare-lexical-id-acceleration` / `remove-lexical-id-acceleration` | `--config --access`；身份须 maintain | 显式重建/反向恢复可选FTS ID索引，返回 `{ "enabled": true/false }` |
 | `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |
 | `refresh-semantic` / `semantic-status` | `--config --access`；可选 `--embedding-config` | 当前模型空间的一批最多 16 个片段维护或覆盖状态 |
 | `backup-init/create/restore/retain` | 本地路径及必要归档身份；口令仅真实 TTY 隐藏输入 | [认证加密备份、受控恢复与保留](encrypted-backup-v1.md)，不自动注册计划 |
@@ -38,6 +39,8 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 `rebuild-index` 先重置派生索引，再处理首批；`pending_messages > 0` 时继续运行 `refresh-index`，不要反复执行重建。维护成功返回不等于全库已经追平，必须读取 `state/pending_messages`。操作期间原文仍遵守既有提交与过滤语义。
 
 Core0.1.10候选增加`refresh-index-window`：一次选取最多5000个候选ID，每组最多加载100条原文、复核后续组权限，仍逐条提交；复用候选选取并仅在结束时统计全局状态，减少大账本每100条重复扫描的开销。`--limit`范围1–5000；`--budget-seconds`为(0,120]的软预算，过期后不开始下一条写入，当前SQL/事务和最终统计可能超出。返回behind表示仍有缺口，应核对后再显式补跑；没有自动创建可选覆盖索引、清空原文或开放模型工具。原`refresh-index/rebuild-index`限制不变。
+
+Core0.1.11候选另增可选FTS ID加速，`status.result.lexical_id_acceleration`独立披露受支持的新格式。启停会在写事务内重建派生FTS，要求暂停采集的维护窗口和额外磁盘空间，保留rowid/内容/版本元数据与原文；失败后先核对状态，不自动重试。没有启动/查询自动迁移或新增MCP工具；旧库/未启用继续原路径。`rebuild-index`仍恢复原格式并清空派生覆盖，加速须之后再次显式启用；移除不保证文件缩小。冲突/参数错误与兼容边界见[词法契约](lexical-v1.md#可选fts消息id加速core0111候选)。
 
 ```powershell
 evernook refresh-index-window --config E:\evernook-lab\synthetic-cli-data\runtime.json --access E:\evernook-lab\synthetic-cli-data\mcp-access-owner.json --limit 5000 --budget-seconds 120

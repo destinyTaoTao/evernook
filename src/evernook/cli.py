@@ -111,6 +111,8 @@ def _parser() -> Parser:
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
         ("prepare-search-acceleration", "Trusted optional covering-index build; may temporarily block writers"),
         ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
+        ("prepare-lexical-id-acceleration", "Trusted optional FTS ID rebuild; requires a writer maintenance window"),
+        ("remove-lexical-id-acceleration", "Trusted reverse rebuild of the optional FTS ID index"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
@@ -477,9 +479,13 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command in ("prepare-search-acceleration", "remove-search-acceleration"):
         return {"enabled": runtime.configure_lexical_acceleration(access,
             enabled=args.command == "prepare-search-acceleration")}
+    if args.command in ("prepare-lexical-id-acceleration", "remove-lexical-id-acceleration"):
+        return {"enabled": runtime.configure_lexical_id_acceleration(access,
+            enabled=args.command == "prepare-lexical-id-acceleration")}
     return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "lexical": asdict(runtime.lexical_status(access)),
-            "lexical_acceleration": runtime.lexical_acceleration_enabled(access), "consumer_running": False}
+            "lexical_acceleration": runtime.lexical_acceleration_enabled(access),
+            "lexical_id_acceleration": runtime.lexical_id_acceleration_enabled(access), "consumer_running": False}
 
 
 def main() -> None:

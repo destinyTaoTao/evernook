@@ -225,7 +225,7 @@ class LexicalMaintenanceTests(unittest.TestCase):
         injected: list[bool] = []
         class FailedLookup(sqlite3.Connection):
             def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-                if sql.startswith("SELECT rowid,message_id FROM lexical WHERE message_id IN"):
+                if sql.startswith("SELECT rowid,message_id FROM lexical WHERE "):
                     injected.append(True)
                     raise sqlite3.OperationalError("synthetic optional lookup failure")
                 return super().execute(sql, parameters)
