@@ -118,3 +118,29 @@ Core wheel SHA-256保持`0b2a6ad14ad48a3ec3bd1aa2ac94bda760958a861a4cb1a76198654
 Core wheel SHA-256：`b0601f1cf454623e4ed89774f55c7ea8464078760e25565c4f9bd4ca876daf40`；插件tgz SHA-256：`e886d1d2257182ab7961f206a66746fa5ad89f5d4d8d948152586ebc76ae1b28`。原始证据根为仓库外`Documents/Codex/2026-11-08/evernook-publish94-stability16-01`，含新环境清单、准备/安装/验收脚本、pilot/formal运行库与会话、原始采样、acceptance.json、产物证明及cleanup.json。凭证、认证URL和运行数据不提交。
 
 本批只补齐Core0.1.6/preview.21合成安装稳定性窗口。Web仍legacy_character_cap且daily_admitted=false；#105等待原生完整请求计数接口，#86独立ORT原生实验未实施；严格质量/100k与1M完整规模/正式p95、真实模型/附件、用户库跨机器与物理OS门禁保持开放，#81/#82/#84/#94不关闭，PR#93保持draft，日用未启用。
+
+## Core0.1.9 / preview.21独立窗口补验（2026-11-08）
+
+接续[Core0.1.9隔离短验收](dsh-candidate20-validation.md)，另建仓库外实验根、新非editable Python环境、pilot/formal各自的DSH_HOME/profile、合成账本和工作文件。复用原固定dsh0.2.1-rc.5补丁宿主、Core0.1.9 wheel及preview.21 tgz，不重建产物、升级其他冻结依赖、修改旧Core0.1.6环境或日用profile。只在两个新合成账本由可信owner显式启用已有可选覆盖索引，验证维护选取/统计及行号查找的实际并发路径；没有自动迁移旧库。
+
+外部policy仅将原冻结Core/插件身份更新为0.1.9/preview.21，其他字段逐项相同：1800秒、10秒节拍、250ms采样、2GiB采样Private Bytes和10GiB逻辑磁盘上限。policy SHA-256为`a68294ee6a7e60340bc6af1ee1353ac4c1cdbf91d0fd79f5b88e053e3bd8533c`，driver保持`e19008915c272463b01c144ce99beb681afa05f35aabc77ec731aff50d72afff`。运行中及结束后核对冻结字节；正式命令不传pilot参数，monitor外层操作上限2100秒。
+
+先执行新pilot：60.0019秒/6回合，全部预定故障动作通过，monitor退出0、整体85.885秒/180秒上限；343样本、Private Bytes观察峰741302272字节，3次进程查询失败保留。网络拒绝/磁盘竞争探针5项回归通过，pilot前后Core45/插件37文件核对一致。正式夹具随后重新准备，不复用pilot的失败写入、会话或运行库。
+
+| 正式检查 | 实际结果与范围 |
+|---|---|
+| 完整窗口 | 1800.0110522秒、180前台回合，交替安全文本前缀/顺序推理、最终原生结果完整保存及独立回读均通过 |
+| 故障动作 | 取消、权限拒绝、拥有的宿主树停止/重启、MCP读取客户端关闭/重连、只读续接新写拒绝均通过；未重跑旧工具副作用 |
+| 恢复与原文 | 重复确认同一只读目标、不增模型/工具调用、原文件内容/mtime不变；只读新写工具体0、文件不存在，恢复证据与拒绝结果可回账本核对。重连后重要原话逐字一致 |
+| 错误/网络 | 业务错误0、应用运行期非loopback连接/DNS/fetch尝试0；使用专用Node/Python应用守卫，不是物理断网/OS防火墙，管理安装/审计的注册表请求单独计算 |
+| 资源 | 7283样本，Private Bytes观察峰748077056字节（约713MiB）；实验根与宿主逻辑磁盘703093391字节（约671MiB）。10次进程查询失败保留，不称硬峰值或相对旧组合的资源改善 |
+| 后台收敛 | 901个维护tick；最终词法6982/6982、pending0，可选索引仍显式启用；导航消息游标6982与观察头一致、queued/running/failed均0。一次中途观测有1条待索引，后续自然收敛，没有伪报持续零缺口 |
+| 数据一致性 | SQLite quick_check=ok、foreign_key_check空；通用RuntimeStatus.pending_jobs仍6982，本次未执行抽取/沉淀，不能称所有后台任务清空 |
+| 产物/依赖 | 正式窗口前后Core45代码文件与已提交Git blob/wheel/实装一致，插件37成员与源码/tgz/实装一致；当前补丁和61条依赖解析边通过，正式profile生产审计前后0条 |
+| 收尾 | monitor自然0退出，整体1823.018秒，root_exited=true，无STOP/超时。验收器退出后相关Node/Python进程及37921/37922监听均0；保留两套已停止但仍安装的profile及全部证据 |
+
+单独验收器读取原始资源行，复核行数、进程求和、观察峰、单调时间、窗口/回合/全部动作、policy/driver/网络与磁盘探针冻结哈希、最终词法/导航及数据库一致性。10次查询失败、采样间峰值、短命/孤儿进程和非原子树统计边界保留；未放宽冻结门槛或修改产品取得通过。本批没有新的产品代码、源码套件或浏览器实看；此前Core0.1.9源码/安装回归和9场景短验收属于各自批次。
+
+Core wheel SHA-256：`20c6f92062b6451cb482d0fb41ebffd1306b0541489dcd49ca4bde2bd4a6f589`；插件tgz SHA-256：`e886d1d2257182ab7961f206a66746fa5ad89f5d4d8d948152586ebc76ae1b28`。准备/安装/审计、冻结依赖与policy、pilot/formal原始采样及会话、acceptance.json、前后产物证明和cleanup.json保留于仓库外`Documents/Codex/2026-11-08/evernook-publish94-stability19-01`。凭证、认证URL、数据库和原始运行日志不提交。
+
+本批补齐Core0.1.9/preview.21显式可选索引组合的合成安装稳定性窗口，不将旧Core0.1.6窗口转记为新版本。Web仍为字符兼容、daily_admitted=false；#105等待原生完整请求计数接口，ORT原生提案未应用/编译/加载。严格质量、100k/1M完整规模、正式时延、真实远端模型/附件、用户库跨机器与物理整机断网/睡眠/重启等门禁继续开放；#81/#82/#84/#94不关闭，PR93保持draft，未启用日用。
