@@ -31,6 +31,8 @@ Core0.1.9再复用既有可选索引按ID先选取再回源，并优化独立覆
 
 Core0.1.10另有[显式维护窗口候选](m58-followup-84-query-budget.md)：旧100条入口保持，可信CLI一次最多5000个候选ID、逐组复核权限并逐条提交；同初态5000条从90.81秒降至实装CLI11.95秒，源文/旧派生/全部语义表及新增索引重算核对一致，安装73项/实际SDK通过。每份大副本仍pending747430，未切换Core0.1.9宿主，不继承其原生或长跑证据，也不代表正式质量/规模通过。
 
+Core0.1.11在用户另行批准后提供可选FTS ID索引显式升级/反向恢复及格式识别回退，详见[#84](m58-followup-84-query-budget.md)。新独立安装已完成[原生9场景、失败只读恢复、重启/设置/卸载](dsh-candidate20-validation.md#core0111--preview21-隔离短验收)，5个新维护窗口使454条小账本追平，25阶段与最终DB/产物/审计/清理通过。该组合自己的1800秒长跑尚待另建环境，旧Core0.1.9证据不转记；Web/模型/质量/规模/时延和物理OS门禁保持。
+
 最新页面提示已在新合成profile通过正常HTTP入口补验：preview.21中英文独立页面/侧栏的字符模式、非准入、顺序推理限制和刷新状态均实际渲染并留截图；见[浏览器记录](dsh-web-budget-disclosure.md)。此前file协议拒绝与旧Chrome URL识别失败保留为历史，不再将它们列作本项当前阻塞。该窄范围页面通过不替代上述正式门禁或完整管理流程回归。
 
 `node plugins/dsh/probes/tool-publication.mjs <private host directory>` 在真实dsh0.2.1-rc.5的Tools服务注册合成工具与结果观察者：观察者仍在等待保存时，`tools.execute`已经返回成功；观察者抛出存储异常时，执行仍返回成功。输出为 `observer_awaited:false`、`observer_failure_blocks_result:false`。这不能作为“先可靠保存，再显示/继续模型”的屏障。
