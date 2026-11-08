@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -48,6 +48,7 @@ _LEXICAL_ACCELERATED_ROWS = f"""FROM lexical_docs d
     JOIN messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX} ON messages.id=d.message_id
     JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id
     WHERE {_LEXICAL_CURRENT}"""
+_LEXICAL_ROWID_CACHE_LIMIT = 100_000
 
 
 def _json(value: object) -> str:
@@ -1254,6 +1255,7 @@ class MemoryRuntime:
         self._require_scope(access, "maintain", "refresh_lexical")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
+        prepared = False
         try:
             with self._connection() as db:
                 db.execute("BEGIN IMMEDIATE")
@@ -1261,23 +1263,58 @@ class MemoryRuntime:
                 db.execute("COMMIT")
                 rows = db.execute(f"""SELECT event,receipt FROM messages
                     WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+                prepared = True
+                # Sample before the lookup, and compare only on this same connection.
+                # A peer commit invalidates the optimization, including equal-version
+                # FTS replacements or a rebuild that reuses old rowids.
+                version = int(db.execute("PRAGMA data_version").fetchone()[0])
+                rowids = self._lexical_rowids(db, rows)
+                for row in rows:
+                    message = self._stored(row)
+                    terms = index_terms(message.event.text)  # No write transaction during derivation.
+                    db.execute("BEGIN IMMEDIATE")
+                    current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
+                    if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
+                        db.execute("ROLLBACK")
+                        continue
+                    if rowids is not None and int(db.execute("PRAGMA data_version").fetchone()[0]) != version:
+                        rowids = None
+                    if rowids is None:
+                        db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
+                    else:
+                        db.executemany("DELETE FROM lexical WHERE rowid=? AND message_id=?",
+                            ((rowid, message.receipt.message_id) for rowid in rowids.get(message.receipt.message_id, ())))
+                    db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
+                    db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+                    db.execute("COMMIT")
         except MemoryFailure as error:
-            if error.code != "storage_unavailable":
+            if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
-        for row in rows:
-            message = self._stored(row)
-            terms = index_terms(message.event.text)  # Derive outside the write transaction.
-            with self._connection() as db:
-                db.execute("BEGIN IMMEDIATE")
-                current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
-                if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
-                    continue
-                db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
-                db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
-                db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
-                db.execute("COMMIT")
         return self.lexical_status(access)
+
+    @staticmethod
+    def _lexical_rowids(db: sqlite3.Connection, rows: list[sqlite3.Row]) -> dict[str, list[int]] | None:
+        try:
+            ids = tuple(Receipt(**json.loads(row["receipt"])).message_id for row in rows)
+        except (KeyError, TypeError, ValueError):
+            # Preserve normal source-order failures rather than parsing later bad
+            # receipts before any earlier document has been processed.
+            return None
+        if not ids:
+            return {}
+        if any(type(message_id) is not str for message_id in ids):
+            return None
+        found: dict[str, list[int]] = {}
+        try:
+            with closing(db.execute(f"SELECT rowid,message_id FROM lexical WHERE message_id IN ({','.join('?' for _ in ids)})", ids)) as cursor:
+                for count, row in enumerate(cursor):
+                    if count >= _LEXICAL_ROWID_CACHE_LIMIT:
+                        return None
+                    found.setdefault(row[1], []).append(int(row[0]))
+        except sqlite3.Error:
+            return None
+        return found
 
     def rebuild_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
         self._require_scope(access, "maintain", "rebuild_lexical")
