@@ -96,6 +96,8 @@ class SearchAccelerationTests(unittest.TestCase):
         self.assertEqual(injected, [True])
 
     def test_accelerated_search_uses_connection_local_memory_and_no_later_temp_state(self) -> None:
+        self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event="pending"),
+            sequence=2, text="合成：尚未索引的红茶记录。"))
         self.runtime.configure_lexical_acceleration(self.access, enabled=True)
         real_connect = sqlite3.connect
         stores: list[int] = []
@@ -103,7 +105,7 @@ class SearchAccelerationTests(unittest.TestCase):
         class Observed(sqlite3.Connection):
             def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
                 cursor = super().execute(sql, parameters)
-                if sql.startswith("INSERT INTO temp.evernook_search_valid_v1"):
+                if sql.startswith(("INSERT INTO temp.evernook_search_valid_v1", "INSERT INTO temp.evernook_search_docs_v1")):
                     stores.append(int(super().execute("PRAGMA temp_store").fetchone()[0]))
                 if "messages.id NOT IN (SELECT message_id FROM temp.evernook_search_valid_v1)" in sql:
                     membership.append(True)
@@ -112,11 +114,12 @@ class SearchAccelerationTests(unittest.TestCase):
             return real_connect(*args, **kwargs, factory=Observed)
         with patch("sqlite3.connect", side_effect=connect):
             self.assertEqual(len(self.runtime.search(self.access, "乌龙").hits), 1)
-        self.assertEqual(stores, [2])
+        self.assertEqual(stores, [2, 2])
         self.assertEqual(membership, [True])
         with closing(sqlite3.connect(self.config.parent / "memory.sqlite3")) as db:
-            with self.assertRaisesRegex(sqlite3.OperationalError, "no such table"):
-                db.execute("SELECT * FROM temp.evernook_search_valid_v1")
+            for table in ("evernook_search_valid_v1", "evernook_search_docs_v1"):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "no such table"):
+                    db.execute(f"SELECT * FROM temp.{table}")
 
     def test_cancel_during_temp_materialization_never_becomes_a_complete_fallback(self) -> None:
         self.runtime.configure_lexical_acceleration(self.access, enabled=True)
@@ -132,6 +135,47 @@ class SearchAccelerationTests(unittest.TestCase):
         with patch("sqlite3.connect", side_effect=connect):
             with self.assertRaisesRegex(MemoryFailure, "search_canceled"):
                 self.runtime.search(self.access, "不存在", cancel=cancel)
+        self.assertTrue(cancel.is_set())
+        self.assertEqual(len(self.runtime.search(self.access, "乌龙").hits), 1)
+
+    def test_metadata_mirror_failure_rolls_back_optional_state_and_preserves_the_page(self) -> None:
+        expected = self.runtime.search(self.access, "乌龙")
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        injected: list[bool] = []
+
+        class Fault(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("INSERT INTO temp.evernook_search_docs_v1"):
+                    injected.append(True)
+                    raise sqlite3.OperationalError("synthetic metadata mirror failure")
+                return super().execute(sql, parameters)
+
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=Fault)
+
+        with patch("sqlite3.connect", side_effect=connect):
+            self.assertEqual(self.runtime.search(self.access, "乌龙"), expected)
+        self.assertEqual(injected, [True])
+        self.assertEqual(self.runtime.search(self.access, "乌龙"), expected)
+
+    def test_cancel_during_metadata_copy_is_not_masked_by_original_fallback(self) -> None:
+        self.runtime.configure_lexical_acceleration(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        cancel = ThreadEvent()
+
+        class Canceled(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("INSERT INTO temp.evernook_search_docs_v1"):
+                    cancel.set()
+                return super().execute(sql, parameters)
+
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            return real_connect(*args, **kwargs, factory=Canceled)
+
+        with patch("sqlite3.connect", side_effect=connect):
+            with self.assertRaisesRegex(MemoryFailure, "search_canceled"):
+                self.runtime.search(self.access, "乌龙", cancel=cancel)
         self.assertTrue(cancel.is_set())
         self.assertEqual(len(self.runtime.search(self.access, "乌龙").hits), 1)
 

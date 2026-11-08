@@ -50,6 +50,7 @@ _LEXICAL_ACCELERATED_ROWS = f"""FROM lexical_docs d
     JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id
     WHERE {_LEXICAL_CURRENT}"""
 _LEXICAL_ROWID_CACHE_LIMIT = 100_000
+_LEXICAL_QUERY_CANDIDATE_LIMIT = 4096
 _LEXICAL_ID_BUILD = "evernook_lexical_id_build_v1"
 
 
@@ -1136,8 +1137,23 @@ class MemoryRuntime:
             reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
             try:
                 condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({indexed_query}))" if used_index else ""
+                search_parameters = parameters + (query_expression(words),) if used_index else parameters
+                if status.state == "ready":
+                    # A small complete candidate set avoids scanning every source as pending.
+                    # Large matches retain the ordered-source path so popular queries can stop early.
+                    candidate_limit = min(_LEXICAL_QUERY_CANDIDATE_LIMIT,
+                        db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters))
+                    if candidate_limit > 0:
+                        candidates = []
+                        for row in db.execute("SELECT message_id FROM lexical WHERE lexical MATCH ? LIMIT ?",
+                                (query_expression(words), candidate_limit + 1)):
+                            budget()
+                            candidates.append(row[0])
+                        if len(candidates) <= candidate_limit:
+                            condition = " AND messages.id IN (" + ",".join("?" for _ in candidates) + ")" if candidates else " AND 0"
+                            search_parameters = parameters + tuple(candidates)
                 hits = self._search_hits(db, base + condition + order,
-                    parameters + (query_expression(words),) if used_index else parameters, words, limit, offset, check=budget)
+                    search_parameters, words, limit, offset, check=budget)
             except sqlite3.Error:
                 budget()
                 if not used_index:
@@ -1278,9 +1294,12 @@ class MemoryRuntime:
             db.execute("PRAGMA temp_store=MEMORY")
             db.execute("SAVEPOINT evernook_search_acceleration")
             saved = True
+            db.execute("CREATE TEMP TABLE evernook_search_docs_v1 (message_id TEXT PRIMARY KEY, content_version INTEGER, normalization_version INTEGER) WITHOUT ROWID")
+            db.execute("INSERT INTO temp.evernook_search_docs_v1 SELECT message_id,content_version,normalization_version FROM lexical_docs NOT INDEXED WHERE message_id IS NOT NULL")
             db.execute("CREATE TEMP TABLE evernook_search_valid_v1 (message_id TEXT PRIMARY KEY, received TEXT NOT NULL)")
+            rows = _LEXICAL_ACCELERATED_ROWS.replace("FROM lexical_docs d", "FROM temp.evernook_search_docs_v1 d")
             db.execute(f"INSERT INTO temp.evernook_search_valid_v1 SELECT d.message_id,messages.received "
-                f"{_LEXICAL_ACCELERATED_ROWS} AND {_RECALLABLE}")
+                f"{rows} AND {_RECALLABLE}")
             check()
             status = self._lexical_status(db, materialized=True)
             db.execute("RELEASE evernook_search_acceleration")
