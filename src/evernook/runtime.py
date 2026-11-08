@@ -34,11 +34,12 @@ if TYPE_CHECKING:
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
-_LEXICAL_INDEXED = f"""SELECT d.message_id FROM lexical_docs d
-    JOIN messages original ON original.id=d.message_id
+_LEXICAL_VALID_ROWS = f"""FROM lexical_docs d
+    JOIN messages ON messages.id=d.message_id
     JOIN (SELECT DISTINCT message_id FROM lexical) tokens ON tokens.message_id=d.message_id
     WHERE d.normalization_version={NORMALIZATION_IDENTITY}
-      AND d.content_version=json_extract(original.receipt,'$.content_version')"""
+      AND d.content_version=json_extract(messages.receipt,'$.content_version')"""
+_LEXICAL_INDEXED = f"SELECT d.message_id {_LEXICAL_VALID_ROWS}"
 
 
 def _json(value: object) -> str:
@@ -1167,7 +1168,7 @@ class MemoryRuntime:
         if len(present) != 2:
             return LexicalStatus("not_built", source, 0, source, counts[1], None)
         try:
-            indexed = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE} AND id IN ({_LEXICAL_INDEXED})").fetchone()
+            indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
         except sqlite3.Error:
             return LexicalStatus("unavailable", source, 0, source, counts[1], None)
         covered = int(indexed[0])

@@ -238,6 +238,36 @@ class SearchTests(unittest.TestCase):
         self.runtime.refresh_lexical(self.access)
         self.assertEqual(self.runtime.lexical_status(self.access).state, "ready")
 
+    def test_coverage_counts_distinct_current_visible_documents_and_their_watermarks(self) -> None:
+        instruction = self.runtime.submit(self.access, Event(Source("test", "session", "main", "coverage-instruction"),
+            "user", 2, None, "complete", "合成：停止召回下一条合成记录。"))
+        latest = self.runtime.submit(self.access, Event(Source("test", "session", "main", "coverage-latest"),
+            "user", 3, None, "complete", "合成：更晚的计划记录。"))
+        self.runtime.refresh_lexical(self.access)
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as fault:
+            fault.execute("INSERT INTO lexical SELECT message_id,terms FROM lexical WHERE message_id=?", (self.receipt.message_id,))
+        ready = self.runtime.lexical_status(self.access)
+        self.assertEqual((ready.source_messages, ready.indexed_messages, ready.pending_messages), (3, 3, 0))
+        self.assertEqual((ready.source_watermark, ready.indexed_watermark), (latest.received_at, latest.received_at))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as fault:
+            fault.execute("UPDATE lexical_docs SET content_version=999 WHERE message_id=?", (self.receipt.message_id,))
+            fault.execute("UPDATE lexical_docs SET normalization_version=0 WHERE message_id=?", (latest.message_id,))
+        stale = self.runtime.lexical_status(self.access)
+        self.assertEqual((stale.indexed_messages, stale.pending_messages, stale.indexed_watermark), (1, 2, instruction.received_at))
+        with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as fault:
+            fault.execute("DELETE FROM lexical WHERE message_id=?", (instruction.message_id,))
+        missing = self.runtime.lexical_status(self.access)
+        self.assertEqual((missing.indexed_messages, missing.pending_messages, missing.indexed_watermark), (0, 3, None))
+        self.runtime.change(self.access, Change("coverage-suppress-latest", latest.message_id, 1, "suppress",
+            instruction.message_id, "synthetic suppression"))
+        hidden = self.runtime.lexical_status(self.access)
+        self.assertEqual((hidden.source_messages, hidden.indexed_messages, hidden.source_watermark), (2, 0, instruction.received_at))
+        healed = self.runtime.refresh_lexical(self.access)
+        self.assertEqual((healed.state, healed.source_messages, healed.indexed_messages, healed.pending_messages), ("ready", 2, 2, 0))
+        self.assertEqual(healed.indexed_watermark, instruction.received_at)
+        self.assertEqual(self.runtime.search(self.access, "更晚").hits, ())
+        self.assertEqual(self.runtime.search(self.access, "乌龙").hits[0].message_id, self.receipt.message_id)
+
     def test_invalid_or_sensitive_queries_are_refused_before_search_and_projection_coordinates_stay_separate(self) -> None:
         for query, code in [("", "invalid_query"), (" " * 5, "invalid_query"), ("x" * 257, "invalid_query"),
                             ("bad\ud800", "invalid_encoding"), ("password=synthetic-private", "protected_query")]:
