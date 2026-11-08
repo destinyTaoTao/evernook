@@ -133,3 +133,5 @@ Core wheel SHA-256：`83dba805e37bcea6463fea8394b7253104745371f7fc0c8723abb37f5b
 Core wheel SHA-256：`3face086b7e877953d5b3891e58d3f25edc60dbc46863c2dd39f30ed06bffa6e`；插件tgz仍`e886d1d2257182ab7961f206a66746fa5ad89f5d4d8d948152586ebc76ae1b28`。完整准备/安装/尝试、25阶段、原生结果与恢复/设置/卸载回执、补跑、前后产物与审计、监控和final/post/cleanup证明保留于仓库外`Documents/Codex/2026-11-08/evernook-publish94-core112-01`；认证URL、凭证和运行数据不提交。
 
 本批仅增加Core0.1.12组合的原生短验收证据，未修改产品代码或重跑源码套件；已有回归/大副本结果见[#84记录](m58-followup-84-query-budget.md)。该候选不继承Core0.1.11的1800秒窗口，自己的稳定性窗口另建pilot/formal夹具核对。Web仍legacy_character_cap/daily_admitted=false，2秒查询、正式质量/完整规模/p95、真实模型/附件与物理OS门禁继续开放；#105等待原生计数、ORT原生提案未实施，PR93仍draft、日用关闭。
+
+随后另一新环境已完成[Core0.1.12/preview.21目标1800秒、实际1810.004秒/181回合独立窗口](dsh-installed-stability.md#core0112--preview21独立窗口补验2026-11-08)，两项加速保留、全部预定动作及7020条词法/导航收敛通过；11次进程采样查询失败保留。这补齐当前组合的合成安装稳定性，不代替模型、质量/规模、正式时延或物理OS准入。

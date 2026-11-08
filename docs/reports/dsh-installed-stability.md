@@ -170,3 +170,29 @@ policy仅更新Core/插件身份，其他字段逐项相同：1800秒、10秒节
 Core wheel SHA-256：`83dba805e37bcea6463fea8394b7253104745371f7fc0c8723abb37f5b27aacd`；插件tgz仍`e886d1d2257182ab7961f206a66746fa5ad89f5d4d8d948152586ebc76ae1b28`。新环境、冻结策略/依赖、安装/审计/前后产物证明、pilot/formal全部采样及回执、acceptance.json与cleanup.json保留于仓库外`Documents/Codex/2026-11-08/evernook-publish94-stability111-01`。凭证、认证URL、数据库和原始日志不提交。
 
 这补齐当前Core0.1.11/preview.21组合自己的合成安装长跑，未继承旧Core0.1.9窗口。Web仍legacy_character_cap、daily_admitted=false；#105等待dsh原生计数，ORT原生提案未应用/编译/加载。严格质量、100k/1M完整规模、正式时延、真实远端模型/附件、用户库跨机器与物理整机断网/睡眠/重启门禁继续开放；#81/#82/#84/#94不关闭，PR93保持draft，日用未启用。
+
+## Core0.1.12 / preview.21独立窗口补验（2026-11-08）
+
+接续[Core0.1.12原生短验收](dsh-candidate20-validation.md#core0112--preview21-隔离短验收)，另建非editable环境及pilot/formal各自的新DSH_HOME/profile、合成账本与工作文件；复用固定rc.5补丁宿主和归档wheel/tgz，冻结依赖只替换Core。新账本显式启用覆盖与FTS ID两项已批准加速，旧宿主和日用profile不变。
+
+policy仅更新Core/插件身份，保留1800秒、10秒节拍、250ms采样、2GiB观察Private Bytes和10GiB逻辑磁盘门槛，非身份字段与原冻结policy逐项相同。policy SHA-256为`f13f490af6e23e91c55ed42db8e6fa670bbae1614ccde90c8b87cfef16a7864a`，driver仍为`e19008915c272463b01c144ce99beb681afa05f35aabc77ec731aff50d72afff`；正式命令没有pilot时长参数，monitor上限2100秒。
+
+网络/磁盘探针5项通过。独立pilot实际60.0044432秒/6回合，全部预定动作通过；monitor85.636秒/180秒上限、342采样、Private Bytes观察峰745861120字节，1次进程采样查询失败保留。独立验收器、前后Core45/插件37核对通过后，再准备正式夹具，不复用pilot的失败会话、副作用或账本。
+
+| 正式检查 | 实际结果与范围 |
+|---|---|
+| 完整窗口 | 目标1800秒，实际1810.0042455秒、181回合，保留全部记录，不截成180回合或改动门槛。交替安全前缀/顺序推理、最终原生结果保存与回读通过 |
+| 故障动作 | 取消、权限拒绝、拥有的宿主树停止/重启、MCP关闭/重连和只读续接新写拒绝全部通过 |
+| 恢复/副作用 | 重复确认同一只读目标，不增加模型/工具调用，原文件内容/mtime不变；重连后重要原话逐字相同。只读新写工具体0、文件不存在，拒绝结果和恢复证据可回账本核对；没有重跑旧副作用 |
+| 错误/网络 | 业务错误0、运行期应用非loopback连接/DNS/fetch尝试0，不等于物理断网或OS防火墙；管理安装/审计联网另计 |
+| 资源 | 7321采样、Private Bytes观察峰743895040字节（约709MiB），逻辑磁盘704100153字节；11次进程采样查询失败保留，不称硬峰值、全机空闲或相对旧版本资源改善 |
+| 后台 | 906维护tick，词法7020/7020、pending0，覆盖/FTS ID加速保留；导航游标与观察头均7020，queued/running/failed均0 |
+| 数据 | SQLite quick_check=ok/FK空；通用RuntimeStatus.pending_jobs仍7020，本批未执行抽取/沉淀，不能称全部后台任务清空 |
+| 产物/依赖 | 正式前后Core45成员Git/wheel/实装、插件37成员源码/tgz/实装逐字节相同；固定补丁/61解析边及正式profile验证通过，宿主与正式profile生产审计前后漏洞0 |
+| 收尾 | monitor自然0退出，整体1832.585秒/2100秒上限，无STOP/超时。独立验收与审计完成后，相关Node/Python进程（含profile名核对）及37929/37930监听0；两套停止的安装profile与全部证据保留 |
+
+独立验收器复核全部原始采样的数量/求和/峰值/单调时间、完整回合与动作、policy/driver/网络和磁盘探针冻结哈希、词法/导航及DB。采样间峰值、短命/孤儿进程、非原子树统计的限制保留。正式窗口期间另做小型内存/22条合成夹具的独立变动跟踪探针，没有修改本轮冻结代码或运行库；大副本探针延后至正式收尾，不将本轮描述为全机空闲稳态。没有重新执行源码或浏览器套件。
+
+Core wheel SHA-256：`3face086b7e877953d5b3891e58d3f25edc60dbc46863c2dd39f30ed06bffa6e`；插件tgz仍`e886d1d2257182ab7961f206a66746fa5ad89f5d4d8d948152586ebc76ae1b28`。新环境、策略与依赖、pilot/formal原始记录/采样、acceptance.json、post-formal-proof.json及cleanup.json保留于仓库外`Documents/Codex/2026-11-08/evernook-publish94-stability112-01`。认证URL、凭证和运行数据不提交。
+
+本批补齐Core0.1.12/preview.21自己的合成安装窗口，不继承Core0.1.11结论；不改变2秒查询仍失败的事实。Web仍字符兼容/daily_admitted=false，#105等待原生计数，ORT原生提案未实施；严格质量/独立100k与1M完整矩阵/正式时延、真实模型/附件、用户库跨机器与物理OS门禁继续开放，原AC不勾选，PR93保持draft、日用关闭。

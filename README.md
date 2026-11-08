@@ -16,7 +16,7 @@ Core0.1.10另提供[显式维护窗口候选](docs/reports/m58-followup-84-query
 
 Core0.1.11候选再提供[可选FTS消息ID加速](docs/contracts/lexical-v1.md#可选fts消息id加速core0111候选)：由可信CLI显式重建/反向恢复，保留原文与派生行号，旧库不自动迁移；与覆盖索引独立，重建需要维护窗口和额外磁盘。独立安装、故障回滚及合成大副本结果核对通过；preview.21组合已补[新原生短验收](docs/reports/dsh-candidate20-validation.md#core0111--preview21-隔离短验收)和[1800秒独立合成长跑](docs/reports/dsh-installed-stability.md#core0111--preview21独立窗口补验2026-11-08)，正式模型/质量/规模/物理OS与日用准入仍待完成。
 
-Core0.1.12另优化[请求内元数据核对和有界候选回源](docs/reports/m58-followup-84-query-budget.md)：不新增持久结构，候选较多时保留原查询路径。815923条已完整回填的合成副本，安装版近期/历史/无答案约2.95–2.98秒、热门词约4.75秒，完整页与旧包一致；已补[自身原生短验收](docs/reports/dsh-candidate20-validation.md#core0112--preview21-隔离短验收)，2秒查询仍超时，自身长跑与正式质量/规模/时延准入仍待完成，Core0.1.11宿主保留、日用关闭。
+Core0.1.12另优化[请求内元数据核对和有界候选回源](docs/reports/m58-followup-84-query-budget.md)：不新增持久结构，候选较多时保留原查询路径。815923条已完整回填的合成副本，安装版近期/历史/无答案约2.95–2.98秒、热门词约4.75秒，完整页与旧包一致；已补[自身原生短验收](docs/reports/dsh-candidate20-validation.md#core0112--preview21-隔离短验收)和[1810秒/181回合独立合成窗口](docs/reports/dsh-installed-stability.md#core0112--preview21独立窗口补验2026-11-08)。2秒查询仍超时，正式质量/规模/时延准入仍待完成，Core0.1.11宿主保留、日用关闭。
 
 ## 我们希望做到什么
 
