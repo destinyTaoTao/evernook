@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 import hashlib
 import shutil
 import struct
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +33,22 @@ class BackupTests(unittest.TestCase):
         self.keys = initialize_backup_keys(self.root / "keys", self.password)
         self.event = Event(Source("test", "session", "main", "original"), "user", 1, None,
                            "complete", "合成：加密备份原文37.50元。\r\n甲🙂e\u0301乙")
+
+    def test_checkpoint_backup_omits_tracking_and_keeps_review_only_restore(self) -> None:
+        receipt = self.runtime.submit(self.access, self.event)
+        self.runtime.configure_lexical_id_acceleration(self.access, enabled=True)
+        self.runtime.refresh_lexical_window(self.access)
+        self.runtime.configure_lexical_checkpoint(self.access, enabled=True)
+        create_backup(self.runtime, self.access, self.root / "checkpoint-backup", self.root / "keys")
+        restored = restore_backup(self.root / "checkpoint-backup", self.root / "checkpoint-review",
+            Path(self.keys.recovery_file), self.password)
+        self.assertEqual(restored.review_message(receipt.message_id).message.event, self.event)
+        self.assertEqual(restored.status().recovery_state, "review_required")
+        self.assertFalse((restored.root / "runtime.json").exists())
+        with closing(sqlite3.connect(restored.root / "evidence.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE type IN ('view','trigger')").fetchall(), [])
+            self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE name GLOB 'evernook_checkpoint_v1_*'").fetchall(), [])
+        self.assertTrue(self.runtime.lexical_checkpoint_enabled(self.access))
 
     def test_encrypted_snapshot_roundtrip_includes_important_original_but_no_plaintext_materials(self) -> None:
         receipt = self.runtime.submit(self.access, self.event)

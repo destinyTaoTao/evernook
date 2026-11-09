@@ -1126,34 +1126,68 @@ class MemoryRuntime:
             raise MemoryFailure("invalid_time_range")
         with self._connection(check=budget) as db:
             db.execute("BEGIN")
-            status, indexed_query = self._search_index(db, budget)
-            base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
-                FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+            from .lexical_checkpoint import search_state
+            checkpoint = search_state(db, budget)
+            if checkpoint is None:
+                status, indexed_query = self._search_index(db, budget)
+            else:
+                status, indexed_query = checkpoint.status, checkpoint.valid_query
+            scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
                   AND (? IS NULL OR messages.id<>?)"""
+            base = "SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version " + scope
             order = " ORDER BY occurred,received,messages.id"
             parameters: tuple[object, ...] = (start, start, end, end, current_input_id, current_input_id)
             used_index = status.state in {"ready", "behind"}
             reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
             try:
-                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({indexed_query}))" if used_index else ""
+                pending = (f"messages.id IN ({checkpoint.pending_query})" if checkpoint is not None
+                    else f"messages.id NOT IN ({indexed_query})")
+                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR {pending})" if used_index else ""
                 search_parameters = parameters + (query_expression(words),) if used_index else parameters
-                if status.state == "ready":
+                large_candidates = False
+                if status.state == "ready" or checkpoint is not None:
                     # A small complete candidate set avoids scanning every source as pending.
                     # Large matches retain the ordered-source path so popular queries can stop early.
+                    available = db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters)
                     candidate_limit = min(_LEXICAL_QUERY_CANDIDATE_LIMIT,
-                        db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters))
+                        available // (2 if status.state != "ready" else 1))
                     if candidate_limit > 0:
                         candidates = []
                         for row in db.execute("SELECT message_id FROM lexical WHERE lexical MATCH ? LIMIT ?",
                                 (query_expression(words), candidate_limit + 1)):
                             budget()
                             candidates.append(row[0])
-                        if len(candidates) <= candidate_limit:
-                            condition = " AND messages.id IN (" + ",".join("?" for _ in candidates) + ")" if candidates else " AND 0"
-                            search_parameters = parameters + tuple(candidates)
-                hits = self._search_hits(db, base + condition + order,
-                    search_parameters, words, limit, offset, check=budget)
+                        unindexed = []
+                        if checkpoint is not None and status.state != "ready":
+                            for row in db.execute(checkpoint.pending_query + " LIMIT ?", (candidate_limit + 1,)):
+                                budget()
+                                unindexed.append(row[0])
+                        if len(candidates) <= candidate_limit and len(unindexed) <= candidate_limit:
+                            ids = tuple(dict.fromkeys(candidates + unindexed))
+                            condition = " AND messages.id IN (" + ",".join("?" for _ in ids) + ")" if ids else " AND 0"
+                            search_parameters = parameters + ids
+                        else:
+                            large_candidates = True
+                hits = []
+                if checkpoint is not None and large_candidates:
+                    ordered_scope = scope.replace("FROM messages LEFT JOIN", "FROM messages INDEXED BY message_time LEFT JOIN", 1)
+                    probe = f"""WITH evernook_checkpoint_ordered AS MATERIALIZED (
+                        SELECT messages.id,messages.occurred,messages.received {ordered_scope}
+                        ORDER BY occurred,received,messages.id LIMIT 256)
+                        SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                        FROM evernook_checkpoint_ordered candidate JOIN messages ON messages.id=candidate.id
+                        LEFT JOIN visibility v ON v.message_id=messages.id WHERE
+                        (EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH
+                            ('message_id:"'||replace(messages.id,'"','""')||'" AND ('||?||')')
+                            AND message_id=messages.id) OR {pending})
+                        ORDER BY candidate.occurred,candidate.received,candidate.id"""
+                    hits = self._search_hits(db, probe, parameters + (query_expression(words),), words, limit, offset, check=budget)
+                # A bounded lookahead proves a page only when its next hit also exists.
+                # Inconclusive probes must read the complete original candidate range.
+                if len(hits) <= limit:
+                    hits = self._search_hits(db, base + condition + order,
+                        search_parameters, words, limit, offset, check=budget)
             except sqlite3.Error:
                 budget()
                 if not used_index:
@@ -1257,6 +1291,50 @@ class MemoryRuntime:
         self._authorize(access)
         with self._connection() as db:
             return self._lexical_id_format(db) is True
+
+    def lexical_checkpoint_enabled(self, access: Access) -> bool:
+        from .lexical_checkpoint import enabled
+        self._authorize(access)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            return enabled(db)
+
+    def configure_lexical_checkpoint(self, access: Access, *, enabled: bool) -> bool:
+        from .lexical_checkpoint import configure
+        self._require_scope(access, "maintain", "configure_lexical_checkpoint")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_checkpoint")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = configure(db, active=enabled)
+            db.execute("COMMIT")
+            return result
+
+    def refresh_lexical_checkpoint(self, access: Access, *, limit: int = 5000) -> int:
+        from .lexical_checkpoint import refresh
+        self._require_scope(access, "maintain", "refresh_lexical_checkpoint")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            processed = refresh(db, limit=limit)
+            db.execute("COMMIT")
+            return processed
+
+    def _lexical_maintenance_status(self, access: Access) -> LexicalStatus:
+        from .lexical_checkpoint import enabled
+        with self._connection() as db:
+            db.execute("BEGIN")
+            active = enabled(db)
+        if active:
+            try:
+                self.refresh_lexical_checkpoint(access)
+            except MemoryFailure as failure:
+                # A peer may have removed/invalidated the optional structure after
+                # the read check. The original index status remains authoritative.
+                if failure.code != "lexical_checkpoint_invalid":
+                    raise
+        return self.lexical_status(access)
 
     def configure_lexical_id_acceleration(self, access: Access, *, enabled: bool) -> bool:
         self._require_scope(access, "maintain", "configure_lexical_id_acceleration")
@@ -1365,7 +1443,7 @@ class MemoryRuntime:
             if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
-        return self.lexical_status(access)
+        return self._lexical_maintenance_status(access)
 
     def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120) -> LexicalStatus:
         self._require_scope(access, "maintain", "refresh_lexical_window")
@@ -1400,7 +1478,7 @@ class MemoryRuntime:
             if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
-        return self.lexical_status(access)
+        return self._lexical_maintenance_status(access)
 
     def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None) -> bool:
         # Sample before the lookup, and compare only on this same connection.

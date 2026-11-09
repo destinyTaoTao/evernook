@@ -218,6 +218,11 @@ def export_archive(runtime: MemoryRuntime, access: Access, destination: Path) ->
             target = sqlite3.connect(snapshot)
             try:
                 source.backup(target, pages=256, progress=progress, sleep=0.05)
+                from .lexical_checkpoint import strip_export
+                target.execute("PRAGMA trusted_schema=OFF")
+                target.execute("BEGIN IMMEDIATE")
+                strip_export(target)
+                target.execute("COMMIT")
             finally:
                 target.close()
         if not runtime._authorize(access).archive_review:

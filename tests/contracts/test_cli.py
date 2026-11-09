@@ -14,6 +14,22 @@ from contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_checkpoint_requires_explicit_id_index_and_is_reversible_via_cli(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_checkpoint"])
+        _, refused = self.invoke("prepare-search-checkpoint")
+        self.assertEqual(refused["error"]["code"], "lexical_checkpoint_requires_id_acceleration")
+        self.invoke("prepare-lexical-id-acceleration")
+        _, enabled = self.invoke("prepare-search-checkpoint")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, refreshed = self.invoke("refresh-search-checkpoint", extra=("--limit", "1"))
+        self.assertEqual(refreshed["result"], {"processed": 0, "enabled": True})
+        _, disabled = self.invoke("remove-search-checkpoint")
+        self.assertEqual(disabled["result"], {"enabled": False})
+        _, status = self.invoke("status")
+        self.assertFalse(status["result"]["lexical_checkpoint"])
+        self.assertTrue(status["result"]["lexical_id_acceleration"])
+
     def test_optional_fts_id_acceleration_requires_explicit_cli_and_is_reversible(self) -> None:
         _, before = self.invoke("status")
         self.assertFalse(before["result"]["lexical_id_acceleration"])

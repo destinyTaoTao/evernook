@@ -72,6 +72,8 @@ evernook status --config E:\evernook-lab\synthetic-cli-data\runtime.json --acces
 
 成功 stdout 为一行 UTF-8 `{"contract_version":1,"ok":true,"result":...}`，退出码 0；失败为 `{"contract_version":1,"ok":false,"error":{"code":"..."}}`，退出码 1。帮助信息除外。错误不回显正文、命令参数、访问 token 或异常栈；未知本地异常为 `local_operation_failed`，参数/JSON 形状错误为 `invalid_arguments`，非法 UTF-8 为 `invalid_encoding`。核心错误码和未保存状态原样保留。
 
+可选覆盖检查点提供`prepare-search-checkpoint/remove-search-checkpoint`，以及`refresh-search-checkpoint --limit 1..5000`，均要求maintain且不作为模型工具。须先显式`prepare-lexical-id-acceleration`；构建/停用返回`enabled`，整理返回`processed`和当前有效状态。默认不创建派生结构；status新增`lexical_checkpoint`，只表示守卫有效，不表示已经解除触发器写入依赖或每次查询都使用加速。格式、失效回退、维护窗口和新增原文保存依赖见[词法检查点契约](lexical-v1.md#可选覆盖检查点core0113接入候选默认关闭)。
+
 ## 安全与接入边界
 
 - `sensitive=true`、`protected_source=true` 或已识别凭证信号会只保存整条占位投影；`projection_only / original_saved=false` **不能显示成凭证已加密保存**。没有受保护原件可恢复。有限检测仍可能漏检，不能用于保管真实密码。

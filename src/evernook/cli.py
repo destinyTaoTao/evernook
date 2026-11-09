@@ -113,6 +113,9 @@ def _parser() -> Parser:
         ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
         ("prepare-lexical-id-acceleration", "Trusted optional FTS ID rebuild; requires a writer maintenance window"),
         ("remove-lexical-id-acceleration", "Trusted reverse rebuild of the optional FTS ID index"),
+        ("prepare-search-checkpoint", "Trusted explicit lexical coverage checkpoint build; requires FTS ID acceleration"),
+        ("remove-search-checkpoint", "Trusted removal of the optional coverage checkpoint and tracking triggers"),
+        ("refresh-search-checkpoint", "Trusted bounded reconciliation of changed checkpoint IDs"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
@@ -166,6 +169,8 @@ def _parser() -> Parser:
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
+        if name == "refresh-search-checkpoint":
+            command.add_argument("--limit", type=int, default=5000)
         if name in ("recall", "refresh-semantic", "semantic-status"):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
@@ -482,10 +487,17 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command in ("prepare-lexical-id-acceleration", "remove-lexical-id-acceleration"):
         return {"enabled": runtime.configure_lexical_id_acceleration(access,
             enabled=args.command == "prepare-lexical-id-acceleration")}
+    if args.command in ("prepare-search-checkpoint", "remove-search-checkpoint"):
+        return {"enabled": runtime.configure_lexical_checkpoint(access,
+            enabled=args.command == "prepare-search-checkpoint")}
+    if args.command == "refresh-search-checkpoint":
+        return {"processed": runtime.refresh_lexical_checkpoint(access, limit=args.limit),
+                "enabled": runtime.lexical_checkpoint_enabled(access)}
     return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "lexical": asdict(runtime.lexical_status(access)),
             "lexical_acceleration": runtime.lexical_acceleration_enabled(access),
-            "lexical_id_acceleration": runtime.lexical_id_acceleration_enabled(access), "consumer_running": False}
+            "lexical_id_acceleration": runtime.lexical_id_acceleration_enabled(access),
+            "lexical_checkpoint": runtime.lexical_checkpoint_enabled(access), "consumer_running": False}
 
 
 def main() -> None:
