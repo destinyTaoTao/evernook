@@ -678,6 +678,54 @@ test('independent service paragraph profile corrections reach the next actual pr
   assert.deepEqual(host.errors, []);
 });
 
+test('independent service topic views reach native provider and source withdrawal excludes old body', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-B', '-m', 'evernook.cli', command, '--config', host.config.config,
+      '--access', owner], { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  async function turn(session: string, text: string) {
+    const handle = await host.create(session); t.after(() => handle.dispose());
+    handle.agent.followup(user(session + '-input', text)); await handle.agent.whenIdle();
+    return host.memory.status(handle.agent.session.id).latest_input!.message_id;
+  }
+  function items() {
+    const block = adapter.requests.at(-1)!.messages.flatMap(m => m.content)
+      .find(b => b.type === 'text' && b.text.includes('untrusted_memory_context'));
+    assert.ok(block?.type === 'text');
+    return JSON.parse(block.text.slice(block.text.indexOf('{'))).items as
+      { kind: string; data: { view_id?: string; content?: { citations: { quote: string }[] } } }[];
+  }
+  const original = '合成：我们在桥北湿地见过白鹭。';
+  const source = await turn('topic-history', original);
+  cli('topic-view-define', { request_id: 'define-wetland', view_id: 'wetland', expected_revision: 0,
+    definition: { title: '湿地共同经历', purpose: '给未来聊天提供可回源的经历背景', query: '湿地' } });
+  const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 8192, deep_tokens: 16384,
+    topic_view_ids: ['wetland'], topic_view_tokens: 5000 });
+  await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+  host.config.memoryBudget!.memoryTokens = 8192;
+  assert.equal(cli('topic-view-refresh', { view_id: 'wetland', timeout: 10 }).state, 'valid');
+  const confirmation = await turn('topic-with-view', '合成：继续聊共同经历。');
+  assert.ok(items().some(i => i.kind === 'topic_view' && i.data.view_id === 'wetland'
+    && i.data.content?.citations.some(c => c.quote === original)), JSON.stringify({ items: items(),
+      viewStateAfterTurn: cli('topic-view-read', { view_id: 'wetland', current_input_id: confirmation }).state }));
+  cli('change', { request_id: 'hide-topic-source', target_id: source, expected_version: 1,
+    action: 'suppress', evidence_id: confirmation, reason: 'synthetic topic control' });
+  await turn('topic-withdrawn', '合成：再聊湿地。');
+  assert.equal(items().some(i => i.kind === 'topic_view'), false);
+  assert.doesNotMatch(JSON.stringify(adapter.requests.at(-1)), /桥北湿地见过白鹭/);
+  const updated = '合成：更正后的经历在银叶桥湿地，见过苍鹭。';
+  cli('topic-view-edit', { request_id: 'edit-wetland', view_id: 'wetland', expected_revision: 1, text: updated });
+  assert.equal(cli('topic-view-refresh', { view_id: 'wetland', timeout: 10 }).state, 'valid');
+  await turn('topic-updated', '合成：继续。');
+  assert.ok(items().some(i => i.kind === 'topic_view' && i.data.content?.citations.some(c => c.quote === updated)));
+  assert.deepEqual(host.errors, []);
+});
+
 test('native dsh cancellation and provider failure release foreground activity without disposing the session', async t => {
   for (const canceled of [true, false]) {
     const adapter = new Synthetic();

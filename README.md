@@ -4,6 +4,8 @@
 
 Local-first, evidence-backed memory for agent harnesses and AI companions.
 
+Core0.1.19 adds optional [user-defined topic views](docs/contracts/topic-views-v1.md), with source-backed snapshots, invalidation before refresh and bounded background maintenance. See [verification and quality limits](docs/reports/topic-views-2026-11-13.md); local reasoning and daily model admission remain separate work.
+
 EverNook 是供 dsh、pi、桌宠等接入的外挂长期记忆模块：通过原生插件或 MCP 保存交流，并为聊天上下文提供相关记忆。目标是保存多年对话、逐字回取重要交代、跨会话保持连续性，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 
 > **当前状态：已有本地证据账本、CLI/MCP、显式离线语义召回、加密备份、受保护收件箱/本地显示、时态事实、候选抽取、预算上下文、可补跑导航、经验草案、普通来源确认删除、dsh/pi SDK 适配，以及核心人设与用户画像版本化管理、沉淀草案审查与进程内会话/空闲调度、伴侣预设、适配器符合性套件；尚无生产启用或完整产品验收。** 真实支持范围见[当前架构](docs/current-architecture.md)与各项[契约](docs/contracts)。

@@ -30,7 +30,8 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "preference-update-status", "preference-update-configure", "preference-update-process", "preference-clarify", "preference-resolve",
     "episode-status", "episode-configure", "episode-propose", "episode-read",
     "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
-    "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence"})
+    "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence",
+    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -154,7 +155,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 raise MemoryFailure("invalid_arguments")
             parser_arguments += ["--message-id", arguments["input"]["message_id"]]
         namespace = _parser().parse_args(parser_arguments)
-        if command == "recall":
+        if command == "recall" or command.startswith('topic-view-'):
             namespace.embedding_config = embedding_config
         return _execute(namespace, input_value=arguments["input"],
             service_runtime=runtime, service_access=access, service_cancel=cancel)
@@ -261,8 +262,8 @@ class _Handler(socketserver.BaseRequestHandler):
                 result["service"] = {"independent": True, "maintenance": server.maintenance_status()}
                 if isinstance(result.get("processing"), dict):
                     result["processing"]["consumer_running"] = server.maintenance is not None
-            if is_dataclass(result) and not isinstance(result, type):
-                result = asdict(result)
+            from .serialization import result_value
+            result = result_value(result)
             response: dict[str, object] = {"version": 1, "ok": True, "result": result}
         except MemoryFailure as error:
             response = {"version": 1, "ok": False, "error": {"code": error.code}}

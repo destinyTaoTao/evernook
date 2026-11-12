@@ -15,6 +15,7 @@ from .semantic import SemanticRecall
 from .runtime import MemoryRuntime
 from .scheduler import ConsolidationScheduler
 from .observation_processing import ObservationProcessing
+from .topic_views import TopicViews
 
 
 class ServiceMaintenance:
@@ -88,10 +89,20 @@ class ServiceMaintenance:
             if failure.code in {'unauthorized', 'permission_denied', 'incompatible_contract', 'service_required'}:
                 raise
             observations = {'state': 'unavailable', 'error_code': failure.code}
+        views = None
+        try:
+            views = TopicViews(self.runtime, self.semantic).tick(access, timeout=5, cancel=signal)
+        except MemoryFailure as failure:
+            reason = signal.reason()
+            if reason:
+                return {'skipped': reason}
+            if failure.code in {'unauthorized', 'permission_denied', 'incompatible_contract', 'service_required'}:
+                raise
+            views = {'state': 'unavailable', 'error_code': failure.code}
         tick = scheduler.trigger(access, reason="idle")
         return {"skipped": tick.skipped, "scheduler": asdict(scheduler.status(access)),
             "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic,
-            "observations": observations}
+            "observations": observations, "topic_views": views}
 
     def run(self) -> None:
         while not self.stopping.wait(self.interval):

@@ -28,7 +28,7 @@ class HostContext:
             raise MemoryFailure("invalid_host_context_config")
         policy = dict(config["policy"])
         try:
-            for name in ("pinned_ids", "experience_ids", "fact_keys"):
+            for name in ("pinned_ids", "experience_ids", "fact_keys", "topic_view_ids"):
                 if name in policy:
                     if not isinstance(policy[name], list):
                         raise MemoryFailure("invalid_context_policy")

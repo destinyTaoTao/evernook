@@ -142,6 +142,13 @@ def _parser() -> Parser:
         ("observation-status", "Observation processing policy and progress"),
         ("observation-process", "Run a bounded observation maintenance batch"),
         ("observation-evidence", "Page through active source atoms including quarantined topics"),
+        ("topic-view-define", "Define or revise a user-selected memory topic"),
+        ("topic-view-read", "Read only a currently usable topic snapshot"),
+        ("topic-view-control", "Pause resume or delete a topic view"),
+        ("topic-view-status", "Topic definitions jobs and freshness clocks"),
+        ("topic-view-refresh", "Explicit bounded refresh of one topic view"),
+        ("topic-view-tick", "One coalesced background refresh"),
+        ("topic-view-edit", "Save an explicit user revision as raw evidence"),
         ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
         ("preference-resolve", "Trusted user clarification as correction or real change"),
         ("preference-update-configure", "Narrow finite preference rules and explicitly admit their pinned identity"),
@@ -194,7 +201,7 @@ def _parser() -> Parser:
             command.add_argument("--budget-seconds", type=float, default=120)
         if name == "refresh-search-checkpoint":
             command.add_argument("--limit", type=int, default=5000)
-        if name in ("recall", "refresh-semantic", "semantic-status"):
+        if name in ("recall", "refresh-semantic", "semantic-status") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
             command.add_argument("--extraction-config", type=Path, required=True)
@@ -353,6 +360,38 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command.startswith('topic-view-'):
+        from .topic_views import TopicViewDefinition, TopicViews
+        from .topic_view_refresh import view_budget
+        backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
+        topic_views = TopicViews(runtime, SemanticRecall(runtime, backend))
+        value = read_input()
+        if args.command == 'topic-view-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return topic_views.status(access)
+        if args.command == 'topic-view-read':
+            budget = view_budget(value.pop('timeout', 10), service_cancel)
+            return topic_views.read(access, **value, check=budget)
+        if args.command == 'topic-view-refresh':
+            return topic_views.refresh(access, **value, cancel=service_cancel)
+        if args.command == 'topic-view-tick':
+            return topic_views.tick(access, **value, cancel=service_cancel)
+        if args.command == 'topic-view-control':
+            return topic_views.control(access, **value)
+        if args.command == 'topic-view-edit':
+            return topic_views.add_evidence(access, **value)
+        definition = value.get('definition')
+        if not isinstance(definition, dict):
+            raise MemoryFailure('invalid_arguments')
+        definition = dict(definition)
+        for name in ('entries', 'sessions', 'source_ids', 'observation_keys'):
+            if name in definition:
+                if not isinstance(definition[name], list):
+                    raise MemoryFailure('invalid_arguments')
+                definition[name] = tuple(tuple(item) for item in definition[name]) if name == 'sessions' else tuple(definition[name])
+        value['definition'] = TopicViewDefinition(**definition)
+        return topic_views.configure(access, **value)
     if args.command.startswith('observation-'):
         from .candidates import EvidenceSpan
         from .observations import ObservationDraft, ObservationRegistry
@@ -634,8 +673,8 @@ def main() -> None:
                 {"command": args.command, "input": value})
         else:
             result = _execute(args)
-        if is_dataclass(result) and not isinstance(result, type):
-            result = asdict(result)
+        from .serialization import result_value
+        result = result_value(result)
         payload: dict[str, object] = {"contract_version": 1, "ok": True, "result": result}
         code = 0
     except MemoryFailure as error:

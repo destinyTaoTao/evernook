@@ -108,6 +108,30 @@ class ServiceMaintenanceTests(unittest.TestCase):
             "arguments": {"session": "foreground", "active": False, "ttl_seconds": 10}})
         self.assertEqual(self.wait_processed(1)["processed"], 1)
 
+    def test_topic_views_refresh_in_independent_service_and_ordinary_clients_only_read(self) -> None:
+        from evernook.models import MemoryFailure
+        from evernook.runtime import pair_client
+        self.start()
+        definition = {'title': '后台消息', 'purpose': '合成后台验收', 'query': '后台消息', 'refresh_interval_seconds': 1}
+        self.client.call(self.access, 'cli', {'command': 'topic-view-define', 'input': {
+            'request_id': 'define-topic', 'view_id': 'background', 'expected_revision': 0, 'definition': definition}})
+        self.save(1)
+        ordinary = pair_client(self.config, client_id='topic-reader', entry='reader',
+            access_path=self.config.parent / 'mcp-access-topic-reader.json', scopes=('capture', 'recall'))
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            result = self.client.call(ordinary, 'cli', {'command': 'topic-view-read', 'input': {'view_id': 'background'}})
+            if result['state'] == 'valid':
+                break
+            time.sleep(0.2)
+        else:
+            self.fail('topic background refresh did not publish a valid snapshot')
+        self.assertIn('独立后台消息1', result['data']['citations'][0]['quote'])
+        for name, arguments in (('topic-view-refresh', {'view_id': 'background'}),
+                ('topic-view-control', {'request_id': 'pause', 'view_id': 'background', 'expected_revision': 1, 'action': 'pause'})):
+            with self.subTest(command=name), self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.client.call(ordinary, 'cli', {'command': name, 'input': arguments})
+
     def test_optional_observation_candidates_continue_in_service_without_host(self) -> None:
         self.start()
         self.client.call(self.access, 'cli', {'command': 'observation-configure', 'input': {'enabled': True}})

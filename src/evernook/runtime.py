@@ -402,6 +402,13 @@ class MemoryRuntime:
                 if stored_id is not None:
                     if not hmac.compare_digest(str(stored_id[0]), ledger_id):
                         raise MemoryFailure("ledger_identity_mismatch")
+                    if 'topic_view_clock_v1' in present:
+                        from .topic_view_clock import install as install_topic_clock, ready as topic_clock_ready
+                        if not topic_clock_ready(db):
+                            db.execute('ROLLBACK')
+                            db.execute('BEGIN IMMEDIATE')
+                            install_topic_clock(db)
+                            db.execute('COMMIT')
                     return
             db.execute("ROLLBACK")
             db.execute("PRAGMA journal_mode=WAL")
@@ -442,6 +449,11 @@ class MemoryRuntime:
             db.execute("COMMIT")
             from .durable_stream import install as install_streams
             install_streams(db)
+            # Archives omit executable SQL; active runtimes reinstall only our exact owned clock.
+            from .topic_view_clock import install as install_topic_clock
+            db.execute('BEGIN IMMEDIATE')
+            install_topic_clock(db)
+            db.execute('COMMIT')
 
     def _authorize(self, access: Access) -> _Identity:
         if not self._service_owner and _load(self.root / "runtime.json").get("service_mode"):

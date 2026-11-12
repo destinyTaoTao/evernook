@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from typing import Any
 
 from evernook import Event, Source, initialize
 from evernook.runtime import pair_client
@@ -107,6 +108,32 @@ class ServiceTests(unittest.TestCase):
         for name in ('episode-configure', 'preference-update-configure', 'observation-configure'):
             with self.subTest(command=name), self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
                 self.client.call(ordinary, 'cli', {'command': name, 'input': {'enabled': True}})
+
+    def test_topic_edit_and_observation_split_return_nested_receipts_over_real_transport(self) -> None:
+        def command(name: str, value: dict[str, object]) -> Any:
+            return self.client.call(self.access, 'cli', {'command': name, 'input': value})
+        command('topic-view-define', {'request_id': 'define', 'view_id': 'wetland', 'expected_revision': 0,
+            'definition': {'title': '湿地', 'purpose': '合成专题', 'query': '湿地'}})
+        edited = command('topic-view-edit', {'request_id': 'edit', 'view_id': 'wetland', 'expected_revision': 1, 'text': '合成：湿地见白鹭。'})
+        self.assertEqual(edited['view']['definition_revision'], 2)
+        self.assertTrue(edited['source_receipt']['original_saved'])
+        repeated = command('topic-view-edit', {'request_id': 'edit', 'view_id': 'wetland', 'expected_revision': 1, 'text': '合成：湿地见白鹭。'})
+        self.assertEqual(repeated['source_receipt'], edited['source_receipt'])
+        second_text = '合成：桥边见苍鹭。'
+        second = self.client.call(self.access, 'remember', {'event': asdict(Event(Source('test', 'second', 'main', '1'),
+            'user', 1, None, 'complete', second_text))})
+        spans = [{'message_id': receipt['message_id'], 'state_version': 1, 'representation': 'original', 'content_version': 1,
+            'start': 0, 'end': len(text), 'expected_text': text} for receipt, text in
+            ((edited['source_receipt'], '合成：湿地见白鹭。'), (second, second_text))]
+        draft: dict[str, object] = {'topic_key': 'user:birds', 'conclusion': '合成：两个不同来源的鸟类经历。', 'support': spans,
+            'counterevidence': [], 'category': 'experience', 'valid_from': None, 'valid_until': None,
+            'processor_version': 'synthetic', 'policy_version': 'review-only'}
+        parent = command('observation-propose', {'request_id': 'parent', 'draft': draft})
+        result = command('observation-split', {'request_id': 'split', 'observation_id': parent['observation_id'],
+            'expected_revision': 1, 'confirmation_id': second['message_id'],
+            'drafts': [{**draft, 'topic_key': 'user:one', 'support': spans[:1]}, {**draft, 'topic_key': 'user:two', 'support': spans[1:]}]})
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
 
     def test_second_process_refuses_same_ledger(self) -> None:
         other = subprocess.run([sys.executable, "-B", "-m", "evernook.service",

@@ -108,3 +108,19 @@ Interfaces: ObservationDraft(topic_key,conclusion,support,counterevidence,catego
 
 Ruling: 默认采用有限偏好review候选，其他有来源归纳沿可信审查 — 当前本地模型尚未质量准入，不能用一个通用自由生成入口代替事实安全和证据验证 — 成本是非偏好及语义推断仍需后续模型准入，候选层独立替代原始召回的冻结检索只有6/21/6，未声称学习质量已通过。
 Final: fixed 聚合删除任务不一致、64跨度溢出永久重试、32候选预算不一致及overflow split遗漏晚反例 — 四组RED→GREEN，独立复跑3+1通过。相关87项、最终观察22项、独立安装24项及安装租约/换版2项通过，mypy129+probe通过。冻结候选审计12/42/738，失败和missing保留；报告docs/reports/observations-2026-11-13.md。
+
+## Task 5 — #119
+
+新增topic_views.py负责用户定义、持久合并刷新任务、只读快照与来源/水位验证；topic_view_refresh.py复用SemanticRecall和已发布ObservationRegistry构造有界原始摘录/已审观察视图，不加入新的模型或生成权。默认不配置视图。定义包含title/purpose/query、来源scope、观察topic keys、TTL、策略/版本；状态区分empty/pending/valid/expired/conflict/paused/deleted/needs_refresh。自由推理留#120。
+
+首次配置视图时安装可选SQLite单行递增水位触发器：原始新增evidence_epoch、来源更正/抑制/删除control_epoch及观察更新derived_epoch分开。与原始事务原子更新，失败不回“已保存”；不按每条消息写N个视图任务。后台按view_id合并最新目标水位、有界/轮转刷新，提交前复核定义、来源及三类水位；有新消息或撤销则旧正文不可用，即使尚未后台刷新。最初全库保守失效，不承诺无关更新可保持所有视图有效。
+
+Interfaces: TopicViewDefinition(title,purpose,query,entries,sessions,source_ids,observation_keys,since,until,ttl_seconds,policy_version)；TopicViews.configure(access,request_id,view_id,expected_revision,definition)、control(...action pause/resume/delete)、read(access,view_id)、refresh(...timeout,cancel)、tick(...)、add_evidence(...)显式用户编辑另存原始user事件。query/context仅读当前可用快照；已确认人设独立。ContextPolicy新增topic_view_ids与topic_view_tokens，HostContext读取配置并复用总预算及最终版本/水位复核；服务CLI与维护共享。
+
+- [x] RED→GREEN定义修订/暂停/删除、TTL与新输入/撤回两类水位、来源更正/抑制/删除、策略换版；刷新提交并发和幂等。
+- [x] 服务有界后台任务/租约恢复、合并大量更新、显式用户编辑留原始证据、旧快照拒绝及导入后重新刷新；scope与普通身份权限。
+- [x] 有预算普通上下文接入及最终复核，实际dsh请求采用有效视图、源失效时旧正文不再注入；冻结views分项、独立复核、文档、提交推送及GitHub同步随本票提交。
+
+Ruling: 初版主题视图由原始摘录与已审观察组成，使用分开的持久证据/控制水位保守失效 — #118候选单独检索6/21/6不能替代raw，先保证定义/引用/撤回/刷新闭环，再由#120提供显式推理 — 成本是无关新输入可能使视图待刷新，触发器写入成本需实测而不能继承#84准入。
+
+Final: fixed跨操作幂等指纹、传递处理器版本、显式编辑scope、真实transport嵌套结果及分词期撤回；两轮独立指定范围复核通过。最终联合115项、安装28项、固定rc.5实际dsh1场景、mypy134+probe及TS通过。views检索21/6/6、引用19/8/6未优于raw，保留失败/missing；未定位ResourceWarning和此前隔离复跑通过的维护/文件锁失败。见docs/reports/topic-views-2026-11-13.md。
