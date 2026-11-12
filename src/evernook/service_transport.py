@@ -6,6 +6,7 @@ import json
 import secrets
 import socket
 import time
+import threading
 from typing import Any
 
 from .models import MemoryFailure
@@ -20,11 +21,21 @@ def _timeout(connection: socket.socket, deadline: float) -> None:
     connection.settimeout(remaining)
 
 
-def _read(connection: socket.socket, size: int, deadline: float) -> bytes:
+def _read(connection: socket.socket, size: int, deadline: float,
+          cancel: threading.Event | None = None) -> bytes:
     parts: list[bytes] = []
     while size:
         _timeout(connection, deadline)
-        part = connection.recv(min(size, 65536))
+        if cancel is not None:
+            if cancel.is_set():
+                raise MemoryFailure("service_canceled")
+            connection.settimeout(min(0.1, deadline - time.monotonic()))
+        try:
+            part = connection.recv(min(size, 65536))
+        except TimeoutError:
+            if cancel is not None:
+                continue
+            raise
         if not part:
             raise MemoryFailure("service_disconnected")
         parts.append(part)
@@ -71,12 +82,13 @@ def _invalid_constant(value: str) -> Any:
     raise ValueError
 
 
-def receive_json(connection: socket.socket, deadline: float) -> dict[str, Any]:
-    size = int.from_bytes(_read(connection, 4, deadline), "big")
+def receive_json(connection: socket.socket, deadline: float,
+                 cancel: threading.Event | None = None) -> dict[str, Any]:
+    size = int.from_bytes(_read(connection, 4, deadline, cancel), "big")
     if not 0 < size <= MAX_FRAME:
         raise MemoryFailure("service_frame_too_large")
     try:
-        value = json.loads(_read(connection, size, deadline).decode("utf-8"),
+        value = json.loads(_read(connection, size, deadline, cancel).decode("utf-8"),
             object_pairs_hook=_unique, parse_constant=_invalid_constant)
         if not isinstance(value, dict):
             raise ValueError

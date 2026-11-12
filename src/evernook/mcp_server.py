@@ -189,8 +189,9 @@ def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: Sema
             "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
 
 
-def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
-                 backend: EmbeddingBackend | None = None, context_config: Path | None = None) -> Server[None]:
+def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
+                     backend: EmbeddingBackend | None = None, context_config: Path | None = None
+                     ) -> tuple[dict[str, tuple[type[Arguments], Callable[[Any], object], str]], HostContext | None, set[str]]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
     runtime.handshake(access)
@@ -255,8 +256,23 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     if profile == "recall":
         operations = {name: operation for name, operation in operations.items() if name in recall_tools}
 
+    return operations, host_context, restricted
+
+
+def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
+                 backend: EmbeddingBackend | None = None, context_config: Path | None = None,
+                 service_config: Path | None = None) -> Server[None]:
+    operations, host_context, restricted = build_operations(runtime, access, profile=profile,
+        backend=backend, context_config=context_config)
+
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         runtime.handshake(access)
+        if service_config is not None:
+            from .service import ServiceClient
+            listing = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+                access, "mcp-list", {"profile": profile}))
+            return types.ListToolsResult(tools=[types.Tool(name=item["name"],
+                input_schema=item["schema"], description=item["description"]) for item in listing["tools"]])
         return types.ListToolsResult(tools=[types.Tool(name=name, input_schema=model.model_json_schema(),
             description=description) for name, (model, _, description) in operations.items()])
 
@@ -264,23 +280,38 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
         try:
             runtime.handshake(access)
             operation = operations.get(params.name)
-            if operation is None:
+            if operation is None and service_config is None:
                 if params.name in restricted and profile == "recall":
                     raise MemoryFailure("operation_not_allowed")
                 raise MemoryFailure("unknown_tool")
-            model, invoke, _ = operation
-            arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
             result: object
-            if params.name == "evernook_v1_context" and host_context is not None:
-                selected_context = host_context
+            if service_config is not None:
+                from .service import ServiceClient
                 cancel = threading.Event()
+                requested_timeout = (params.arguments or {}).get("timeout", 30)
+                transport_timeout = 40.0
+                if type(requested_timeout) in (int, float) and 0 < requested_timeout <= 120:
+                    transport_timeout = max(30.0, float(requested_timeout)) + 10
                 try:
-                    result = await anyio.to_thread.run_sync(
-                        lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    result = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+                        access, "mcp", {"name": params.name, "arguments": params.arguments or {},
+                            "profile": profile}, cancel=cancel, timeout=transport_timeout), abandon_on_cancel=True)
                 finally:
                     cancel.set()
             else:
-                result = await anyio.to_thread.run_sync(invoke, arguments)
+                assert operation is not None
+                model, invoke, _ = operation
+                arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
+                if params.name == "evernook_v1_context" and host_context is not None:
+                    selected_context = host_context
+                    cancel = threading.Event()
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    finally:
+                        cancel.set()
+                else:
+                    result = await anyio.to_thread.run_sync(invoke, arguments)
             if is_dataclass(result) and not isinstance(result, type):
                 result = asdict(result)
             payload: dict[str, Any] = {"contract_version": 1, "ok": True, "result": result}
@@ -307,7 +338,15 @@ async def serve(config_path: Path, access_path: Path, profile: str = "recall", e
     runtime = MemoryRuntime(config_path)
     access = runtime.access_from_file(access_path)
     backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
-    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config)
+    from .service import ENDPOINT
+    service_config = config_path if (runtime.root / ENDPOINT).exists() else None
+    if service_config is not None and (embedding_config is not None or context_config is not None):
+        from .service import ServiceClient
+        ServiceClient(service_config).call(access, "policy-match", {
+            "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
+            "context_config": str(context_config.resolve()) if context_config else None})
+    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
+        service_config=service_config)
     try:
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):

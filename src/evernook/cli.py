@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 from typing import Any, NoReturn
 
-from .models import Change, Event, ImportantMark, MemoryFailure, Source
+from .models import Access, Change, Event, ImportantMark, MemoryFailure, Source
 from .runtime import MemoryRuntime, initialize, pair_client
 from .embedding import LocalMiniLM
 from .semantic import SemanticRecall
@@ -180,7 +180,11 @@ def _parser() -> Parser:
     return parser
 
 
-def _execute(args: argparse.Namespace) -> object:
+def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = None,
+             service_runtime: MemoryRuntime | None = None, service_access: Access | None = None) -> object:
+    def read_input() -> dict[str, Any]:
+        return dict(input_value) if input_value is not None else _input()
+
     if args.command.startswith("vault-"):
         try:
             from .protected import ProtectedInbox, initialize_protected_inbox
@@ -209,7 +213,7 @@ def _execute(args: argparse.Namespace) -> object:
             return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}
         if args.command == "vault-reconcile":
             return inbox.reconcile(access, args.object_id)
-        value = _input()
+        value = read_input()
         source = Source(**value.pop("source"))
         return inbox.submit(access, Event(source=source, **value))
     if args.command.startswith("backup-"):
@@ -247,12 +251,12 @@ def _execute(args: argparse.Namespace) -> object:
         if args.command == "lockout-configure":
             return configure_lockout(args.config, failure_limit=args.failure_limit)
         return configure_audit(args.config, retention_days=args.retention_days)
-    runtime = MemoryRuntime(args.config)
-    access = runtime.access_from_file(args.access)
+    runtime = service_runtime if service_runtime is not None else MemoryRuntime(args.config)
+    access = service_access if service_access is not None else runtime.access_from_file(args.access)
     if args.command == "manage":
         from .management import MemoryManagement
         management = MemoryManagement(runtime)
-        value = _input()
+        value = read_input()
         action = value.pop("action", None)
         if action == "read":
             return management.read(access, **value)
@@ -265,26 +269,26 @@ def _execute(args: argparse.Namespace) -> object:
         raise MemoryFailure("invalid_management_action")
     if args.command == "host-recovery":
         from .host_recovery import HostRecovery
-        return HostRecovery(runtime).run(access, _input())
+        return HostRecovery(runtime).run(access, read_input())
     if args.command == "capture-chunk":
-        value = _input()
+        value = read_input()
         event = value.pop("event")
         source = Source(**event.pop("source"))
         return runtime.append_stream(access, Event(source=source, **event), **value)
     if args.command == "read-stream":
-        value = _input()
+        value = read_input()
         return runtime.read_stream(access, Source(**value.pop("source")), **value)
     if args.command == "mark-important":
-        return runtime.mark_important(access, ImportantMark(**_input()))
+        return runtime.mark_important(access, ImportantMark(**read_input()))
     if args.command == "change":
-        return runtime.change(access, Change(**_input()))
+        return runtime.change(access, Change(**read_input()))
     if args.command == "candidate-list":
         from .candidates import CandidateWorkflow
-        return {"candidates": [asdict(candidate) for candidate in CandidateWorkflow(runtime).candidates(access, **_input())]}
+        return {"candidates": [asdict(candidate) for candidate in CandidateWorkflow(runtime).candidates(access, **read_input())]}
     if args.command in ("purge-preview", "purge"):
         from .purge import PurgeDecision, PurgeWorkflow
         purge_workflow = PurgeWorkflow(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "purge":
             return purge_workflow.purge(access, PurgeDecision(**value))
         if not isinstance(value.get("source_ids"), list):
@@ -295,7 +299,7 @@ def _execute(args: argparse.Namespace) -> object:
         from .candidates import EvidenceSpan
         from .experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry
         experiences = ExperienceRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "experience-read":
             return experiences.read(access, **value)
         if args.command == "experience-from-navigation":
@@ -310,7 +314,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("maintenance-") or args.command == "navigation-read":
         from .maintenance import MaintenanceBudget, NavigationMaintenance, NavigationPolicy
         maintenance = NavigationMaintenance(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "maintenance-configure":
             if "topics" in value:
                 if not isinstance(value["topics"], list):
@@ -328,7 +332,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith('preference-update-'):
         from .automatic_preferences import PreferenceUpdates
         preferences = PreferenceUpdates(runtime)
-        value = _input()
+        value = read_input()
         if args.command == 'preference-update-status':
             return preferences.status(access, **value)
         if args.command == 'preference-update-configure':
@@ -345,11 +349,11 @@ def _execute(args: argparse.Namespace) -> object:
         from .preference_clarifications import OpenClarification, PreferenceClarifications, ResolveClarification
         clarifications = PreferenceClarifications(runtime)
         if args.command == "preference-clarify":
-            return clarifications.open(access, OpenClarification(**_input()))
-        return clarifications.resolve(access, ResolveClarification(**_input()))
+            return clarifications.open(access, OpenClarification(**read_input()))
+        return clarifications.resolve(access, ResolveClarification(**read_input()))
     if args.command in ("extract", "extract-preferences"):
         from .extraction import ExtractionProcessor, LocalQwen
-        value = _input()
+        value = read_input()
         if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
@@ -361,7 +365,7 @@ def _execute(args: argparse.Namespace) -> object:
         from .candidates import EvidenceSpan
         from .profile import ProfileDecision, ProfileDraft, ProfileRegistry
         profiles = ProfileRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "profile-decide":
             draft = value.get("draft")
             if draft is not None:
@@ -380,7 +384,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("persona-"):
         from .persona import PersonaRegistry, PersonaRollback, PersonaSet
         personas = PersonaRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "persona-set":
             return personas.set(access, PersonaSet(**value))
         if args.command == "persona-rollback":
@@ -391,7 +395,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command in ("fact-decide", "fact-query"):
         from .facts import FactDecision, FactRegistry
         registry = FactRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "fact-query":
             return registry.query(access, **value)
         if "resolves" in value:
@@ -403,23 +407,23 @@ def _execute(args: argparse.Namespace) -> object:
         backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
         workflow = SemanticRecall(runtime, backend)
         if args.command == "recall":
-            return workflow.recall(access, **_input())
+            return workflow.recall(access, **read_input())
         if args.command == "refresh-semantic":
             return workflow.refresh(access)
         return workflow.status(access)
     if args.command == "remember":
-        event = _input()
+        event = read_input()
         source = Source(**event.pop("source"))
         return runtime.submit(access, Event(source=source, **event))
     if args.command == "search":
-        return runtime.search(access, **_input())
+        return runtime.search(access, **read_input())
     if args.command == "audit-query":
-        return runtime.audit_query(access, **_input())
+        return runtime.audit_query(access, **read_input())
     if args.command.startswith("consolidation-"):
         from .candidates import EvidenceSpan
         from .consolidation import ConsolidationDraft, ConsolidationWorkflow
         consolidation = ConsolidationWorkflow(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "consolidation-begin":
             if not isinstance(value.get("source_ids"), list):
                 raise MemoryFailure("invalid_arguments")
@@ -450,7 +454,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("scheduler-"):
         from .scheduler import ConsolidationScheduler
         scheduler = ConsolidationScheduler(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "scheduler-foreground":
             return scheduler.foreground(access, **value)
         if args.command == "scheduler-configure":
@@ -464,7 +468,7 @@ def _execute(args: argparse.Namespace) -> object:
         return scheduler.trigger(access, **value)
     if args.command.startswith("preset-"):
         from .preset import apply_preset, show_preset
-        value = _input()
+        value = read_input()
         if args.command == "preset-apply":
             return apply_preset(access, runtime, **value)
         return show_preset(access, runtime, **value)
@@ -502,7 +506,16 @@ def _execute(args: argparse.Namespace) -> object:
 
 def main() -> None:
     try:
-        result = _execute(_parser().parse_args())
+        args = _parser().parse_args()
+        from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient
+        if args.command in CLI_OPERATIONS and (args.config.parent / ENDPOINT).exists():
+            runtime = MemoryRuntime(args.config)
+            access = runtime.access_from_file(args.access)
+            value = {} if args.command == "status" else _input()
+            result = ServiceClient(args.config).call(access, "cli",
+                {"command": args.command, "input": value})
+        else:
+            result = _execute(args)
         if is_dataclass(result) and not isinstance(result, type):
             result = asdict(result)
         payload: dict[str, object] = {"contract_version": 1, "ok": True, "result": result}

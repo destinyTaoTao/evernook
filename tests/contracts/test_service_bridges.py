@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import threading
+from typing import Any
+from unittest.mock import patch
+
+from mcp import Client, StdioServerParameters
+
+from evernook import Event, Source, initialize, pair_client
+from evernook.service import ServiceClient
+from evernook.runtime import MemoryRuntime
+from evernook.service import _Server
+import test_tokenizer
+
+
+class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="evernook-service-bridge-")
+        self.addCleanup(temporary.cleanup)
+        self.config, self.access = initialize(Path(temporary.name) / "data",
+            client_id="synthetic", entry="owner")
+        self.owner_path = self.config.parent / "mcp-access-owner.json"
+        self.owner_path.write_text(json.dumps(asdict(self.access)), encoding="utf-8")
+        self.ordinary_path = self.config.parent / "mcp-access-ordinary.json"
+        pair_client(self.config, client_id="ordinary", entry="test", access_path=self.ordinary_path,
+            scopes=("recall", "capture"))
+        self.service = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
+            "--config", str(self.config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(self.stop)
+        deadline = time.monotonic() + 20
+        while not (self.config.parent / "memory-service.json").exists():
+            if self.service.poll() is not None or time.monotonic() > deadline:
+                self.fail("service startup failed")
+            time.sleep(0.05)
+        self.client = ServiceClient(self.config)
+        self.parameters = StdioServerParameters(command=sys.executable,
+            args=["-B", "-m", "evernook.mcp_server", "--config", str(self.config),
+                "--access", str(self.ordinary_path), "--profile", "trusted-host"], env=dict(os.environ))
+
+    def stop(self) -> None:
+        if self.service.poll() is None:
+            self.service.terminate()
+        self.service.wait(timeout=15)
+
+    async def test_mcp_preserves_long_operation_budget_in_service_transport(self) -> None:
+        from mcp import types
+        from mcp.server import Server
+        import evernook.mcp_server as adapter
+        callbacks: dict[str, Any] = {}
+        original_server = Server
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            callbacks.update(kwargs)
+            return original_server(*args, **kwargs)
+        with patch("evernook.mcp_server.Server", side_effect=capture):
+            adapter.build_server(MemoryRuntime(self.config), self.access,
+                profile="trusted-host", service_config=self.config)
+        with patch("evernook.service.ServiceClient.call", return_value={}) as remote:
+            result = await callbacks["on_call_tool"](None, types.CallToolRequestParams(
+                name="evernook_v1_search", arguments={"query": "hello", "timeout": 120}))
+            self.assertFalse(result.is_error)
+            self.assertEqual(remote.call_args.kwargs.get("timeout"), 130)
+
+    async def test_real_mcp_and_cli_share_service_and_fail_closed_offline(self) -> None:
+        event = asdict(Event(Source("test", "bridge", "main", "1"), "user", 1,
+            None, "complete", "合成：服务桥接里的白鹭"))
+        async with Client(self.parameters, read_timeout_seconds=15) as mcp:
+            names = [tool.name for tool in (await mcp.list_tools()).tools]
+            self.assertIn("evernook_v1_capture_chunk", names)
+            saved = await mcp.call_tool("evernook_v1_remember", {"event": event})
+            self.assertFalse(saved.is_error, saved)
+            assert saved.structured_content is not None
+            message_id = saved.structured_content["result"]["message_id"]
+            self.assertEqual(self.client.call(self.access, "read", {"message_id": message_id})["event"], event)
+            managed = await asyncio.to_thread(subprocess.run, [sys.executable, "-B", "-m", "evernook.cli",
+                "manage", "--config", str(self.config), "--access", str(self.owner_path)],
+                input=json.dumps({"action": "read", "view": "status"}).encode(),
+                capture_output=True, timeout=20)
+            self.assertEqual(managed.returncode, 0, managed.stdout)
+            denied = self.client.call(self.access, "cli", {"command": "manage",
+                "input": {"action": "read", "view": "status"}})
+            self.assertIsInstance(denied, dict)
+            self.stop()
+            failed = await mcp.call_tool("evernook_v1_remember", {"event": {**event,
+                "source": {**event["source"], "event": "2"}}})
+            self.assertTrue(failed.is_error)
+        self.assertIsNotNone(self.service.poll())
+
+    async def test_ordinary_identity_cannot_use_management_or_recall_profile_writes(self) -> None:
+        ordinary = json.loads(self.ordinary_path.read_text(encoding="utf-8"))
+        from evernook.models import Access, MemoryFailure
+        with self.assertRaises(MemoryFailure):
+            self.client.call(Access(**ordinary), "cli", {"command": "manage",
+                "input": {"action": "preview", "operation": "source_suppress", "message_id": "absent"}})
+        with self.assertRaisesRegex(MemoryFailure, "operation_not_allowed"):
+            self.client.call(self.access, "mcp", {"name": "evernook_v1_remember",
+                "arguments": {}, "profile": "recall"})
+        with self.assertRaisesRegex(MemoryFailure, "operation_not_allowed"):
+            self.client.call(self.access, "cli", {"command": "pair", "input": {}})
+
+    async def test_disconnected_caller_cancels_cooperative_service_operation(self) -> None:
+        from evernook.models import MemoryFailure
+        entered, canceled, caller_cancel = threading.Event(), threading.Event(), threading.Event()
+        def cooperative(runtime: MemoryRuntime, request: dict[str, object], *,
+                        cancel: threading.Event | None = None, **kwargs: object) -> object:
+            entered.set()
+            assert cancel is not None
+            if cancel.wait(5):
+                canceled.set()
+            return {}
+        with _Server(MemoryRuntime(self.config), b"x" * 32) as server:
+            endpoint = self.config.parent / "memory-service.json"
+            original = endpoint.read_bytes()
+            endpoint.write_text(json.dumps({"version": 1, "port": server.server_address[1],
+                "key": (b"x" * 32).hex()}), encoding="utf-8")
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                with patch("evernook.service.dispatch", cooperative):
+                    pending = asyncio.create_task(asyncio.to_thread(self.client.call,
+                        self.access, "status", {}, cancel=caller_cancel))
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 5))
+                    caller_cancel.set()
+                    with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                        await pending
+                    self.assertTrue(await asyncio.to_thread(canceled.wait, 5))
+            finally:
+                server.shutdown()
+                thread.join(timeout=10)
+                endpoint.write_bytes(original)
+
+    async def test_real_context_worker_and_cancellation_through_service(self) -> None:
+        from evernook.models import MemoryFailure
+        fixture = test_tokenizer.LocalTokenizerTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        context_file = fixture.root / "service-context.json"
+        context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(fixture.config),
+            "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
+                "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
+        arguments = {"name": "evernook_v1_context", "profile": "trusted-host", "arguments": {
+            "query": "hello", "model_id": "synthetic-local", "max_tokens": 256,
+            "as_of": "2026-11-04T00:00:00Z", "mode": "normal", "timeout": 5}}
+        with _Server(MemoryRuntime(self.config), b"x" * 32, context_config=context_file) as server:
+            endpoint = self.config.parent / "memory-service.json"
+            original = endpoint.read_bytes()
+            endpoint.write_text(json.dumps({"version": 1, "port": server.server_address[1],
+                "key": (b"x" * 32).hex()}), encoding="utf-8")
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                result = await asyncio.to_thread(self.client.call, self.access, "mcp", arguments)
+                from evernook.tokenizer import LocalTokenCounter
+                self.assertEqual(result["counter_id"], LocalTokenCounter.from_file(fixture.config).counter_id)
+                canceled = threading.Event()
+                spawned = threading.Event()
+                children: list[subprocess.Popen[str]] = []
+                real_popen = subprocess.Popen
+                def hang(command: Any, **options: Any) -> subprocess.Popen[str]:
+                    if Path(command[0]).name.lower() != "node.exe":
+                        return real_popen(command, **options)
+                    child = real_popen([str(command[0]), "-e",
+                        "process.stdin.resume();setInterval(()=>{},1000)"], **options)
+                    children.append(child)
+                    spawned.set()
+                    return child
+                with patch("evernook.tokenizer.subprocess.Popen", side_effect=hang):
+                    pending = asyncio.create_task(asyncio.to_thread(self.client.call,
+                        self.access, "mcp", arguments, cancel=canceled))
+                    self.assertTrue(await asyncio.to_thread(spawned.wait, 5))
+                    canceled.set()
+                    with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                        await pending
+                    for child in children:
+                        await asyncio.to_thread(child.wait, timeout=5)
+                        self.assertIsNotNone(child.poll())
+            finally:
+                server.shutdown()
+                thread.join(timeout=10)
+                endpoint.write_bytes(original)
