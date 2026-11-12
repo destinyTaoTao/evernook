@@ -24,9 +24,11 @@ from .service_transport import authenticate_client, authenticate_server, receive
 
 ENDPOINT = "memory-service.json"
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
-    "purge-preview", "purge", "profile-read", "profile-decide", "candidate-list", "fact-query",
+    "purge-preview", "purge", "profile-read", "profile-summary", "profile-decide", "candidate-list", "fact-query",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
-    "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state"})
+    "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state",
+    "preference-update-status", "preference-update-configure", "preference-update-process", "preference-clarify", "preference-resolve",
+    "episode-status", "episode-configure", "episode-propose", "episode-read"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -153,7 +155,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if command == "recall":
             namespace.embedding_config = embedding_config
         return _execute(namespace, input_value=arguments["input"],
-            service_runtime=runtime, service_access=access)
+            service_runtime=runtime, service_access=access, service_cancel=cancel)
     if operation == "remember":
         if set(arguments) != {"event"}:
             raise MemoryFailure("invalid_arguments")

@@ -11,6 +11,7 @@ import time
 import unittest
 
 from evernook import Event, Source, initialize
+from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient
 from evernook.service_transport import authenticate_client, receive_json, send_json
@@ -43,7 +44,8 @@ class ServiceTests(unittest.TestCase):
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                self.fail(f"service exited {process.returncode}")
+                diagnostic = process.stderr.read().decode('utf-8', errors='replace') if process.stderr else ''
+                self.fail(f"service exited {process.returncode}: {diagnostic}")
             if endpoint.exists() and endpoint.read_bytes() != previous:
                 self.client = ServiceClient(self.config)
                 self.client.call(self.access, "status", {})
@@ -85,6 +87,26 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "unknown_service_operation"):
             self.client.call(self.access, "arbitrary-command", {"secret": "synthetic"})
         self.assertEqual(self.client.call(self.access, "status", {})["ledger"]["messages"], 0)
+
+    def test_trusted_learning_commands_use_service_and_deny_capture_only_clients(self) -> None:
+        def command(name: str, value: dict[str, object]) -> object:
+            return self.client.call(self.access, 'cli', {'command': name, 'input': value})
+        status = self.client.call(self.access, 'cli', {'command': 'preference-update-status', 'input': {}})
+        command('preference-update-configure', {'enabled': True, 'admitted_processor': status['settings']['rules_processor']})
+        first = self.client.call(self.access, 'remember', {'event': asdict(Event(Source('test', 'a', 'main', '1'),
+            'user', 1, None, 'complete', '今天聊了很久。说到日常交流，我偏好分点回答。'))})['message_id']
+        report = self.client.call(self.access, 'cli', {'command': 'preference-update-process', 'input': {'source_ids': [first]}})
+        self.assertEqual(report['processing']['merged_or_current_tags'], 1)
+        second = self.client.call(self.access, 'remember', {'event': asdict(Event(Source('test', 'b', 'main', '1'),
+            'assistant', 1, None, 'complete', '合成：我们聊过分点表达。'))})['message_id']
+        episode = self.client.call(self.access, 'cli', {'command': 'episode-propose', 'input': {'source_ids': [first, second]}})
+        self.assertEqual(episode['state'], 'pending_review')
+        self.assertEqual(command('episode-configure', {'enabled': True}), {'enabled': True, 'publication': 'review_only'})
+        ordinary = pair_client(self.config, client_id='ordinary', entry='ordinary',
+            access_path=self.config.parent / 'mcp-access-ordinary.json', scopes=('capture', 'recall'))
+        for name in ('episode-configure', 'preference-update-configure'):
+            with self.subTest(command=name), self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.client.call(ordinary, 'cli', {'command': name, 'input': {'enabled': True}})
 
     def test_second_process_refuses_same_ledger(self) -> None:
         other = subprocess.run([sys.executable, "-B", "-m", "evernook.service",

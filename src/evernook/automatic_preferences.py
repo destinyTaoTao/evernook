@@ -1,7 +1,7 @@
 """Finite offline preference rules and gated trusted publication."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import hmac
 import json
@@ -12,11 +12,12 @@ import re
 import threading
 import time
 
-from .candidates import CandidateDraft, CandidateRun, CandidateWorkflow, ExtractionSource, PREFERENCE_CATEGORIES
+from .candidates import CandidateDraft, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, PREFERENCE_CATEGORIES
 from .consolidation import ConsolidationWorkflow
 from .extraction import _remaining
 from .models import Access, MemoryFailure
-from .preferences import PreferenceProcessor, _category
+from .preferences import PreferenceProcessor
+from .preference_statements import assess_preferences, match_statement, statement_category
 from .facts import FactDecision, FactRegistry, FactView
 from .profile import PREFERENCE_CLARIFICATION_PROCESSOR, ProfileDecision, ProfileDraft, ProfileRegistry
 from .preference_clarifications import OpenClarification, PreferenceClarifications
@@ -28,23 +29,47 @@ _LEGACY_REVIEW_PREFIX = 'preference-review-v1:'
 
 
 def _statement(text: str) -> tuple[str | None, bool, str]:
-    positive = re.sub(r'^我(?:不再|不)(偏好用|偏好|喜欢|爱好|常用|习惯用)', r'我\1', text.strip())
-    return _category(positive), positive != text.strip(), positive
+    return statement_category(text)
 
 
 class PreferenceRules:
-    """Whole statements only; classification stays in the shared finite preference policy."""
+    """Finite clauses selected from whole context; no model or automatic admission."""
     def __init__(self) -> None:
-        self.processor_version = 'preference-rules-v1:' + hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        self.processor_version = 'preference-rules-v2:' + hashlib.sha256(Path(__file__).read_bytes()
+            + Path(__file__).with_name('preference_statements.py').read_bytes()).hexdigest()
 
     def select(self, sources: tuple[ExtractionSource, ...], *, timeout: float,
                cancel: threading.Event | None) -> object:
-        return {'selections': [{'evidence': [{'source': index, 'quote': item.message.event.text}],
-            'provenance': 'user_statement', 'disputed': False} for index, item in enumerate(sources)
-            if item.message.event.role == 'user']}
+        return {'clauses': [{'source': index, 'start': statement.start, 'end': statement.end}
+            for index, item in enumerate(sources) if item.message.event.role == 'user'
+            for statement in assess_preferences(item.message.event.text).statements]}
 
 
 class _RuleProcessor(PreferenceProcessor):
+    @classmethod
+    def _drafts(cls, selection: object, sources: tuple[ExtractionSource, ...]) -> tuple[CandidateDraft, ...]:
+        if (not isinstance(selection, dict) or set(selection) != {'clauses'}
+                or not isinstance(selection['clauses'], list) or len(selection['clauses']) > 32):
+            raise MemoryFailure('extraction_invalid_output')
+        drafts = []
+        for row in selection['clauses']:
+            if (not isinstance(row, dict) or set(row) != {'source', 'start', 'end'}
+                    or any(type(row[key]) is not int for key in row)
+                    or not 0 <= row['source'] < len(sources)):
+                raise MemoryFailure('extraction_invalid_output')
+            source = sources[row['source']]
+            if source.message.event.role != 'user':
+                raise MemoryFailure('candidate_provenance_mismatch')
+            statement = next((item for item in assess_preferences(source.message.event.text).statements
+                              if (item.start, item.end) == (row['start'], row['end'])), None)
+            if statement is None:
+                raise MemoryFailure('extraction_invalid_output')
+            receipt = source.message.receipt
+            span = EvidenceSpan(receipt.message_id, source.state_version, receipt.representation, receipt.content_version,
+                statement.start, statement.end, statement.text)
+            drafts.append(CandidateDraft(statement.text, 'user_statement', (span,), preference_category=statement.category))
+        return tuple(drafts)
+
     @staticmethod
     def _classify(text: str) -> str | None:
         return _statement(text)[0]
@@ -69,6 +94,7 @@ class PreferenceUpdateReport:
     runs: tuple[CandidateRun, ...]
     updates: tuple[PreferenceUpdate, ...]
     error_code: str | None
+    processing: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -87,6 +113,35 @@ class PreferenceUpdates:
     @staticmethod
     def classify_statement(text: str) -> str | None:
         return _statement(text)[0]
+
+    @staticmethod
+    def has_candidates(text: str) -> bool:
+        return (len(text) <= 16384 and '我' in text
+                and any(word in text for word in ('偏好', '喜欢', '爱好', '常用', '习惯用', '希望')))
+
+    def _report(self, sources: tuple[ExtractionSource, ...], runs: list[CandidateRun],
+                updates: list[PreferenceUpdate], error_code: str | None) -> PreferenceUpdateReport:
+        contexts = []
+        for source in sources:
+            event, receipt = source.message.event, source.message.receipt
+            assessment = assess_preferences(event.text)
+            contexts.append({'source_id': receipt.message_id, 'origin': asdict(event.source), 'role': event.role,
+                'occurred_at': event.occurred_at, 'learned_at': receipt.received_at, 'state_version': source.state_version,
+                'content_version': receipt.content_version, 'independent_source_id': receipt.message_id,
+                'subject_keys': ['user'] if event.role == 'user' else [],
+                'blocked_reason': assessment.blocked_reason if event.role == 'user' else 'not_user_statement',
+                'scopes': [{'start': item.start, 'end': item.end, 'category': item.category, 'scope': item.scope,
+                            'negative': item.negative} for item in assessment.statements] if event.role == 'user' else []})
+        return PreferenceUpdateReport(tuple(runs), tuple(updates), error_code, {
+            'sources_seen': len(sources), 'extraction_runs_succeeded': sum(run.state == 'succeeded' for run in runs),
+            'extraction_candidates': sum(run.candidate_count for run in runs),
+            'extraction_complete': error_code is None and len(runs) == len(sources) and all(run.state == 'succeeded' for run in runs),
+            'merged_or_current_tags': len({item.profile_tag_id for item in updates if item.state == 'merged'}),
+            'withdrawn_tags': len({item.profile_tag_id for item in updates if item.state == 'withdrawn'}),
+            'pending_clarifications': len({item.clarification_id for item in updates if item.state == 'pending_clarification'}),
+            'ignored_candidates': sum(item.state == 'ignored' for item in updates),
+            'review_candidates': sum(item.state == 'draft' for item in updates),
+            'observations_stage': 'not_run', 'source_contexts': contexts})
 
     @staticmethod
     def _schema(db: sqlite3.Connection) -> None:
@@ -163,6 +218,7 @@ class PreferenceUpdates:
         return tuple(str(row[0]) for row in db.execute(f'''SELECT r.candidate_id FROM preference_update_receipts_v1 r
             JOIN fact_candidates_v1 c ON c.id=r.candidate_id WHERE r.state='draft' AND r.processor=?
             AND json_extract(c.draft,'$.preference_category') IN ({placeholders})
+            AND COALESCE(json_extract(r.receipt,'$.reason'),'')<>'source_conflict'
             ORDER BY r.checked_at,r.candidate_id LIMIT ?''', (settings.rules_processor, *settings.categories, limit)))
 
     def _status(self, db: sqlite3.Connection) -> dict[str, object]:
@@ -211,8 +267,8 @@ class PreferenceUpdates:
                     except MemoryFailure as error:
                         if error.code not in {'extraction_timeout', 'extraction_canceled'}:
                             raise
-                        return PreferenceUpdateReport(tuple(runs), tuple(updates), error.code)
-        return PreferenceUpdateReport(tuple(runs), tuple(updates), error_code)
+                        return self._report(sources, runs, updates, error.code)
+        return self._report(sources, runs, updates, error_code)
 
     @staticmethod
     def _key_value(text: str, category: str) -> tuple[str, str]:
@@ -253,6 +309,14 @@ class PreferenceUpdates:
             return False
         negative, positive = (left[4:], right) if left.startswith('not:') else (right[4:], left)
         return negative == positive or category == 'technical_tool' and ':' not in negative
+
+    @classmethod
+    def _source_conflict(cls, original: str, clause: str, category: str) -> bool:
+        predicate, value = cls._key_value(clause, category)
+        return any(statement.scope in {'long_term', 'withdrawal'} and statement.category == category
+                   and cls._key_value(statement.text, category)[0] == predicate
+                   and cls._conflicts(value, cls._key_value(statement.text, category)[1], category)
+                   for statement in assess_preferences(original).statements)
 
     def _tag(self, predicate: str) -> str:
         return 'auto-pref:' + hmac.digest(self.runtime._fingerprint_key, predicate.encode(), hashlib.sha256).hex()
@@ -299,10 +363,13 @@ class PreferenceUpdates:
                 return finish(PreferenceUpdate(candidate_id, 'draft', 'preference_candidate_required'))
             span, = draft.sources
             source, = facts.workflow._sources(db, (span.message_id,))
-            if (span.start != 0 or span.end != len(source.message.event.text) or draft.text != source.message.event.text
+            statement = match_statement(source.message.event.text, span.start, span.end, draft.text, category)
+            if (statement is None or source.message.event.role != 'user'
                     or not source.message.receipt.original_saved or source.message.event.completion != 'complete'):
                 return finish(PreferenceUpdate(candidate_id, 'draft', 'preference_candidate_required'))
-            if draft.text.strip().startswith('我希望'):
+            if statement.scope in {'turn', 'historical', 'planned'}:
+                return finish(PreferenceUpdate(candidate_id, 'ignored', statement.scope + '_scope'))
+            if statement.normalized.startswith('我希望'):
                 return finish(PreferenceUpdate(candidate_id, 'draft', 'preference_scope_unclear'))
             if (source.message.event.occurred_at is not None
                     and _time(source.message.event.occurred_at) > _time(source.message.receipt.received_at)):
@@ -311,8 +378,56 @@ class PreferenceUpdates:
             tag_id = self._tag(predicate)
             view = facts._query_snapshot(db, 'user', predicate)
             previous = profiles._latest(db, tag_id)
+            if self._source_conflict(source.message.event.text, draft.text, category):
+                if previous is not None:
+                    current = profiles._view(db, tag_id)
+                    if current.state == 'draft' and view.clarification_required:
+                        pending = next((row for row in view.disputes if row.kind == 'disputed'), None)
+                        return finish(PreferenceUpdate(candidate_id, 'pending_clarification', 'source_conflict', tag_id,
+                            None if pending is None else pending.fact_id, predicate))
+                    if current.state == 'confirmed' and current.record is not None:
+                        rows = db.execute('''SELECT id FROM fact_candidates_v1 WHERE run_id=(
+                            SELECT run_id FROM fact_candidates_v1 WHERE id=?) ORDER BY id''', (candidate_id,)).fetchall()
+                        for row in rows:
+                            other, _ = facts._candidate(db, row['id'])
+                            if other.preference_category != category or len(other.sources) != 1:
+                                continue
+                            other_span, = other.sources
+                            if (other_span.message_id != span.message_id or match_statement(source.message.event.text,
+                                    other_span.start, other_span.end, other.text, category) is None):
+                                continue
+                            other_predicate, other_value = self._key_value(other.text, category)
+                            if (other_predicate != predicate or not self._conflicts(
+                                    self._key_value(current.record.draft.label, category)[1], other_value, category)):
+                                continue
+                            if view.fact is not None and current.record.draft.sources == view.fact.sources:
+                                opened = PreferenceClarifications(self.runtime)._open(db, OpenClarification('user', predicate,
+                                    tag_id, row['id'], span.message_id, view.knowledge_revision, current.revision))
+                                return finish(PreferenceUpdate(candidate_id, 'pending_clarification', 'source_conflict',
+                                    tag_id, opened.clarification_id, predicate))
+                            legacy = self._legacy_profile(db, row['id'], other, category, predicate, other_value, view)
+                            if legacy is not None:
+                                return finish(replace(legacy, candidate_id=candidate_id))
+                return finish(PreferenceUpdate(candidate_id, 'draft', 'source_conflict', tag_id if previous else None,
+                    predicate=predicate))
             if previous is not None:
                 current = profiles._view(db, tag_id)
+                pending_withdrawal = next((row for row in view.disputes if row.candidate_id == candidate_id), None)
+                if (statement.scope == 'withdrawal' and current.state == 'draft' and pending_withdrawal is not None
+                        and current.record is not None and current.record.draft.processor_version ==
+                        PREFERENCE_CLARIFICATION_PROCESSOR + pending_withdrawal.fact_id):
+                    return finish(PreferenceUpdate(candidate_id, 'withdrawn', 'explicit_negative_correction', tag_id,
+                        pending_withdrawal.fact_id, predicate))
+                if (statement.scope == 'withdrawal' and current.state == 'confirmed' and view.fact is not None
+                        and not view.clarification_required and current.record is not None
+                        and self._conflicts(self._key_value(view.fact.text, category)[1], value, category)
+                        and current.record.draft.sources == view.fact.sources
+                        and current.record.draft.processor_version.startswith(AUTOMATIC_PREFERENCE_PROCESSOR_PREFIX)):
+                    # Reuse the ordinary dispute/draft workflow. A denial is not a trusted UI suppression approval.
+                    opened = PreferenceClarifications(self.runtime)._open(db, OpenClarification('user', predicate,
+                        tag_id, candidate_id, span.message_id, view.knowledge_revision, current.revision))
+                    return finish(PreferenceUpdate(candidate_id, 'withdrawn', 'explicit_negative_correction', tag_id,
+                        opened.clarification_id, predicate))
                 if (current.state == 'confirmed' and view.fact is not None and not view.clarification_required
                         and self._key_value(view.fact.text, category)[1] == value
                         and previous.draft.sources == view.fact.sources):
@@ -392,7 +507,9 @@ class PreferenceUpdates:
                     or not self._conflicts(self._key_value(other.text, draft.preference_category)[1], value, draft.preference_category)):
                 continue
             prior, = facts.workflow._sources(db, (other.sources[0].message_id,))
-            if (other.sources[0].start != 0 or other.text != prior.message.event.text
+            span, = other.sources
+            statement = match_statement(prior.message.event.text, span.start, span.end, other.text, draft.preference_category)
+            if (statement is None or statement.scope not in {'long_term', 'withdrawal'} or prior.message.event.role != 'user'
                     or prior.message.event.occurred_at is not None
                         and _time(prior.message.event.occurred_at) > _time(prior.message.receipt.received_at)):
                 continue
@@ -484,14 +601,16 @@ class PreferenceUpdates:
         category = self.classify_statement(draft.label)
         if (not settings.enabled or category not in settings.categories or category is None
                 or _statement(draft.label)[1]
-                or draft.label.strip().startswith('我希望')
+                or _statement(draft.label)[2].startswith('我希望')
                 or settings.admitted_processor != settings.rules_processor or draft.processor_version != settings.rules_processor
                 or draft.category != ('interest' if category == 'general_interest' else 'preference') or len(draft.sources) != 1):
             raise MemoryFailure('preference_policy_not_admitted')
         span, = draft.sources
         source, = CandidateWorkflow._sources(db, (span.message_id,))
-        if (source.message.event.role != 'user' or source.message.event.completion != 'complete' or span.start != 0
-                or span.end != len(source.message.event.text) or draft.label != source.message.event.text
+        statement = match_statement(source.message.event.text, span.start, span.end, draft.label, category)
+        if (source.message.event.role != 'user' or source.message.event.completion != 'complete' or statement is None
+                or statement.scope != 'long_term'
+                or self._source_conflict(source.message.event.text, draft.label, category)
                 or source.message.event.occurred_at is not None
                     and _time(source.message.event.occurred_at) > _time(source.message.receipt.received_at)):
             raise MemoryFailure('preference_candidate_required')

@@ -625,6 +625,59 @@ test('native dsh next-turn provider uses admitted preferences and excludes their
   assert.doesNotMatch(JSON.stringify(adapter.requests), /mcp-access-(owner|consolidation)/);
 });
 
+test('independent service paragraph profile corrections reach the next actual provider request', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-B', '-m', 'evernook.cli', command, '--config', host.config.config,
+      '--access', owner], { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 4096, deep_tokens: 8192, profile_tokens: 1000,
+    fact_keys: [['user', 'preference:answer_verbosity']] });
+  await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+  host.config.memoryBudget!.memoryTokens = 4096;
+  cli('preference-update-configure', { enabled: true,
+    admitted_processor: cli('preference-update-status').settings.rules_processor });
+  async function turn(session: string, text: string) {
+    const handle = await host.create(session); t.after(() => handle.dispose());
+    handle.agent.followup(user(session + '-input', text)); await handle.agent.whenIdle();
+    return host.memory.status(handle.agent.session.id).latest_input!.message_id;
+  }
+  function items() {
+    const block = adapter.requests.at(-1)!.messages.flatMap(m => m.content)
+      .find(b => b.type === 'text' && b.text.includes('untrusted_memory_context'));
+    assert.ok(block?.type === 'text');
+    return JSON.parse(block.text.slice(block.text.indexOf('{'))).items as
+      { kind: string; data: { label?: string; fact?: { text: string } | null } }[];
+  }
+  const first = await turn('paragraph-first', '今天聊了很久。说到日常交流，我偏好简短回答。');
+  cli('preference-update-process', { source_ids: [first] });
+  const temporary = await turn('paragraph-temporary', '这次，我偏好详细回答。');
+  assert.ok(items().some(i => i.kind === 'profile' && i.data.label === '我偏好简短回答。'));
+  cli('preference-update-process', { source_ids: [temporary] });
+  assert.equal(cli('profile-summary').tags[0].draft.label, '我偏好简短回答。');
+  const incomingId = await turn('paragraph-new', '最近重新想过。现在我偏好详细回答。');
+  const incoming = cli('preference-update-process', { source_ids: [incomingId] }).updates[0];
+  assert.equal(incoming.state, 'pending_clarification');
+  const confirmation = await turn('paragraph-confirm', '合成：确认详细回答是我的真实偏好，更正之前说法。');
+  assert.equal(items().some(i => i.kind === 'profile'), false);
+  const fact = cli('fact-query', { subject_id: 'user', predicate: incoming.predicate });
+  const profile = cli('profile-read', { tag_id: incoming.profile_tag_id });
+  cli('preference-resolve', { subject_id: 'user', predicate: incoming.predicate,
+    profile_tag_id: incoming.profile_tag_id, clarification_id: incoming.clarification_id,
+    confirmation_id: confirmation, expected_fact_revision: fact.knowledge_revision,
+    expected_profile_revision: profile.revision, kind: 'correction', choice: 'incoming' });
+  await turn('paragraph-after', '合成：继续聊天。');
+  assert.ok(items().some(i => i.kind === 'profile' && i.data.label === '我偏好详细回答。'));
+  assert.ok(items().some(i => i.kind === 'facts' && i.data.fact?.text === '我偏好详细回答。'));
+  assert.equal(items().some(i => (i.kind === 'profile' && i.data.label === '我偏好简短回答。')
+    || (i.kind === 'facts' && i.data.fact?.text === '我偏好简短回答。')), false);
+  assert.deepEqual(host.errors, []);
+});
+
 test('native dsh cancellation and provider failure release foreground activity without disposing the session', async t => {
   for (const canceled of [true, false]) {
     const adapter = new Synthetic();

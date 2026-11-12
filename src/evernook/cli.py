@@ -7,6 +7,7 @@ from dataclasses import asdict, is_dataclass
 import json
 from pathlib import Path
 import sys
+import threading
 from typing import Any, NoReturn
 
 from .models import Access, Change, Event, ImportantMark, MemoryFailure, Source
@@ -126,6 +127,10 @@ def _parser() -> Parser:
         ("candidate-list", "Read a completed candidate run for trusted review using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
         ("extract-preferences", "Explicit conservative offline preference drafts; no automatic acceptance"),
+        ("episode-propose", "Trusted source-bound cross-session excerpt candidate; review only"),
+        ("episode-read", "Read a source-validated episode candidate with provenance"),
+        ("episode-configure", "Configure optional review-only episode candidates in background batches"),
+        ("episode-status", "Read effective episode candidate policy"),
         ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
         ("preference-resolve", "Trusted user clarification as correction or real change"),
         ("preference-update-configure", "Narrow finite preference rules and explicitly admit their pinned identity"),
@@ -188,7 +193,8 @@ def _parser() -> Parser:
 
 
 def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = None,
-             service_runtime: MemoryRuntime | None = None, service_access: Access | None = None) -> object:
+             service_runtime: MemoryRuntime | None = None, service_access: Access | None = None,
+             service_cancel: threading.Event | None = None) -> object:
     def read_input() -> dict[str, Any]:
         return dict(input_value) if input_value is not None else _input()
 
@@ -336,6 +342,24 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command.startswith('episode-'):
+        from .episodes import Episodes
+        episodes = Episodes(runtime)
+        value = read_input()
+        if args.command == 'episode-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return {'enabled': episodes.enabled(access), 'publication': 'review_only'}
+        if args.command == 'episode-configure':
+            return episodes.configure(access, **value)
+        if args.command == 'episode-read':
+            return episodes.read(access, **value)
+        for key in ('source_ids', 'entities'):
+            if key in value:
+                if not isinstance(value[key], list):
+                    raise MemoryFailure('invalid_arguments')
+                value[key] = tuple(value[key])
+        return episodes.propose(access, **value, cancel=service_cancel)
     if args.command.startswith('preference-update-'):
         from .automatic_preferences import PreferenceUpdates
         preferences = PreferenceUpdates(runtime)
@@ -351,7 +375,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
             raise MemoryFailure('invalid_arguments')
         value['source_ids'] = tuple(value['source_ids'])
-        return preferences.process(access, **value)
+        return preferences.process(access, **value, cancel=service_cancel)
     if args.command in ("preference-clarify", "preference-resolve"):
         from .preference_clarifications import OpenClarification, PreferenceClarifications, ResolveClarification
         clarifications = PreferenceClarifications(runtime)

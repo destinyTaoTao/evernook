@@ -21,7 +21,7 @@ from .runtime import MemoryRuntime, _identifier, _json
 from .safety import credential_signal
 
 
-CONSOLIDATION_KINDS = ("profile_tag", "topic", "navigation_summary")
+CONSOLIDATION_KINDS = ("profile_tag", "topic", "navigation_summary", "episode")
 CONSOLIDATION_TIERS = ("manual", "review", "auto")
 # Low-risk merge universe: tiers may narrow the whitelist below but never widen it, so facts,
 # experience and persona can never skip user confirmation. Preference publication separately
@@ -239,11 +239,11 @@ class ConsolidationWorkflow:
             return False
 
     def complete(self, access: Access, run_id: str, token: str, drafts: tuple[ConsolidationDraft, ...], *,
-                 scheduler_token: str | None = None) -> ConsolidationResult:
+                 scheduler_token: str | None = None, check: Callable[[], float] | None = None) -> ConsolidationResult:
         """Commit candidate success, profile effects and the full review queue atomically."""
         if not isinstance(token, str):
             raise MemoryFailure("invalid_candidate_batch")
-        return self._complete(access, run_id, token, drafts, scheduler_token=scheduler_token)
+        return self._complete(access, run_id, token, drafts, scheduler_token=scheduler_token, check=check)
 
     def recover(self, access: Access, run_id: str,
                 provider: Callable[[CandidateLease], tuple[ConsolidationDraft, ...]], *,
@@ -273,7 +273,8 @@ class ConsolidationWorkflow:
             raise MemoryFailure('scheduler_foreground')
 
     def _complete(self, access: Access, run_id: str, token: str | None,
-                  drafts: tuple[ConsolidationDraft, ...], *, scheduler_token: str | None = None) -> ConsolidationResult:
+                  drafts: tuple[ConsolidationDraft, ...], *, scheduler_token: str | None = None,
+                  check: Callable[[], float] | None = None) -> ConsolidationResult:
         self.runtime._require_scope(access, "accept", "consolidation_complete")
         identity = self.runtime._require_scope(access, "maintain", "candidate_complete")
         if scheduler_token is not None and (not isinstance(scheduler_token, str) or not 1 <= len(scheduler_token) <= 128):
@@ -286,7 +287,7 @@ class ConsolidationWorkflow:
             (draft.label + "\n" + draft.detail).strip() if draft.detail else draft.label,
             "user_statement" if draft.kind == "profile_tag" else "quoted",
             draft.sources, draft.disputed) for draft in drafts)
-        with self.runtime._connection() as db:
+        with self.runtime._connection(check=check) as db:
             db.execute("BEGIN IMMEDIATE")
             if scheduler_token is not None:
                 self._scheduler_fence(db, scheduler_token)
@@ -316,7 +317,7 @@ class ConsolidationWorkflow:
                         state = 'rejected'
                     # Generic proposals lack admitted preference provenance. Only the
                     # qualified preference workflow may publish a confirmed profile.
-                elif tier == "auto" and draft.kind in whitelist["kinds"] and not draft.disputed:
+                elif tier == "auto" and draft.kind in LOW_RISK_KINDS and draft.kind in whitelist["kinds"] and not draft.disputed:
                     state = "merged"
                 db.execute("INSERT INTO consolidation_drafts_v1 VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (candidate_id, run_id, draft.kind, draft.label, draft.detail, draft.category,
@@ -327,6 +328,13 @@ class ConsolidationWorkflow:
                 self.candidates._lease(lease_row, identity.client_id, token)
             if scheduler_token is not None:
                 self._scheduler_fence(db, scheduler_token)
+                if any(draft.kind == 'episode' for draft in drafts):
+                    enabled = (db.execute('SELECT enabled FROM episode_policy_v1 WHERE id=1').fetchone()
+                               if db.execute("SELECT 1 FROM sqlite_master WHERE name='episode_policy_v1'").fetchone() else None)
+                    if enabled is None or not enabled[0]:
+                        raise MemoryFailure('scheduler_episode_paused')
+            if check is not None:
+                check()
             db.execute("COMMIT")
             return result
 

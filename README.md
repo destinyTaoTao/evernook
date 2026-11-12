@@ -18,6 +18,8 @@ Core0.1.11候选再提供[可选FTS消息ID加速](docs/contracts/lexical-v1.md#
 
 Core0.1.12另优化[请求内元数据核对和有界候选回源](docs/reports/m58-followup-84-query-budget.md)：不新增持久结构，候选较多时保留原查询路径。815923条已完整回填的合成副本，安装版近期/历史/无答案约2.95–2.98秒、热门词约4.75秒，完整页与旧包一致；已补[自身原生短验收](docs/reports/dsh-candidate20-validation.md#core0112--preview21-隔离短验收)和[1810秒/181回合独立合成窗口](docs/reports/dsh-installed-stability.md#core0112--preview21独立窗口补验2026-11-08)。2秒查询仍超时，正式质量/规模/时延准入仍待完成，Core0.1.11宿主保留、日用关闭。
 
+Core0.1.17增加[完整段落有限偏好处理](docs/contracts/automatic-preferences-v1.md)与[跨会话经历候选](docs/contracts/episodes-v1.md)：临时例外、否定和冲突独立处理，原文及精确依据保留，经历候选仅供审查。独立服务可信CLI与实际dsh下一轮验证见[实施记录](docs/reports/automatic-profile-2026-11-13.md)；默认未准入，日用及模型质量门禁继续保留。
+
 ## 我们希望做到什么
 
 - **原话留存**：原始文本先可靠落盘；重要交代保存原文、标点、数字和来源，摘要不替代原文。

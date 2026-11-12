@@ -18,6 +18,7 @@ from evernook.learning_evaluation import load_suite, score
 from evernook.models import MemoryFailure
 from evernook.paths import external
 from evernook.profile import ProfileRegistry
+from evernook.facts import FactRegistry
 
 
 def save(path: Path, value: object) -> None:
@@ -125,8 +126,23 @@ def collect(suite_root: Path, output: Path, embedding_config: Path | None = None
             detail["recall_error_code"] = failure.code
         elapsed = (time.perf_counter() - started) * 1000
         summary = ProfileRegistry(runtime).summary(access)
-        if any(item.clarification_id for report in reports for item in report.updates):
-            detail["automatic_missing_reason"] = "clarification_source_projection_not_collected"
+        pending = [item for report in reports for item in report.updates if item.state == 'pending_clarification']
+        if pending:
+            clarification_sources: set[str] = set()
+            for item in pending:
+                if item.predicate:
+                    view = FactRegistry(runtime).query(access, 'user', item.predicate)
+                    for record in (*view.disputes, *((view.fact,) if view.fact else ())):
+                        clarification_sources.update(span.message_id for span in record.sources)
+                if item.profile_tag_id:
+                    profile = ProfileRegistry(runtime).read(access, item.profile_tag_id)
+                    if profile.record:
+                        clarification_sources.update(span.message_id for span in profile.record.draft.sources)
+            if clarification_sources:
+                payload['automatic'] = {'decision': 'clarify', 'value': None,
+                    'source_ids': sorted(aliases[source_id] for source_id in clarification_sources)}
+            else:
+                detail['automatic_missing_reason'] = 'clarification_without_current_sources'
         elif len(summary.tags) == 1:
             tag = summary.tags[0]
             payload["automatic"] = {"decision": "accept", "value": tag.draft.label,

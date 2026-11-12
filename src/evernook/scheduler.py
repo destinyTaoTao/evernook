@@ -308,7 +308,7 @@ class ConsolidationScheduler:
                 skip_reason = "empty_source"
             if skip_reason is None:
                 source_ids.append(str(row["id"]))
-                if message.event.role == 'user' and PreferenceUpdates.classify_statement(message.event.text) is not None:
+                if message.event.role == 'user' and PreferenceUpdates.has_candidates(message.event.text):
                     preference_ids.append(str(row['id']))
             else:
                 progress.append((str(row["id"]), "", "skipped:" + skip_reason))
@@ -318,6 +318,12 @@ class ConsolidationScheduler:
             if interrupted:
                 raise MemoryFailure("scheduler_" + interrupted)
             drafts = (provider or extractive_provider)(lease)
+            if provider is None:
+                from .episodes import Episodes, episode_draft
+                if (Episodes(self.runtime).enabled(access) and len(lease.sources) >= 2
+                        and len({(item.message.event.source.entry, item.message.event.source.session) for item in lease.sources}) >= 2
+                        and sum(len(item.message.event.text) for item in lease.sources) <= 16384):
+                    drafts = (*drafts, episode_draft(lease.sources))
             interrupted = self._interruption(deadline, scheduler_token)
             if interrupted:
                 raise MemoryFailure("scheduler_" + interrupted)
@@ -417,7 +423,8 @@ class ConsolidationScheduler:
                     progress.extend((message_id, run_id, "skipped:no_drafts") for message_id in batch)
                 run_ids.append(run_id)
             except Exception as error:
-                yielded = {"scheduler_foreground": "foreground", "scheduler_paused": "paused", "scheduler_time_budget": "time_budget"}.get(
+                yielded = {"scheduler_foreground": "foreground", "scheduler_paused": "paused", "scheduler_time_budget": "time_budget",
+                    "scheduler_episode_paused": "episode_paused"}.get(
                     error.code if isinstance(error, MemoryFailure) else "")
                 try:
                     # Provider bugs raise non-domain exceptions too; an unfailed lease would stay
