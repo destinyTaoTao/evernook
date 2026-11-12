@@ -54,3 +54,8 @@ MemoryClient及runLocalCli统一服务模式，Web身份必须capture+recall。�
 - #109 已验证，服务维护/scheduler/navigation共33项、补导航配置后服务维护3项通过，strict mypy4文件。运行中暂停改为单来源/阶段/导航协作检查。语义模型周期索引留给#112。
 - Ruling，传输采用标准库loopback TCP并双方HMAC认证，固定本机地址和owner-only发现文件。相对命名管道减少Windows专用封装，沿用同账户恶意程序不隔离的产品边界。
 - #110 已验证，Python22项、源SDK/Web4场景、独立安装Core/Web在rc.5宿主3场景通过，49/37成员源码包实装相同，61依赖边与审计通过。CLI required发现文件竞态已RED→GREEN修复，安装和错误回执记录见service-dsh-2026-11-12.md。
+- #111 complete，持久模式切换5项、真实安装三场景、30分钟1164回合/90启动通过，原话1164条和存储HMAC1331条复核，pending0、DB/FK通过、相关进程0。strict mypy117文件通过。全量661项有一项既有过时恢复夹具，在0ff18f4/0.1.14亦复现；修正为拒绝缺回执旧快照并发布完整当前快照，相关18项通过，未再次全套重跑。
+- Ruling，激活服务模式前停止旧二进制入口。新版本连接使用共享/独占栅栏阻止授权后跨切换写入，旧二进制启动拒绝新增配置字段；同账户恶意代码不在隔离保证内。
+- Ruling，已关联保险库原件的普通切换拒绝激活以保全旧helper，pending独立收件箱亦须清点；成功迁移留#115。新写后保留同账本前滚恢复，不删除mode标记回旧快照。
+- Final review，独立评审的长预算、CLI发现文件竞态、中途暂停、跨切换写入与配对解锁缺口均已修复并有回归。
+- Deferred minors，ServiceClient直接Python调用传入非数值timeout及受信服务返回畸形error对象时，错误归一化仍有低影响边界；合法CLI/RPC参数不触发。

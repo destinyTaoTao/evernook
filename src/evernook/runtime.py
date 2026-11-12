@@ -218,14 +218,14 @@ def _atomic_json(path: Path, value: object) -> None:
 
 
 def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: Path,
-                scopes: tuple[str, ...] | None = None) -> Access:
+                scopes: tuple[str, ...] | None = None, service_owner: bool = False) -> Access:
     """Trusted local provisioning only. This operation is never exposed as an MCP tool."""
     _identifier(client_id)
     _identifier(entry)
     if scopes is not None:
         if not isinstance(scopes, tuple) or any(not isinstance(item, str) or item not in SCOPES for item in scopes):
             raise MemoryFailure("invalid_scopes")
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     access_path = external(access_path)
     if access_path.parent != runtime.root or not access_path.name.startswith("mcp-access") or access_path.suffix != ".json":
         raise MemoryFailure("invalid_access_location")
@@ -281,9 +281,9 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
     return access
 
 
-def unlock_pairing(config_path: Path) -> dict[str, object]:
+def unlock_pairing(config_path: Path, *, service_owner: bool = False) -> dict[str, object]:
     """Trusted local reset of the pairing lockout; recorded in the audit log."""
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
         _pairing_schema(db)
@@ -293,10 +293,10 @@ def unlock_pairing(config_path: Path) -> dict[str, object]:
     return {"unlocked": True}
 
 
-def configure_lockout(config_path: Path, *, failure_limit: int) -> dict[str, object]:
+def configure_lockout(config_path: Path, *, failure_limit: int, service_owner: bool = False) -> dict[str, object]:
     if type(failure_limit) is not int or not 1 <= failure_limit <= 100:
         raise MemoryFailure("invalid_lockout_config")
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
         _pairing_schema(db)
@@ -358,11 +358,17 @@ def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: 
 
 
 class MemoryRuntime:
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, *, service_owner: bool = False):
+        self._service_owner = service_owner
         config_path = external(config_path)
         config = _load(config_path)
-        if set(config) != {"schema_version", "data_dir", "busy_timeout_ms"} or type(config["schema_version"]) is not int or config["schema_version"] != 1:
+        base_keys = {"schema_version", "data_dir", "busy_timeout_ms"}
+        if set(config) not in (base_keys, base_keys | {"service_mode"}) or type(config["schema_version"]) is not int or config["schema_version"] != 1:
             raise MemoryFailure("unsupported_config")
+        if "service_mode" in config and config["service_mode"] is not True:
+            raise MemoryFailure("unsupported_config")
+        if config.get("service_mode") and not service_owner:
+            raise MemoryFailure("service_required")
         if not isinstance(config["data_dir"], str) or type(config["busy_timeout_ms"]) is not int or not 0 <= config["busy_timeout_ms"] <= 30000:
             raise MemoryFailure("invalid_config")
         self.root = external(Path(config["data_dir"]))
@@ -438,6 +444,8 @@ class MemoryRuntime:
             install_streams(db)
 
     def _authorize(self, access: Access) -> _Identity:
+        if not self._service_owner and _load(self.root / "runtime.json").get("service_mode"):
+            raise MemoryFailure("service_required")
         if not isinstance(access, Access):
             raise MemoryFailure("unauthorized")
         if type(access.contract_version) is not int or access.contract_version != 1:
@@ -526,7 +534,17 @@ class MemoryRuntime:
         return access
 
     @contextmanager
-    def _connection(self, *, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, check: Callable[[], float] | None = None,
+                    ownership_exclusive: bool = False) -> Iterator[sqlite3.Connection]:
+        from .service_gate import ownership_gate
+        with ownership_gate(self.root, exclusive=ownership_exclusive, timeout=self._timeout, check=check):
+            if not self._service_owner and _load(self.root / "runtime.json").get("service_mode"):
+                raise MemoryFailure("service_required")
+            with self._unguarded_connection(check=check) as connection:
+                yield connection
+
+    @contextmanager
+    def _unguarded_connection(self, *, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
         interrupted: list[MemoryFailure] = []
         try:

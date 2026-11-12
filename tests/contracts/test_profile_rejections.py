@@ -89,7 +89,14 @@ class ProfileRejectionTests(unittest.TestCase):
         self.click('profile_reject', 'original')
         checkpoint = capture_control_checkpoint(self.runtime, self.access)
         replay_archive_controls(self.runtime, self.access, root / 'before-reject', root / 'review', checkpoint=checkpoint)
-        config, owner = publish_replayed_runtime(self.runtime, self.access, root / 'review', root / 'restored',
+        # Replaying profile controls cannot manufacture the later page-confirmation receipt.
+        with self.assertRaisesRegex(MemoryFailure, "archive_evidence_incomplete"):
+            publish_replayed_runtime(self.runtime, self.access, root / 'review', root / 'stale-restored',
+                                     checkpoint=checkpoint, client_id='restored', entry='owner')
+        self.runtime.export_archive(self.access, root / 'after-reject')
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        replay_archive_controls(self.runtime, self.access, root / 'after-reject', root / 'current-review', checkpoint=checkpoint)
+        config, owner = publish_replayed_runtime(self.runtime, self.access, root / 'current-review', root / 'restored',
                                                 checkpoint=checkpoint, client_id='restored', entry='owner')
         profiles = ProfileRegistry(MemoryRuntime(config))
         result = profiles.decide(owner, ProfileDecision('new-after-restore', 'new', 0, 'propose',

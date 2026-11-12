@@ -29,3 +29,19 @@ stdio MCP 检测到服务发现文件后，通过服务执行既有参数模型�
 status和MCP status提供service.independent与maintenance，显示tick数、错误码、跳过原因及最后一轮词法/导航/沉淀状态。实时积压仍可通过原scheduler-status读取。关闭全部客户端不停止后台，重启复用已保存进度和租约；正常关闭通知协作任务并等待退出。
 
 服务维护、原scheduler、原navigation共33项通过。加入真实导航策略后服务维护3项再次通过，4文件strict mypy通过。独立评审发现的运行中暂停缺口已补动态信号及回归。首次命令误写不存在的test_navigation模块，改为项目实际test_maintenance后通过，原失败输出保留。尚未验收物理重启或正式模型/规模。
+
+## #111 普通账本一次切换
+
+Core0.1.15新增持久化service_mode。先停止切换前的旧宿主、旧CLI任务和其他持有原版运行时的进程，排空尚未确认的流与工具发布，再使用已配对admin身份：
+
+```powershell
+python -m evernook.service --config '<external runtime.json>' --activate-owner '<external mcp-access-owner.json>' --maintenance-access '<external mcp-access-background.json>'
+```
+
+服务先取得同账本单实例锁，再在跨进程独占切换栅栏和SQLite写事务内写入service_mode。普通新版本连接持有共享栅栏，连接开始后重新核对模式；授权后尚未开始事务的旧调用也无法跨越切换点写入。旧二进制不具备该栅栏，必须在切换前停止，其后续启动会因不认识新配置字段而拒绝。该机制防止旧入口误用，沿用同账户恶意代码可直接访问本机数据的边界。
+
+激活之后，MCP及已支持CLI仅加载ACL检查的连接材料，不初始化本地SQLite。发现文件缺失、损坏或服务离线都失败关闭；重新启动服务可生成新发现材料。已生效标记不会因进程退出自动移除。切换后继续使用同一账本、原始回执、幂等密钥和来源/控制版本，新写后不得恢复旧快照或手工删除标记作为回滚。
+
+服务模式支持前述可信CLI，加上remember/search/recall/read/state。新增service-pair以现有admin身份配对，默认只授capture/recall；service-pair-unlock提供管理员解锁。模型工具不开放配对或解锁。其他尚未服务化的本地管理命令明确拒绝，后续按对应功能票扩充接口；不能把普通客户端标成service_owner绕过服务。
+
+普通切换暂不迁移保险库。发现已关联受保护原件时，激活返回protected_cutover_requires_migration且保留原配置、原件与授权查看能力。独立收件箱的pending对象无法仅凭普通账本发现，切换清单还须盘点仓库外收件箱和恢复材料；相应迁移在#115验收。不得因普通备份通过就宣称受保护资产已可迁移。

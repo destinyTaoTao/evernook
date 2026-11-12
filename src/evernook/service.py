@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, is_dataclass
 import json
+import hashlib
 import msvcrt
 from pathlib import Path
 import secrets
@@ -17,7 +18,7 @@ from typing import Any
 
 from .models import Access, Event, MemoryFailure, Source
 from .paths import external, verify_private_directory
-from .runtime import MemoryRuntime, _atomic_json
+from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, pair_client
 from .semantic import SemanticRecall
 from .service_transport import authenticate_client, authenticate_server, receive_json, send_json
 
@@ -25,7 +26,19 @@ ENDPOINT = "memory-service.json"
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-decide", "candidate-list", "fact-query",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
-    "scheduler-pause", "scheduler-configure"})
+    "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state"})
+
+
+def client_access(config: Path, access_path: Path) -> Access:
+    """Load only owner-ACL-checked connection materials; the service authenticates Access."""
+    config, access_path = external(config), external(access_path)
+    if access_path.parent != config.parent:
+        raise MemoryFailure("invalid_access_location")
+    verify_private_directory(config.parent, extra_files=(config, access_path))
+    value = _load(config)
+    if value.get("data_dir") != str(config.parent):
+        raise MemoryFailure("invalid_config_location")
+    return _access_record(_load(access_path))
 
 
 class ServiceClient:
@@ -72,6 +85,30 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     runtime.handshake(access)
     arguments = request["arguments"]
     operation = request["operation"]
+    if operation in ("pair-unlock", "pair-configure"):
+        from .runtime import unlock_pairing, configure_lockout
+        runtime._require_scope(access, "admin", "service_pair_control")
+        if operation == "pair-unlock" and not arguments:
+            return unlock_pairing(runtime.root / "runtime.json", service_owner=True)
+        if operation == "pair-configure" and set(arguments) == {"failure_limit"}:
+            return configure_lockout(runtime.root / "runtime.json",
+                failure_limit=arguments["failure_limit"], service_owner=True)
+        raise MemoryFailure("invalid_arguments")
+    if operation == "pair-client":
+        runtime._require_scope(access, "admin", "service_pair")
+        if set(arguments) != {"client_id", "entry", "scopes"}:
+            raise MemoryFailure("invalid_arguments")
+        _identifier(arguments["client_id"])
+        _identifier(arguments["entry"])
+        scopes = arguments["scopes"]
+        if scopes is not None and not isinstance(scopes, list):
+            raise MemoryFailure("invalid_scopes")
+        destination = runtime.root / ("mcp-access-" + hashlib.sha256(
+            arguments["client_id"].encode("utf-8")).hexdigest() + ".json")
+        paired = pair_client(runtime.root / "runtime.json", client_id=arguments["client_id"],
+            entry=arguments["entry"], access_path=destination,
+            scopes=tuple(scopes) if scopes is not None else ("capture", "recall"), service_owner=True)
+        return {"client_id": paired.client_id, "access_file": str(destination)}
     if operation == "policy-match":
         expected_policy = {"embedding_config": str(embedding_config.resolve()) if embedding_config else None,
             "context_config": str(context_config.resolve()) if context_config else None}
@@ -104,8 +141,15 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or not isinstance(arguments["input"], dict)):
             raise MemoryFailure("operation_not_allowed")
         command = arguments["command"]
-        namespace = _parser().parse_args([command, "--config", str(runtime.root / "runtime.json"),
-            "--access", str(runtime.root / "unused-service-access.json")])
+        parser_arguments = [command, "--config", str(runtime.root / "runtime.json"),
+            "--access", str(runtime.root / "unused-service-access.json")]
+        if command in ("read", "state"):
+            if set(arguments["input"]) != {"message_id"} or not isinstance(arguments["input"]["message_id"], str):
+                raise MemoryFailure("invalid_arguments")
+            parser_arguments += ["--message-id", arguments["input"]["message_id"]]
+        namespace = _parser().parse_args(parser_arguments)
+        if command == "recall":
+            namespace.embedding_config = embedding_config
         return _execute(namespace, input_value=arguments["input"],
             service_runtime=runtime, service_access=access)
     if operation == "remember":
@@ -226,8 +270,8 @@ class _Handler(socketserver.BaseRequestHandler):
 
 def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None,
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
-          navigation_policies: tuple[str, ...] = ()) -> None:
-    runtime = MemoryRuntime(config)
+          navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None) -> None:
+    runtime = MemoryRuntime(config, service_owner=True)
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
     with lock_path.open("a+b") as lock:
@@ -246,6 +290,17 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
                         navigation_policies, server.stopping)
+                if activate_owner is not None:
+                    owner = runtime.access_from_file(activate_owner)
+                    runtime._require_scope(owner, "admin", "activate_service")
+                    with runtime._connection(ownership_exclusive=True) as db:
+                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
+                                and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
+                            raise MemoryFailure("protected_cutover_requires_migration")
+                        db.execute("BEGIN EXCLUSIVE")
+                        value = _load(config)
+                        _atomic_json(config, {**value, "service_mode": True})
+                        db.execute("COMMIT")
                 _atomic_json(runtime.root / ENDPOINT,
                     {"version": 1, "port": server.server_address[1], "key": key.hex()})
                 if server.maintenance:
@@ -269,11 +324,12 @@ def main() -> None:
     parser.add_argument("--maintenance-access", type=Path)
     parser.add_argument("--maintenance-interval", type=float, default=5)
     parser.add_argument("--navigation-policy", action="append", default=[])
+    parser.add_argument("--activate-owner", type=Path)
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config,
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
-            navigation_policies=tuple(args.navigation_policy))
+            navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:

@@ -96,6 +96,8 @@ def _parser() -> Parser:
     backup_retain.add_argument("--apply", action="store_true")
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
+        ("service-pair", "Pair a client through the service using an existing administrator"),
+        ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
@@ -167,6 +169,10 @@ def _parser() -> Parser:
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
         command.add_argument("--require-service", action="store_true")
+        if name == "service-pair":
+            command.add_argument("--client-id", required=True)
+            command.add_argument("--entry", required=True)
+            command.add_argument("--scopes")
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
@@ -508,14 +514,25 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
 def main() -> None:
     try:
         args = _parser().parse_args()
-        from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient
+        from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient, client_access
+        from .runtime import _load
         required = getattr(args, "require_service", False)
-        if required and args.command not in CLI_OPERATIONS:
+        configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
+        if configured:
+            required = True
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock"):
             raise MemoryFailure("service_unavailable")
-        if args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
-            runtime = MemoryRuntime(args.config)
-            access = runtime.access_from_file(args.access)
-            value = {} if args.command == "status" else _input()
+        if args.command == "service-pair":
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, "pair-client", {"client_id": args.client_id,
+                "entry": args.entry, "scopes": args.scopes.split(",") if args.scopes else None})
+        elif args.command == "service-pair-unlock":
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, "pair-unlock", {})
+        elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
+            access = client_access(args.config, args.access)
+            value = {} if args.command == "status" else (
+                {"message_id": args.message_id} if args.command in ("read", "state") else _input())
             result = ServiceClient(args.config).call(access, "cli",
                 {"command": args.command, "input": value})
         else:

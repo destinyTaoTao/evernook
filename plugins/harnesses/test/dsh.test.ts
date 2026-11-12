@@ -82,7 +82,7 @@ class Synthetic extends LlmAdapter {
 async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { service?: boolean; consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
-  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
+  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); owner=config.parent/'mcp-access-owner.json'; pair_client(config,client_id='synthetic-owner',entry='owner',access_path=owner); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
   const paths = JSON.parse(execFileSync(python!, ['-c', script, join(root, 'memory')], { cwd: checkout, encoding: 'utf8' })) as { config: string; access: string };
   const ctx = new Context();
   await ctx.plugin(SessionStore).await();
@@ -137,7 +137,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   let service: childProcess.ChildProcess | undefined;
   if (lifecycle.service) {
     config.serviceRequired = true;
-    const args = ['-B', '-m', 'evernook.service', '--config', config.config];
+    const args = ['-B', '-m', 'evernook.service', '--config', config.config, '--activate-owner', join(root, 'memory/mcp-access-owner.json')];
     if (config.contextConfig) args.push('--context-config', config.contextConfig);
     service = childProcess.spawn(python!, args, { cwd: checkout, windowsHide: true,
       stdio: ['ignore', 'ignore', 'ignore'] });
@@ -2159,9 +2159,6 @@ test('web service page corrects and suppresses evidence used by fresh native dsh
   t.after(() => host.close());
   await host.memory.close();
   const owner = join(host.root, 'memory/mcp-access-owner.json');
-  execFileSync(python!, ['-c',
-    "import sys;from pathlib import Path;from evernook import pair_client;pair_client(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))",
-    host.config.config, owner], { cwd: checkout });
   host.ctx.provide('connection', { fetch: { register: () => () => {} } });
   const web = await installWeb(host.ctx, { python: python!, config: host.config.config,
     access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' });
@@ -2208,9 +2205,8 @@ test('web service startup rejects an ordinary identity missing capture', async t
   t.after(() => host.close());
   await host.memory.close();
   const owner = join(host.root, 'memory/mcp-access-owner.json');
-  execFileSync(python!, ['-c',
-    "import sys;from pathlib import Path;from evernook import pair_client;c=Path(sys.argv[1]);pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]));pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=Path(sys.argv[3]),scopes=('recall',))",
-    host.config.config, owner, host.config.access], { cwd: checkout });
+  execFileSync(python!, ['-B', '-m', 'evernook.cli', 'service-pair', '--config', host.config.config,
+    '--access', owner, '--client-id', 'synthetic-dsh', '--entry', 'dsh', '--scopes', 'recall'], { cwd: checkout });
   await assert.rejects(installWeb(host.ctx, { python: python!, config: host.config.config,
     access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' }),
     /invalid_maintenance_identity/);

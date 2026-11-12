@@ -1,5 +1,7 @@
 # 当前实现与架构图
 
+> 2026-11-12至13日独立服务增量：Core0.1.15已提供认证本机进程、MCP/可信管理桥接、宿主外维护，以及普通账本持久服务模式和旧直写隔离。preview.22的dsh存取查与页面控制经实际安装验证，独立服务完成1801.68秒/1164回合故障循环。见[服务契约](contracts/service-v1.md)、[dsh闭环](reports/service-dsh-2026-11-12.md)及[切换验证](reports/service-cutover-2026-11-12.md)。日常准入、现有保险库迁移和真实模型/规模门禁分别保留。
+
 > **2026-11-08 Core0.1.12/preview.21独立长跑：** 新环境及pilot/formal各自的新profile、显式两项加速，完成[目标1800秒、实际1810.004秒/181回合窗口](reports/dsh-installed-stability.md#core0112--preview21独立窗口补验2026-11-08)。全部预定动作通过，业务错误/应用外网尝试0；7321采样、观察峰约709MiB，11次进程采样查询失败保留。906维护tick、词法/导航7020条收敛，DB/前后产物/61依赖边/生产审计通过，相关进程与37929/37930监听0。通用pending_jobs仍7020未处理；2秒反馈、正式质量/规模/时延、模型及物理OS门禁保持，日用关闭。
 
 > **2026-11-08 Core0.1.12查询候选：** 显式覆盖加速查询在同一读快照内用内存元数据镜像减少回表；ready时只对有界完整FTS候选直接回源，大集合保留原有序路径，未建/落后与故障完整降级保持，无新持久结构。实际SQLite工作量红例转绿，源码57项、安装57项及安装语义/上下文28项、真实MCP20项和strict mypy通过。[同一815923条ready副本](reports/m58-followup-84-query-budget.md)安装版四类完整页与旧包一致，近期/历史/无答案约2.95–2.98秒、热门词约4.75秒；SDK→stdio整页一致。已补[新环境25阶段原生短验收](reports/dsh-candidate20-validation.md#core0112--preview21-隔离短验收)：9工具场景、失败锁定/重启只读恢复/设置/卸载后拒绝及454条追平通过，产物/审计/DB核对和清理完成；自己的独立安装窗口见上方。2秒反馈及正式质量/规模/时延仍未通过，旧Core0.1.11宿主保留，日用关闭。
@@ -62,15 +64,17 @@
 
 ## 系统结构
 
-当前交付为 Python 本地库、可信[本地 CLI](contracts/cli-v1.md)、可选 stdio MCP 及显式 dsh/pi SDK 适配。不同实例可读取同一配置和 SQLite 账本；核心没有独立守护服务或 HTTP 监听，dsh 预览复用宿主鉴权通道，日常宿主未启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP 默认十个只读工具，trusted-host 额外提供采集/批量操作、工作续接及只读 capture 回执查询；事实/经验接纳、恢复确认和保险库解锁均不作为模型工具开放。
+当前交付包含Python本地核心、独立loopback RPC记忆进程、可信[本地CLI](contracts/cli-v1.md)、可选stdio MCP与dsh/pi SDK适配。普通账本显式激活服务模式后，已支持客户端统一连接服务，普通Python直连被拒绝；未激活的库保留本地兼容路径。dsh预览复用宿主鉴权页面通道，日常宿主未启用。普通核心无第三方运行依赖；MCP、加密能力分别是可选依赖。MCP默认十个只读工具，trusted-host额外提供采集/批量操作、工作续接及只读capture回执查询；事实/经验接纳、恢复确认和保险库解锁均不作为模型工具开放。
 
 ```mermaid
 flowchart TB
-    Python[可信本机 Python 调用端] --> Runtime[MemoryRuntime 核心]
+    Python[兼容模式的可信 Python 调用端] --> Runtime[MemoryRuntime 核心]
     Python --> Candidates[CandidateWorkflow 显式任务与候选]
     Candidates --> Runtime
     Client[已配对 MCP 调用端] -->|stdio| MCP[mcp_server.py 协议适配]
-    MCP --> Runtime
+    MCP --> Service[独立记忆服务 / 后台维护]
+    Service --> Runtime
+    MCP -. 旧库兼容模式 .-> Runtime
     Runtime --> Auth[身份 / 契约 / 来源与状态检查]
     Auth --> Safety[safety.py 敏感分流]
     Safety --> Ledger[(memory.sqlite3 原文与安全投影)]

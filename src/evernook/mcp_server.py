@@ -259,14 +259,22 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
     return operations, host_context, restricted
 
 
-def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
+def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str = "recall",
                  backend: EmbeddingBackend | None = None, context_config: Path | None = None,
                  service_config: Path | None = None) -> Server[None]:
-    operations, host_context, restricted = build_operations(runtime, access, profile=profile,
-        backend=backend, context_config=context_config)
+    if runtime is None:
+        if service_config is None:
+            raise MemoryFailure("service_unavailable")
+        operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {}
+        host_context = None
+        restricted: set[str] = set()
+    else:
+        operations, host_context, restricted = build_operations(runtime, access, profile=profile,
+            backend=backend, context_config=context_config)
 
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        runtime.handshake(access)
+        if runtime is not None:
+            runtime.handshake(access)
         if service_config is not None:
             from .service import ServiceClient
             listing = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
@@ -278,7 +286,8 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
 
     async def call_tool(context: ServerRequestContext[None], params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
-            runtime.handshake(access)
+            if runtime is not None:
+                runtime.handshake(access)
             operation = operations.get(params.name)
             if operation is None and service_config is None:
                 if params.name in restricted and profile == "recall":
@@ -335,20 +344,25 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
 
 async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None,
                 context_config: Path | None = None, require_service: bool = False) -> None:
-    runtime = MemoryRuntime(config_path)
-    access = runtime.access_from_file(access_path)
-    backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
-    from .service import ENDPOINT
-    service_config = config_path if (runtime.root / ENDPOINT).exists() else None
-    if require_service and service_config is None:
-        raise MemoryFailure("service_unavailable")
-    if service_config is not None and (embedding_config is not None or context_config is not None):
-        from .service import ServiceClient
-        ServiceClient(service_config).call(access, "policy-match", {
-            "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
-            "context_config": str(context_config.resolve()) if context_config else None})
+    from .service import ENDPOINT, ServiceClient, client_access
+    from .runtime import _load
+    use_service = require_service or (config_path.parent / ENDPOINT).exists() or _load(config_path).get("service_mode")
+    if use_service:
+        runtime = None
+        access = client_access(config_path, access_path)
+        remote = ServiceClient(config_path)
+        remote.call(access, "status", {})
+        if embedding_config is not None or context_config is not None:
+            remote.call(access, "policy-match", {
+                "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
+                "context_config": str(context_config.resolve()) if context_config else None})
+        backend = None
+    else:
+        runtime = MemoryRuntime(config_path)
+        access = runtime.access_from_file(access_path)
+        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
     server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
-        service_config=service_config)
+        service_config=config_path if use_service else None)
     try:
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):
