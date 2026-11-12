@@ -19,3 +19,13 @@ stdio MCP 检测到服务发现文件后，通过服务执行既有参数模型�
 可信 CLI 的 manage、host-recovery、mark-important、change、purge-preview/purge、profile-read/profile-decide、candidate-list、fact-query/fact-decide、scheduler-trigger/status/session-end 和 status 通过同一服务执行，沿用逐次权限与来源/预览版本。其他旧CLI入口与直接Python调用的隔离留至#111。服务模式尚未构成日常切换。
 
 验证包括原CLI/MCP/服务36项，以及经服务重跑的原20项MCP契约。新增桥接5项与服务5项共10项通过，涵盖真实stdio与可信CLI、失败关闭、身份权限、断连取消、真实本地tokenizer输出及挂起worker取消回收。预算回归先在缺少传输预算时失败，再修复通过。所有相关6个文件strict mypy通过。尚未验收独立安装dsh或正式模型。
+
+## #109 服务维护生命周期
+
+显式提供 --maintenance-access 启用维护，要求独立可信身份具备 recall/maintain/accept。--maintenance-interval 为0.2至3600秒，默认5秒。--navigation-policy 可重复传入至多16个已保存策略；服务不自行创造导航策略或准入处理器。
+
+服务周期读取原持久化 scheduler 设置。全局暂停及前台活动阻止本轮后台；运行途中按单条词法来源、导航协作信号与阶段边界重新检查。停止不打断已开始提交的事务。每轮词法至多16条且软预算1秒，导航每策略至多16来源/1任务/0.5秒，沉淀沿用保存的来源、轮次及时间预算。未准入的自动发布保持原状态。该增量未启用语义模型的周期索引。
+
+status和MCP status提供service.independent与maintenance，显示tick数、错误码、跳过原因及最后一轮词法/导航/沉淀状态。实时积压仍可通过原scheduler-status读取。关闭全部客户端不停止后台，重启复用已保存进度和租约；正常关闭通知协作任务并等待退出。
+
+服务维护、原scheduler、原navigation共33项通过。加入真实导航策略后服务维护3项再次通过，4文件strict mypy通过。独立评审发现的运行中暂停缺口已补动态信号及回归。首次命令误写不存在的test_navigation模块，改为项目实际test_maintenance后通过，原失败输出保留。尚未验收物理重启或正式模型/规模。

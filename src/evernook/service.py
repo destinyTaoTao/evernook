@@ -24,7 +24,8 @@ from .service_transport import authenticate_client, authenticate_server, receive
 ENDPOINT = "memory-service.json"
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-decide", "candidate-list", "fact-query",
-    "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end"})
+    "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
+    "scheduler-pause", "scheduler-configure"})
 
 
 class ServiceClient:
@@ -139,7 +140,13 @@ class _Server(socketserver.ThreadingTCPServer):
         self.context_config = context_config
         self.embedding_config = embedding_config
         self.slots = threading.BoundedSemaphore(8)
+        self.stopping = threading.Event()
+        from .service_maintenance import ServiceMaintenance
+        self.maintenance: ServiceMaintenance | None = None
         super().__init__(("127.0.0.1", 0), _Handler)
+
+    def maintenance_status(self) -> dict[str, Any]:
+        return self.maintenance.snapshot() if self.maintenance else {"enabled": False}
 
     def process_request(self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any) -> None:
         if not self.slots.acquire(blocking=False):
@@ -177,6 +184,9 @@ class _Handler(socketserver.BaseRequestHandler):
             done = threading.Event()
             def monitor() -> None:
                 while not done.wait(0.05):
+                    if server.stopping.is_set():
+                        cancel.set()
+                        return
                     try:
                         readable, _, _ = select.select([self.request], [], [], 0)
                         if readable and not self.request.recv(1, socket.MSG_PEEK):
@@ -193,6 +203,12 @@ class _Handler(socketserver.BaseRequestHandler):
             finally:
                 done.set()
                 watcher.join()
+            is_status = request.get("operation") == "status" or (
+                request.get("operation") == "mcp" and request.get("arguments", {}).get("name") == "evernook_v1_status")
+            if is_status and isinstance(result, dict):
+                result["service"] = {"independent": True, "maintenance": server.maintenance_status()}
+                if isinstance(result.get("processing"), dict):
+                    result["processing"]["consumer_running"] = server.maintenance is not None
             if is_dataclass(result) and not isinstance(result, type):
                 result = asdict(result)
             response: dict[str, object] = {"version": 1, "ok": True, "result": result}
@@ -208,7 +224,9 @@ class _Handler(socketserver.BaseRequestHandler):
             pass  # Commit may have completed. Stable source IDs allow receipt recovery.
 
 
-def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None) -> None:
+def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None,
+          maintenance_access: Path | None = None, maintenance_interval: float = 5,
+          navigation_policies: tuple[str, ...] = ()) -> None:
     runtime = MemoryRuntime(config)
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
@@ -224,9 +242,20 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
         try:
             key = secrets.token_bytes(32)
             with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config) as server:
+                if maintenance_access is not None:
+                    from .service_maintenance import ServiceMaintenance
+                    server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
+                        navigation_policies, server.stopping)
                 _atomic_json(runtime.root / ENDPOINT,
                     {"version": 1, "port": server.server_address[1], "key": key.hex()})
-                server.serve_forever(poll_interval=0.2)
+                if server.maintenance:
+                    server.maintenance.thread.start()
+                try:
+                    server.serve_forever(poll_interval=0.2)
+                finally:
+                    server.stopping.set()
+                    if server.maintenance:
+                        server.maintenance.thread.join()
         finally:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
@@ -237,9 +266,14 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--context-config", type=Path)
     parser.add_argument("--embedding-config", type=Path)
+    parser.add_argument("--maintenance-access", type=Path)
+    parser.add_argument("--maintenance-interval", type=float, default=5)
+    parser.add_argument("--navigation-policy", action="append", default=[])
     try:
         args = parser.parse_args()
-        serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config)
+        serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config,
+            maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
+            navigation_policies=tuple(args.navigation_policy))
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:
