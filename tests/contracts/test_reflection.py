@@ -163,6 +163,76 @@ class ReflectionTests(unittest.TestCase):
         self.assertEqual({item['message_id'] for item in result['evidence']}, {earlier})
         self.assertNotIn(current, {item['message_id'] for item in model.calls[0]['evidence']})
 
+    def test_v2_answer_support_is_revalidated_and_rebased_to_original_span(self) -> None:
+        from evernook.reflection_protocol import translate
+        source = self.save('合成：钥匙放在银色盒子里。')
+        class Grounded(ScriptModel):
+            def turn(self, payload: dict[str, Any], **kwargs: Any) -> ModelTurn:
+                self.calls.append(payload)
+                ref = payload['evidence'][0]['evidence_id']
+                return ModelTurn(translate({'action': 'answer', 'value': '银色盒子', 'support': {ref: '钥匙放在银色盒子里。'}}, payload), 10, 10)
+        result = self.engine(Grounded([])).reflect(self.access, '钥匙', timeout=10)
+        self.assertEqual(result['state'], 'complete')
+        support = result['conclusions'][0]['support'][0]
+        self.assertEqual(support['message_id'], source)
+        self.assertEqual(support['start'], 3)
+        self.assertEqual(support['quote'], '钥匙放在银色盒子里。')
+        self.assertEqual(result['assessment']['decision'], 'answer')
+        forged = {'action': 'done', 'conclusions': [{'text': '金色盒子', 'evidence_ids': ['e1'], 'inference': True,
+            'support': [{'evidence_id': 'e1', 'quote': '钥匙在金色盒子'}]}], 'unknown': [], 'conflicts': [], 'clarification_required': False}
+        rejected = self.engine(ScriptModel([forged])).reflect(self.access, '钥匙', timeout=10)
+        self.assertEqual(rejected['conclusions'], [])
+        self.assertIn('reflection_invalid_support', rejected['degraded'])
+
+    def test_model_format_retry_is_explicit_metered_and_bounded_without_extra_tools(self) -> None:
+        self.save('合成：钥匙放在银色盒子里。')
+        done = {'action': 'done', 'conclusions': [], 'conflicts': [], 'unknown': ['合成未知'], 'clarification_required': True}
+        model = ScriptModel([{'action': 'model_retry', 'reason': 'invalid_json'}, done])
+        result = self.engine(model).reflect(self.access, '钥匙', timeout=10)
+        self.assertEqual(result['state'], 'complete')
+        self.assertEqual(result['usage']['model_rounds'], 2)
+        self.assertEqual(result['usage']['search_rounds'], 1)
+        self.assertEqual(result['usage']['input_tokens'], 20)
+        self.assertEqual(model.calls[1]['format_feedback'], 'invalid_json')
+        repeated = ScriptModel([{'action': 'model_retry', 'reason': 'invalid_support'}] * 4)
+        exhausted = self.engine(repeated).reflect(self.access, '钥匙', timeout=10)
+        self.assertIn('reflection_model_round_budget', exhausted['degraded'])
+        self.assertEqual(len(repeated.calls), 4)
+        self.assertEqual(exhausted['conclusions'], [])
+
+    def test_malformed_assessment_and_retry_types_fail_as_partial_memory_results(self) -> None:
+        self.save('合成：钥匙放在银色盒子里。')
+        base = {'action': 'done', 'conclusions': [], 'conflicts': [], 'unknown': [], 'clarification_required': True}
+        for extra in ({'decision': [], 'support': [], 'origin': 'model'}, {'decision': 'abstain', 'support': [], 'origin': {}}):
+            with self.subTest(assessment=extra):
+                result = self.engine(ScriptModel([{**base, 'assessment': extra}])).reflect(self.access, '钥匙', timeout=10)
+                self.assertEqual(result['state'], 'partial')
+                self.assertIn('reflection_invalid_action', result['degraded'])
+        result = self.engine(ScriptModel([{'action': 'model_retry', 'reason': []}])).reflect(self.access, '钥匙', timeout=10)
+        self.assertIn('reflection_invalid_action', result['degraded'])
+
+    def test_final_withdrawal_clears_v2_reason_support_and_assessment(self) -> None:
+        from unittest.mock import patch
+        from evernook.reflection_evidence import EvidenceTools
+        from evernook.reflection_protocol import translate
+        source = self.save('合成：旧相册的年份不记得了。')
+        confirm = self.save('合成：后来隐藏。')
+        class SupportedUnknown(ScriptModel):
+            def turn(self, payload: dict[str, Any], **kwargs: Any) -> ModelTurn:
+                return ModelTurn(translate({'action': 'abstain', 'support': {'e1': '旧相册的年份不记得了。'}}, payload), 10, 10)
+        original, calls = EvidenceTools.verify, 0
+        def changed(tools: EvidenceTools, check: Any) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                self.runtime.change(self.access, Change('hide-v2-proof', source, 1, 'suppress', confirm, 'synthetic'))
+            return original(tools, check)
+        with patch.object(EvidenceTools, 'verify', changed):
+            result = self.engine(SupportedUnknown([])).reflect(self.access, '旧相册', timeout=10)
+        self.assertIsNone(result['assessment'])
+        self.assertEqual(result['evidence'], [])
+        self.assertNotIn('年份不记得', str(result))
+
     def test_captured_reflection_outputs_remain_auditable_but_never_become_memory_evidence(self) -> None:
         from evernook.models import Capture
         from evernook.observations import source_contexts
@@ -272,7 +342,7 @@ class ReflectionTests(unittest.TestCase):
                     timer.start()
                 try:
                     with self.assertRaisesRegex(MemoryFailure, 'reflection_canceled' if canceled else 'reflection_timeout'):
-                        model.turn({}, input_tokens=100, output_tokens=10, timeout=2 if canceled else .15, cancel=event)
+                        model.turn({'question': 'synthetic', 'evidence': []}, input_tokens=100, output_tokens=10, timeout=2 if canceled else .15, cancel=event)
                 finally:
                     timer.cancel(); timer.join() if canceled else None
             self.assertIsNotNone(children[-1].poll())

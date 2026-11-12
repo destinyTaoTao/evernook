@@ -4,7 +4,7 @@
 
 Local-first, evidence-backed memory for agent harnesses and AI companions.
 
-Core0.1.19 adds optional [user-defined topic views](docs/contracts/topic-views-v1.md), with source-backed snapshots, invalidation before refresh and bounded background maintenance. Core0.1.20/preview.24 adds disabled-by-default [experimental local reflection](docs/contracts/reflection-v1.md). Its [model pilot failed](docs/reports/reflection-2026-11-13.md); #120 and daily model admission remain open.
+Core0.1.19 adds optional [user-defined topic views](docs/contracts/topic-views-v1.md), with source-backed snapshots, invalidation before refresh and bounded background maintenance. Core0.1.21/preview.24 provides disabled-by-default [experimental local reflection](docs/contracts/reflection-v1.md), with [stricter output and original quote support](docs/reports/reflection-quality-2026-11-13.md). Model quality is still insufficient; #120 and daily admission remain open.
 
 EverNook 是供 dsh、pi、桌宠等接入的外挂长期记忆模块：通过原生插件或 MCP 保存交流，并为聊天上下文提供相关记忆。目标是保存多年对话、逐字回取重要交代、跨会话保持连续性，并以可追溯、可修订的方式沉淀事实与回忆。最近一周应当更容易想起，几年前的重要事情也不能被近因排序淹没。
 

@@ -16,6 +16,7 @@ from .paths import external
 from .reflection import ModelTurn, ReflectionBudget, ReflectionEngine, ReflectionPolicy
 from .runtime import MemoryRuntime, _json, _load, _unique_object
 from .semantic import SemanticRecall
+from .reflection_protocol import build_messages, translate
 
 
 class LocalReflectionModel:
@@ -23,8 +24,12 @@ class LocalReflectionModel:
         self.assets = LocalQwen(node=node, transformers_dir=transformers_dir, model_dir=model_dir)
         self.worker = Path(__file__).with_name('reflection_worker.mjs')
         self.worker_digest = hashlib.sha256(self.worker.read_bytes()).hexdigest()
-        self.processor_version = 'qwen3-0.6b-reflection-experimental-v1:' + hashlib.sha256(
-            _json([self.assets.processor_version, self.worker_digest]).encode()).hexdigest()
+        self.protocol = Path(__file__).with_name('reflection_protocol.py')
+        self.protocol_digest = hashlib.sha256(self.protocol.read_bytes()).hexdigest()
+        self.json_stop = Path(__file__).with_name('reflection_json.mjs')
+        self.json_stop_digest = hashlib.sha256(self.json_stop.read_bytes()).hexdigest()
+        self.processor_version = 'qwen3-0.6b-reflection-experimental-v2:' + hashlib.sha256(
+            _json([self.assets.processor_version, self.worker_digest, self.protocol_digest, self.json_stop_digest]).encode()).hexdigest()
 
     def turn(self, payload: dict[str, Any], *, input_tokens: int, output_tokens: int,
              timeout: float, cancel: threading.Event | None) -> ModelTurn:
@@ -37,6 +42,7 @@ class LocalReflectionModel:
                 raise MemoryFailure('reflection_timeout')
             return left
         remaining()
+        messages = build_messages(payload)
         process: subprocess.Popen[bytes] | None = None
         try:
             for name, expected in _FILES.items():
@@ -47,10 +53,12 @@ class LocalReflectionModel:
                 with path.open('rb') as source:
                     if hashlib.file_digest(source, 'sha256').hexdigest() != expected:
                         raise MemoryFailure('reflection_integrity_mismatch')
-            if hashlib.sha256(self.worker.read_bytes()).hexdigest() != self.worker_digest:
+            if (hashlib.sha256(self.worker.read_bytes()).hexdigest() != self.worker_digest
+                    or hashlib.sha256(self.protocol.read_bytes()).hexdigest() != self.protocol_digest
+                    or hashlib.sha256(self.json_stop.read_bytes()).hexdigest() != self.json_stop_digest):
                 raise MemoryFailure('reflection_integrity_mismatch')
             request = _json({'model_dir': str(self.assets.model_dir), 'transformers_dir': str(self.assets.transformers_dir),
-                'payload': payload, 'input_tokens': input_tokens, 'output_tokens': output_tokens}).encode()
+                'messages': messages, 'input_tokens': input_tokens, 'output_tokens': output_tokens}).encode()
             if len(request) > 262144:
                 raise MemoryFailure('reflection_input_budget')
             remaining()
@@ -76,9 +84,13 @@ class LocalReflectionModel:
             try:
                 action = LocalQwen.parse_selection(value['action_json'])
             except MemoryFailure:
-                action = {'action': 'invalid_model_json'}
-            if not isinstance(action, dict):
-                action = {'action': 'invalid_model_json'}
+                action = {'action': 'model_retry', 'reason': 'invalid_json'}
+            else:
+                try:
+                    action = translate(action, payload)
+                except MemoryFailure as error:
+                    action = {'action': 'model_retry', 'reason': 'invalid_support' if error.code == 'reflection_invalid_support' else 'invalid_action'}
+            assert isinstance(action, dict)
             return ModelTurn(action, value['input_tokens'], value['output_tokens'])
         except (OSError, ValueError, TypeError, KeyError):
             raise MemoryFailure('reflection_model_unavailable') from None

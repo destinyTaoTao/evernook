@@ -94,20 +94,44 @@ class ReflectionEngine:
 
     @staticmethod
     def _done(action: dict[str, Any], tools: EvidenceTools) -> dict[str, Any]:
-        if set(action) != {'action', 'conclusions', 'conflicts', 'unknown', 'clarification_required'} or type(action['clarification_required']) is not bool:
+        fields = {'action', 'conclusions', 'conflicts', 'unknown', 'clarification_required'}
+        if set(action) not in (fields, fields | {'assessment'}) or type(action['clarification_required']) is not bool:
             raise MemoryFailure('reflection_invalid_action')
         ids = {item['evidence_id'] for item in tools.evidence}
+        def bind_support(rows: object) -> list[dict[str, Any]]:
+            from .reflection_protocol import support_spans
+            if (not isinstance(rows, list) or len(rows) > 16 or any(not isinstance(row, dict)
+                    or set(row) != {'evidence_id', 'quote'} or not isinstance(row['evidence_id'], str) for row in rows)):
+                raise MemoryFailure('reflection_invalid_support')
+            quotes = {row['evidence_id']: row['quote'] for row in rows}
+            if len(quotes) != len(rows):
+                raise MemoryFailure('reflection_invalid_support')
+            checked = support_spans(quotes, tools.evidence)
+            sources = {item['evidence_id']: item for item in tools.evidence}
+            bound = []
+            for row in checked:
+                source = sources[row['evidence_id']]
+                start = source['start'] + source['quote'].index(row['quote'])
+                bound.append({**row, 'message_id': source['message_id'], 'state_version': source['state_version'],
+                    'content_version': source['content_version'], 'start': start, 'end': start + len(row['quote'])})
+            return bound
         for name in ('conclusions', 'conflicts', 'unknown'):
             if not isinstance(action[name], list) or len(action[name]) > 16:
                 raise MemoryFailure('reflection_invalid_action')
         conclusions = []
         for value in action['conclusions']:
-            if (not isinstance(value, dict) or set(value) != {'text', 'evidence_ids', 'inference'} or value['inference'] is not True
+            if (not isinstance(value, dict) or set(value) not in ({'text', 'evidence_ids', 'inference'}, {'text', 'evidence_ids', 'inference', 'support'}) or value['inference'] is not True
                     or not isinstance(value['text'], str) or not 1 <= len(value['text']) <= 512 or credential_signal(value['text'])
                     or not isinstance(value['evidence_ids'], list) or not 1 <= len(value['evidence_ids']) <= 16
                     or any(not isinstance(item, str) or item not in ids for item in value['evidence_ids'])):
                 raise MemoryFailure('reflection_invalid_citation')
-            conclusions.append({**value, 'verification': 'unverified_model_inference'})
+            conclusion = {**value, 'verification': 'unverified_model_inference'}
+            if 'support' in value:
+                support = bind_support(value['support'])
+                if {row['evidence_id'] for row in support} != set(value['evidence_ids']):
+                    raise MemoryFailure('reflection_invalid_support')
+                conclusion['support'] = support
+            conclusions.append(conclusion)
         for conflict in action['conflicts']:
             if not isinstance(conflict, list) or any(not isinstance(item, str) or item not in ids for item in conflict) or len(set(conflict)) < 2:
                 raise MemoryFailure('reflection_invalid_citation')
@@ -115,8 +139,28 @@ class ReflectionEngine:
             raise MemoryFailure('reflection_invalid_action')
         if not tools.evidence and conclusions:
             raise MemoryFailure('reflection_invalid_citation')
+        assessment = None
+        if 'assessment' in action:
+            assessment = action['assessment']
+            if (not isinstance(assessment, dict) or set(assessment) != {'decision', 'support', 'origin'}
+                    or not isinstance(assessment['decision'], str) or not isinstance(assessment['origin'], str)
+                    or assessment['decision'] not in {'answer', 'abstain', 'clarify', 'refuse'}
+                    or assessment['origin'] not in {'model', 'finite_preference_guard', 'explicit_year_guard'}):
+                raise MemoryFailure('reflection_invalid_action')
+            bound = bind_support(assessment['support'])
+            decision = assessment['decision']
+            if (decision == 'answer' and (not conclusions or action['conflicts'] or action['clarification_required'])
+                    or decision == 'clarify' and (conclusions or not action['conflicts'] or not action['clarification_required'])
+                    or decision in {'abstain', 'refuse'} and (conclusions or action['conflicts'])):
+                raise MemoryFailure('reflection_invalid_action')
+            selected = {row['evidence_id'] for row in bound}
+            expected = ({ref for item in conclusions for ref in item['evidence_ids']} if decision == 'answer'
+                else {ref for group in action['conflicts'] for ref in group} if decision == 'clarify' else selected)
+            if selected != expected or decision in {'answer', 'clarify', 'refuse'} and not selected:
+                raise MemoryFailure('reflection_invalid_support')
+            assessment = {**assessment, 'support': bound}
         return {'conclusions': conclusions, 'conflicts': action['conflicts'], 'unknown': action['unknown'],
-            'clarification_required': action['clarification_required'] or bool(action['conflicts'])}
+            'clarification_required': action['clarification_required'] or bool(action['conflicts']), 'assessment': assessment}
 
     def reflect(self, access: Access, query: str, *, mode: str = 'deep', topic_view_ids: tuple[str, ...] = (),
                 timeout: float | None = None, cancel: threading.Event | None = None, current_input_id: str | None = None) -> dict[str, Any]:
@@ -138,7 +182,7 @@ class ReflectionEngine:
         usage: dict[str, Any] = {'search_rounds': 0, 'model_rounds': 0, 'tool_calls': 0, 'input_tokens': 0, 'output_tokens': 0}
         result: dict[str, Any] = {'kind': 'untrusted_memory_reflection', 'state': 'partial', 'mode': mode, 'processor': self.identity,
             'model_admission': 'experimental', 'conclusions': [], 'conflicts': [], 'unknown': ['Memory coverage and semantic support are not established.'],
-            'clarification_required': True, 'evidence': [], 'coverage': [], 'degraded': [], 'usage': usage,
+            'clarification_required': True, 'assessment': None, 'evidence': [], 'coverage': [], 'degraded': [], 'usage': usage,
             'budget': asdict(selected), 'cached': False, 'publication': 'temporary_only'}
         if credential_signal(query):
             result.update(state='protected_route_required', stop_reason='protected_route_required')
@@ -201,6 +245,8 @@ class ReflectionEngine:
                 payload = {'question': query, 'query_plan': asdict(plan), 'evidence': copy.deepcopy(tools.evidence),
                     'coverage': copy.deepcopy(tools.coverage), 'round': usage['model_rounds'] + 1,
                     'allowed_view_ids': list(topic_view_ids)}
+                if usage.get('rejected_turns'):
+                    payload['format_feedback'] = usage['rejected_turns'][-1]
                 usage['model_rounds'] += 1
                 usage['metering_incomplete'] = True
                 turn = self.model.turn(payload, input_tokens=min(left_input, 4096), output_tokens=min(left_output, 512), timeout=check(), cancel=cancel)
@@ -217,6 +263,9 @@ class ReflectionEngine:
                 if not isinstance(action, dict) or not isinstance(action.get('action'), str):
                     raise MemoryFailure('reflection_invalid_action')
                 name = action['action']
+                if name == 'model_retry' and set(action) == {'action', 'reason'} and isinstance(action['reason'], str) and action['reason'] in {'invalid_json', 'invalid_action', 'invalid_support'}:
+                    usage.setdefault('rejected_turns', []).append(action['reason'])
+                    continue
                 if name == 'done':
                     result.update(self._done(action, tools))
                     completed = True
@@ -247,20 +296,20 @@ class ReflectionEngine:
                 raise
             result['degraded'].append(error.code)
             result['stop_reason'] = error.code
-            result.update(conclusions=[], conflicts=[], unknown=['Memory coverage and semantic support are not established.'], clarification_required=True)
+            result.update(conclusions=[], conflicts=[], assessment=None, unknown=['Memory coverage and semantic support are not established.'], clarification_required=True)
         finally:
             self.slots.release()
         try:
             if not tools.verify(lambda: check(final=True)) or clock is not None and self.clock(lambda: check(final=True)) != clock:
                 result['degraded'].append('memory_changed_during_reflection')
-                result.update(state='partial', stop_reason='memory_changed_during_reflection', conclusions=[], conflicts=[],
+                result.update(state='partial', stop_reason='memory_changed_during_reflection', conclusions=[], conflicts=[], assessment=None,
                     unknown=['Memory coverage and semantic support are not established.'], clarification_required=True)
         except MemoryFailure as error:
             if error.code in {'unauthorized', 'permission_denied', 'incompatible_contract', 'service_required'}:
                 raise
             tools.evidence = []
             result['degraded'].append(error.code)
-            result.update(state='partial', stop_reason=error.code, conclusions=[], conflicts=[],
+            result.update(state='partial', stop_reason=error.code, conclusions=[], conflicts=[], assessment=None,
                 unknown=['Memory coverage and semantic support are not established.'], clarification_required=True)
         result['evidence'] = copy.deepcopy(tools.evidence)
         result['coverage'] = tools.coverage
