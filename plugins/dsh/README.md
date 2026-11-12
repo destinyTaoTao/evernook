@@ -17,7 +17,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.22.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.23.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'
@@ -29,7 +29,7 @@ dsh plugin --profile evernook add '<absolute path to tgz>'
 
 ## 独立记忆进程
 
-preview.22要求Core0.1.14的独立服务。先在独立后台进程启动，再配置或启动dsh。服务退出时请求明确失败；dsh退出仅关闭自己的客户端。
+preview.23要求Core0.1.16的独立服务。先在独立后台进程启动，再配置或启动dsh。服务退出时请求明确失败；dsh退出仅关闭自己的客户端。长输入完整交给Core选择有边界的检索意图，缺少显式意图时会显示query_coverage_limited；已配置embedding和维护身份的服务可在宿主外继续小批量向量化。可选安装Core的vector extra（sqlite-vec0.1.9）加速现有向量的全历史精确候选，不改变原始库及向量格式；未安装时使用Python完整扫描。真实模型与规模门槛仍需单独通过。
 
 ```powershell
 python -m evernook.service --config 'C:/external/memory/runtime.json' --maintenance-access 'C:/external/memory/mcp-access-background.json'

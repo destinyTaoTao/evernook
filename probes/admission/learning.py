@@ -38,7 +38,7 @@ def implementation_identity() -> dict[str, str]:
     return {"sha256": digest.hexdigest(), "package_root": str(package_root), "package_version": package_version}
 
 
-def collect(suite_root: Path, output: Path, embedding_config: Path | None = None) -> dict[str, Any]:
+def collect(suite_root: Path, output: Path, embedding_config: Path | None = None, *, lexical_ready: bool = False) -> dict[str, Any]:
     suite = load_suite(suite_root)
     backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
     root = external(output)
@@ -52,6 +52,8 @@ def collect(suite_root: Path, output: Path, embedding_config: Path | None = None
                      "budget": {"candidate_k": 10, "recall_timeout_seconds": 30, "max_fixture_sources": 64},
                      "policy_sha256": suite.manifest["policy_sha256"],
                      "implementation": implementation["sha256"]}
+    if lexical_ready:
+        configuration["budget"]["lexical_mode"] = "ready"  # Separate controlled strategy; never relabel old observations.
     observations = {"suite_hash": suite.suite_hash, "configuration": configuration, "rows": rows}
     for step in suite.steps:
         scenario = step["scenario"]
@@ -103,6 +105,9 @@ def collect(suite_root: Path, output: Path, embedding_config: Path | None = None
         aliases = {value: key for key, value in ids.items()}
         payload: dict[str, Any] = {}
         recall = SemanticRecall(runtime, backend)
+        if lexical_ready:
+            while runtime.lexical_status(access).pending_messages:
+                runtime.refresh_lexical(access)
         if backend is not None:
             status = recall.status(access)
             while status.pending_messages:
@@ -162,8 +167,9 @@ def main() -> int:
     parser.add_argument("--suite", type=Path, default=Path("eval/zh-learning-v1"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path)
+    parser.add_argument("--lexical-ready", action="store_true")
     args = parser.parse_args()
-    collect(args.suite, args.output, args.embedding_config)
+    collect(args.suite, args.output, args.embedding_config, lexical_ready=args.lexical_ready)
     return 0  # Successful collection does not assert successful quality or admission.
 
 

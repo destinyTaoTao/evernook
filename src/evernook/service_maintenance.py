@@ -10,13 +10,15 @@ from typing import Any
 
 from .maintenance import MaintenanceBudget, NavigationMaintenance
 from .models import Access, MemoryFailure
+from .embedding import LocalMiniLM
+from .semantic import SemanticRecall
 from .runtime import MemoryRuntime
 from .scheduler import ConsolidationScheduler
 
 
 class ServiceMaintenance:
     def __init__(self, runtime: MemoryRuntime, access_path: Path, interval: float,
-                 navigation_policies: tuple[str, ...], stopping: threading.Event):
+                 navigation_policies: tuple[str, ...], stopping: threading.Event, *, embedding_config: Path | None = None):
         if not math.isfinite(interval) or not 0.2 <= interval <= 3600:
             raise MemoryFailure("invalid_service_maintenance_interval")
         if len(navigation_policies) > 16 or len(set(navigation_policies)) != len(navigation_policies):
@@ -26,6 +28,7 @@ class ServiceMaintenance:
         for scope in ("recall", "maintain", "accept"):
             runtime._require_scope(access, scope, "service_maintenance")
         self.interval, self.policies, self.stopping = interval, navigation_policies, stopping
+        self.semantic = SemanticRecall(runtime, LocalMiniLM.from_file(embedding_config)) if embedding_config is not None else None
         self.lock = threading.Lock()
         self.state: dict[str, Any] = {"enabled": True, "ticks": 0, "error": None, "skipped": None}
         self.thread = threading.Thread(target=self.run, name="evernook-service-maintenance")
@@ -63,9 +66,20 @@ class ServiceMaintenance:
         reason = signal.reason()
         if reason:
             return {"skipped": reason}
+        semantic = None
+        if self.semantic is not None:
+            try:
+                semantic = asdict(self.semantic.refresh(access, limit=1, timeout=5, cancel=signal))
+            except MemoryFailure as failure:
+                reason = signal.reason()
+                if reason:
+                    return {"skipped": reason}
+                if failure.code in {"unauthorized", "scope_forbidden", "incompatible_contract", "service_required"}:
+                    raise
+                semantic = {"state": "unavailable", "error_code": failure.code}
         tick = scheduler.trigger(access, reason="idle")
         return {"skipped": tick.skipped, "scheduler": asdict(scheduler.status(access)),
-            "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status}
+            "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic}
 
     def run(self) -> None:
         while not self.stopping.wait(self.interval):
@@ -81,17 +95,22 @@ class ServiceMaintenance:
                 self.state["ticks"] += 1
 
 
-class _MaintenanceSignal:
+class _MaintenanceSignal(threading.Event):
     def __init__(self, scheduler: ConsolidationScheduler, access: Access, stopping: threading.Event):
+        super().__init__()
         self.scheduler, self.access, self.stopping = scheduler, access, stopping
 
     def reason(self) -> str | None:
         if self.stopping.is_set():
             return "stopping"
-        status = self.scheduler.status(self.access)
-        if status.paused:
-            return "paused"
-        return "foreground" if status.foreground_sessions else None
+        # This is polled during inference and SQLite progress. Avoid full backlog/index counts here.
+        self.scheduler.runtime._authorize(self.access)
+        with self.scheduler.runtime._connection() as db:
+            db.execute("BEGIN")
+            self.scheduler._schema(db)
+            if self.scheduler._settings(db).paused:
+                return "paused"
+            return "foreground" if self.scheduler._foreground_count(db) else None
 
     def is_set(self) -> bool:
         return self.reason() is not None

@@ -134,6 +134,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         parsed = model.model_validate_json(json.dumps(arguments["arguments"], ensure_ascii=False))
         if name == "evernook_v1_context" and context is not None:
             return context.build(access, **parsed.model_dump(), cancel=cancel)
+        if name == "evernook_v1_recall":
+            return SemanticRecall(runtime, backend).recall(access, **parsed.model_dump(), cancel=cancel)
         return invoke(parsed)
     if operation == "cli":
         from .cli import _execute, _parser
@@ -166,7 +168,9 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     if operation == "search":
         return runtime.search(access, **arguments)
     if operation == "recall":
-        return SemanticRecall(runtime).recall(access, **arguments, cancel=cancel)
+        from .embedding import LocalMiniLM
+        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
+        return SemanticRecall(runtime, backend).recall(access, **arguments, cancel=cancel)
     if operation == "status" and not arguments:
         return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "lexical": asdict(runtime.lexical_status(access))}
@@ -289,7 +293,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
-                        navigation_policies, server.stopping)
+                        navigation_policies, server.stopping, embedding_config=embedding_config)
                 if activate_owner is not None:
                     owner = runtime.access_from_file(activate_owner)
                     runtime._require_scope(owner, "admin", "activate_service")

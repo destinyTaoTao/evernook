@@ -144,11 +144,11 @@ export class MemoryClient {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
   readCapture(message_id: string) { return this.call<CaptureReceipt>('read_capture', { message_id }); }
-  recall(query: string, limit = 8, current_input_id?: string) {
-    return this.call<RecallResult>('recall', { query, limit, current_input_id });
+  recall(query: string, limit = 8, current_input_id?: string, query_intent?: string, signal?: AbortSignal) {
+    return this.call<RecallResult>('recall', { query, limit, current_input_id, query_intent }, signal);
   }
-  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal, current_input_id?: string) {
-    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal', current_input_id }, signal);
+  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal, current_input_id?: string, query_intent?: string) {
+    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal', current_input_id, query_intent }, signal);
   }
   read(message_id: string, signal?: AbortSignal) { return this.call<{ event: Event; receipt: Receipt & { content_version: number; received_at: string } }>('read', { message_id }, signal); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }

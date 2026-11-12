@@ -21,7 +21,7 @@ import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools';
 import TokenMeter from '@deepseek-ai/dsh-token-meter';
 import BasicCompaction, { type BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic';
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction';
-import { installMemory } from '../src/dsh.ts';
+import { installMemory as installMemorySource } from '../src/dsh.ts';
 import type { Config } from '../src/dsh.ts';
 import { createRecovery } from '../src/dsh-recovery.ts';
 import { runLocalCli } from '../src/local-cli.ts';
@@ -33,6 +33,9 @@ import { pathToFileURL } from 'node:url';
 const installWeb: typeof installWebSource = process.env.EVERNOOK_TEST_WEB_MODULE
   ? (await import(pathToFileURL(process.env.EVERNOOK_TEST_WEB_MODULE).href)).installWeb
   : installWebSource;
+const installMemory: typeof installMemorySource = process.env.EVERNOOK_TEST_NATIVE_MODULE
+  ? (await import(pathToFileURL(process.env.EVERNOOK_TEST_NATIVE_MODULE).href)).installMemory
+  : installMemorySource;
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 if (!python) throw new Error('Set EVERNOOK_TEST_PYTHON to the external dev interpreter');
@@ -934,7 +937,7 @@ test('target tokenizer budgets the real core payload and provider request with a
     const state = host.memory.status(handle.agent.session.id).context;
     assert.equal(state?.token_limit, 256);
     assert.equal((await host.memory.settings()).core.saved_policy?.recent_days, 1);
-    assert.ok(state?.degraded.includes('query_too_long'));
+    assert.ok(state?.degraded.includes('query_coverage_limited'));
     assert.equal(state?.complete, false);
     const latest = adapter.requests.at(-1)!;
     const memories = latest.messages.flatMap(message => message.content).filter(block => block.type === 'text')
@@ -942,6 +945,33 @@ test('target tokenizer budgets the real core payload and provider request with a
     assert.equal(memories.length, 1);
     assert.ok(memories.reduce((sum, block) => sum + host.target!.encode(block.text, { add_special_tokens: false }).ids.length, 0) <= 512);
   } finally { await handle.dispose(); await host.close(); }
+});
+
+test('long native input recalls its tail question through the independent service in both budget modes', async () => {
+  for (const budgeted of [false, true]) {
+    const adapter = new Synthetic();
+    const host = await boot(adapter, budgeted, false, { service: true });
+    const handle = await host.create('long-tail-history');
+    const ordinary = new MemoryClient(host.config);
+    await ordinary.connect();
+    try {
+      const receipt = await ordinary.call<{ message_id: string }>('remember', { event: {
+        source: { entry: 'dsh', session: 'synthetic-history', branch: 'main', event: 'tail-target' },
+        role: 'user', sequence: 1, occurred_at: '2019-01-01T00:00:00Z', completion: 'complete',
+        text: '合成：跨年约定是蓝色风铃。',
+      } });
+      handle.agent.followup(user('long-tail-input', '无关背景。'.repeat(100) + '跨年约定'));
+      await handle.agent.whenIdle();
+      assert.deepEqual(host.errors, []);
+      assert.equal(adapter.requests.length, 1);
+      const delivered = JSON.stringify(adapter.requests[0]);
+      assert.ok(delivered.includes(receipt.message_id));
+      assert.ok(delivered.includes('蓝色风铃'));
+      const originals = host.rows().filter(row => row.event.role === 'user');
+      assert.ok(originals.some(row => row.event.text === '无关背景。'.repeat(100) + '跨年约定'));
+      if (budgeted) assert.ok(host.memory.status(handle.agent.session.id).context?.degraded.includes('query_coverage_limited'));
+    } finally { await ordinary.close(); await handle.dispose(); await host.close(); }
+  }
 });
 
 test('budgeted native provider receives core persona profile facts and important words as data', async () => {

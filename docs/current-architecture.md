@@ -1,5 +1,7 @@
 # 当前实现与架构图
 
+> 2026-11-13长期召回增量：Core0.1.16复用现有向量表执行全历史精确候选，可选sqlite-vec0.1.9本机C标量加速，无扩展时Python全扫描；先过滤控制/时间/版本并按来源去重，再截取候选。query_intent贯穿Core、context、MCP/service和dsh；长输入的有界尾部计划明确报告覆盖不足。配置embedding和维护身份后，独立服务会小批量向量化并对前台/暂停/退出让行。见[契约](contracts/long-term-recall-v1.md)及[决定](adr/0015-exact-history-candidates-and-independent-query-intent.md)。#121冻结评测已有真实失败基线，新的功能验证不代替#81/#84质量/规模准入。
+
 > 2026-11-12至13日独立服务增量：Core0.1.15已提供认证本机进程、MCP/可信管理桥接、宿主外维护，以及普通账本持久服务模式和旧直写隔离。preview.22的dsh存取查与页面控制经实际安装验证，独立服务完成1801.68秒/1164回合故障循环。见[服务契约](contracts/service-v1.md)、[dsh闭环](reports/service-dsh-2026-11-12.md)及[切换验证](reports/service-cutover-2026-11-12.md)。日常准入、现有保险库迁移和真实模型/规模门禁分别保留。
 
 > **2026-11-08 Core0.1.12/preview.21独立长跑：** 新环境及pilot/formal各自的新profile、显式两项加速，完成[目标1800秒、实际1810.004秒/181回合窗口](reports/dsh-installed-stability.md#core0112--preview21独立窗口补验2026-11-08)。全部预定动作通过，业务错误/应用外网尝试0；7321采样、观察峰约709MiB，11次进程采样查询失败保留。906维护tick、词法/导航7020条收敛，DB/前后产物/61依赖边/生产审计通过，相关进程与37929/37930监听0。通用pending_jobs仍7020未处理；2秒反馈、正式质量/规模/时延、模型及物理OS门禁保持，日用关闭。

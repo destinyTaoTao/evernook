@@ -254,6 +254,23 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(result.semantic_scanned_chunks, 0)
         self.assertEqual(result.hits, ())
 
+    def test_long_input_with_intent_includes_history_and_coverage(self) -> None:
+        target = self.save("合成：喜欢辛辣")
+        backend = SyntheticEmbedding()
+        recall = SemanticRecall(self.runtime, backend)
+        recall.refresh(self.access)
+        result = ContextBuilder(self.runtime, recall, self.policy, self.counter).build(
+            self.access, "无关背景。" * 100 + "饮食偏好？", query_intent="饮食偏好",
+            as_of=self.as_of, mode="normal", timeout=20)
+        self.assertIn(target, result.payload)
+        self.assertIn('"kind":"explicit_intent"', result.payload)
+        self.assertNotIn("query_too_long", result.degraded)
+
+    def test_invalid_intent_is_rejected_before_the_token_counter_runs(self) -> None:
+        with patch.object(self.counter, "count", side_effect=AssertionError("tokenizer must not run")):
+            with self.assertRaisesRegex(MemoryFailure, "invalid_query_intent"):
+                self.build("合成正常输入", query_intent="x" * 257)
+
 
 if __name__ == "__main__":
     unittest.main()

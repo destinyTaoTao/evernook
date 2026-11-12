@@ -123,6 +123,9 @@ class Mark(Arguments):
 class Recall(Arguments):
     current_input_id: str | None = None
     query: str
+    query_intent: str | None = None
+    since: str | None = None
+    until: str | None = None
     limit: int = 10
     as_of: str | None = None
     recent_days: int = 7
@@ -141,6 +144,7 @@ class FactQuery(Arguments):
 class BuildContext(Arguments):
     current_input_id: str | None = None
     query: str
+    query_intent: str | None = None
     model_id: str
     max_tokens: int
     as_of: str
@@ -317,6 +321,15 @@ def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str 
                     try:
                         result = await anyio.to_thread.run_sync(
                             lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    finally:
+                        cancel.set()
+                elif params.name == "evernook_v1_recall":
+                    assert runtime is not None
+                    selected_recall = SemanticRecall(runtime, backend)
+                    cancel = threading.Event()
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            lambda: selected_recall.recall(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
                     finally:
                         cancel.set()
                 else:

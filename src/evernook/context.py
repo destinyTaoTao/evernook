@@ -17,6 +17,7 @@ from .models import Access, MemoryFailure, Receipt
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
 from .semantic import SemanticRecall
+from .query_plan import plan_query
 
 
 class TokenCounter(Protocol):
@@ -103,18 +104,23 @@ class ContextBuilder:
 
     def build(self, access: Access, query: str, *, as_of: str, mode: str, timeout: float,
               known_at: str | None = None, cancel: threading.Event | None = None,
-              query_omitted: bool = False, current_input_id: str | None = None) -> ContextBundle:
+              query_omitted: bool = False, current_input_id: str | None = None,
+              query_intent: str | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "context_build")
         if current_input_id is not None:
             _identifier(current_input_id)
         _time(as_of)
         if known_at is not None:
             _time(known_at)
-        if (not isinstance(query, str) or len(query) > 256 or not isinstance(mode, str) or mode not in {"normal", "deep"}
+        if (not isinstance(query, str) or len(query) > 1048576 or not isinstance(mode, str) or mode not in {"normal", "deep"}
                 or type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120):
             raise MemoryFailure("invalid_context_request")
         if credential_signal(query):
             raise MemoryFailure("protected_query")
+        if query.strip():
+            plan_query(query, query_intent)  # Validate the intent before any tokenizer/model call.
+        elif query_intent is not None:
+            raise MemoryFailure("invalid_query_intent")
         try:
             query.encode("utf-8", errors="strict")
         except UnicodeError:
@@ -262,11 +268,13 @@ class ContextBuilder:
             if query.strip():
                 recalled = self.recall.recall(access, query, limit=32, as_of=as_of,
                     recent_days=self.policy.recent_days, recent_target_chars=self.policy.recent_target_chars,
-                    timeout=budget(), cancel=cancel, current_input_id=current_input_id)
+                    timeout=budget(), cancel=cancel, current_input_id=current_input_id, query_intent=query_intent)
                 degraded.extend(recalled.degraded)
                 coverage = {"lexical": asdict(recalled.lexical), "semantic": asdict(recalled.semantic),
                     "recent_since": recalled.recent_since, "recent_expanded": recalled.recent_expanded,
-                    "recent_window_limited": recalled.recent_window_limited, "semantic_scan_limited": recalled.semantic_scan_limited}
+                    "recent_window_limited": recalled.recent_window_limited, "semantic_scan_limited": recalled.semantic_scan_limited,
+                    "semantic_search_backend": recalled.semantic_search_backend,
+                    "query_plan": asdict(recalled.query_plan) if recalled.query_plan is not None else None}
                 pinned_sources = {reference[0] for item in items if item.kind == "important" for reference in item.references}
                 for hit in recalled.hits:
                     budget()

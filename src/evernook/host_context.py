@@ -54,7 +54,7 @@ class HostContext:
 
     def build(self, access: Access, query: str, *, model_id: str, max_tokens: int,
               as_of: str, mode: str, timeout: float, cancel: threading.Event | None = None,
-              current_input_id: str | None = None) -> ContextBundle:
+              current_input_id: str | None = None, query_intent: str | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "host_context_build")
         policy, counter = self._configured()
         counter.cancel = cancel
@@ -71,8 +71,8 @@ class HostContext:
                 ready = warmup.submit(scoped.count, "")
                 try:
                     bundle = ContextBuilder(self.runtime, self.recall, effective, scoped).build(
-                        access, "" if len(query) > 256 else query, as_of=as_of, mode=mode, timeout=timeout,
-                        query_omitted=len(query) > 256, cancel=cancel, current_input_id=current_input_id)
+                        access, query, as_of=as_of, mode=mode, timeout=timeout,
+                        cancel=cancel, current_input_id=current_input_id, query_intent=query_intent)
                     ready.result()
                     return bundle
                 finally:

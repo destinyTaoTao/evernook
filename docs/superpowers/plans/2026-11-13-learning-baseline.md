@@ -34,7 +34,7 @@ Interfaces
 - [x] 冻结合成跨年/偏好例外/否定反例/变化纠错/多跳/未知/来源控制/旧备份/注入语料。
 - [x] 实现加载和评分；运行正负控制测试及strict mypy。
 - [x] 实际执行独立raw基线，保存failed/missing和测量；审核冻结前案例及评分器，记录边界。
-- [ ] 按#121提交推送、更新spec和issue。
+- [x] 按#121提交推送、更新spec和issue（27dd736）。
 
 验证：新旧评测30项通过；mypy显式package bases及MYPYPATH=src;.检查3文件通过。报告docs/reports/learning-baseline-2026-11-13.md。
 
@@ -46,6 +46,27 @@ Final: fixed 实现身份从checkout切换实际import包 — 安装路径与字
 ## Task 2 — #112
 
 基于#121的纯同义、全历史位置、长输入和控制失效红例，修改semantic.py/host_context.py及必要服务入口。明确索引候选空间和覆盖，避免固定前缀永久不可见。不为通过而改变冻结语料或门槛。按证据选择向量候选实现，验证旧索引/重建/取消/并发和真实安装入口。
+
+实施分解（#121已冻结）：
+- 添加query_plan.py，原文完整校验；显式query_intent独立短句；未提供意图的长文本只选择有边界的尾部问题并明确query_coverage_limited，不再静默丢弃全部/截取开头。贯穿Core/context/HostContext/MCP/service/dsh兼容路径。
+- semantic既有BLOB全历史精确候选，撤销/来源版本/时间在topK之前过滤；取消和deadline由SQLite progress handler及Python每行检查控制。不再按接收顺序固定扫描前10000条。
+- 评估后采用可选vector extra的sqlite-vec==0.1.9本机C标量cosine加速，继续查询普通semantic_chunks_v1，不引入virtual table、第二份向量或远端服务。未安装时Python全扫描；安装/加载故障可诊断降级，保留字面路径。原始库/索引结构不变，卸载extra可回Python路径，无数据回滚。
+- 超过10000的前/中/后位置、未知时间、长输入显式意图、原文凭证保护、删除/抑制、换模型、旧索引、并发更正、取消/超时与native缺失回归。补C候选与Python exact相同的结果对照。
+- 配置embedding的服务维护线程补小批量向量化；refresh加入全程取消/截止与提交前检查，前台/暂停/退出不发布。普通语义失败单独记录，继续独立scheduler。
+- 使用冻结#121原语料实测并独立记录候选/上下文/宿主证据。10万/100万和完整轮次p95沿用#81/#84，不把小型内核或夹具时延当作准入。
+
+选型证据：仓库外evernook-112-vector-selection的10016×384合成向量内核，旧前缀只得1/5002位置、漏10004；Python完整扫描与sqlite-vec完整扫描均得三位置。各3次调用：Python完整约239–240ms，C标量约21–22ms。不是生产ledger JOIN、真实语义质量或规模验收。官方资料sqlite-vec Python与KNN scalar文档已核对，Context7本月额度耗尽后使用一手网站。新可选依赖的必要性/影响/回退如上，属于用户已授权的召回选型范围。
+
+实际10004来源/MiniLM全部建索引后，旧前缀同库漏末位、新exact可达末位；中位查询相似度.355低于既有.4，两者均漏。保留原始失败，随后补复用现有ready FTS的中文双字/英文词OR候选，先按来源去重再取100来源进入RRF，不改语义阈值。该新增组件单独独立复核，重复FTS行挤占预算/自增分问题已有RED→GREEN回归；每通道每来源只计一票。--lexical-ready是新独立策略观察，不补写旧基线。
+
+- [x] RED→GREEN：全历史/长输入/保护/控制/取消回归。
+- [x] 各入口接线及类型/相关契约验证。
+- [ ] 实测冻结对照、独立评审、逐票提交推送与tracker实况。
+
+Ruling: 选择现有BLOB的C/Python精确搜索，不新增ANN索引 — 位置内核已证明固定前缀漏检，C标量降低小样距离计算成本并沿用现有控制/备份/删除语义 — 代价是全历史线性成本，百万规模p95仍可能需要后续索引选型，不能颁发日常准入。
+
+Final: fixed #112独立复核的直连MCP取消、尾部空白、refresh提交前取消及语义错误阻断scheduler — 可复现问题分别有回归覆盖；新关键词重复行问题亦RED→GREEN，最终相关167 tests passed，strict mypy src/tests 122文件通过。
+验证：源码dsh服务4场景及长输入双预算场景通过；实际Core0.1.16/preview.23/固定打补丁rc.5宿主4场景通过。最终wheel53个Core代码/worker文件与源码/安装逐字节hash匹配，npm37文件匹配；安装服务无宿主时真实MiniLM向量化及长输入意图通过。10004来源真实位置全部索引，最终三位置3/3，原prefix仅1/3；小套件失败/缺失及质量/规模门禁保留。见docs/reports/long-term-recall-2026-11-13.md。
 
 ## Task 3 — #113
 

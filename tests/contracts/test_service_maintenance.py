@@ -16,6 +16,8 @@ from evernook import Event, MemoryRuntime, Source, initialize
 from evernook.scheduler import ConsolidationScheduler
 from evernook.service import ServiceClient
 from evernook.service_maintenance import ServiceMaintenance
+from evernook.semantic import SemanticRecall
+from test_semantic import SyntheticEmbedding
 from evernook.maintenance import NavigationMaintenance, NavigationPolicy
 
 
@@ -121,3 +123,37 @@ class ServiceMaintenanceTests(unittest.TestCase):
         self.assertEqual(indexing.call_count, 1)
         self.assertEqual(outcome["skipped"], "paused")
         self.assertEqual(self.scheduler.status(self.access).processed, 0)
+
+    def test_configured_embedding_is_maintained_without_a_host(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "semantic-idle", "main", "1"),
+            "user", 1, None, "complete", "合成：辛辣"))
+        backend = SyntheticEmbedding()
+        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+            maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
+                embedding_config=self.config.parent / "synthetic-embedding.json")
+        result = maintenance.tick()
+        self.assertEqual(result["semantic"]["state"], "ready")
+        self.assertEqual(SemanticRecall(self.runtime, backend).recall(self.access, "饮食偏好").hits[0].evidence.role, "user")
+
+    def test_foreground_arriving_during_embedding_cancels_publication(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "semantic-stop", "main", "1"),
+            "user", 1, None, "complete", "合成：辛辣"))
+        backend = SyntheticEmbedding()
+        backend.hook = lambda: self.scheduler.foreground(self.access, session="incoming", active=True, ttl_seconds=30)
+        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+            maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
+                embedding_config=self.config.parent / "synthetic-embedding.json")
+        self.assertEqual(maintenance.tick()["skipped"], "foreground")
+        self.assertEqual(SemanticRecall(self.runtime, backend).status(self.access).stored_vectors, 0)
+
+    def test_embedding_failure_does_not_starve_independent_consolidation(self) -> None:
+        self.runtime.submit(self.access, Event(Source("test", "semantic-error", "main", "1"),
+            "user", 1, None, "complete", "合成：辛辣"))
+        backend = SyntheticEmbedding()
+        backend.error = "embedding_timeout"
+        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+            maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
+                embedding_config=self.config.parent / "synthetic-embedding.json")
+        result = maintenance.tick()
+        self.assertEqual(result["semantic"]["error_code"], "embedding_timeout")
+        self.assertEqual(result["scheduler"]["processed"], 1)

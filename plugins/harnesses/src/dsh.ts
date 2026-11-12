@@ -368,7 +368,7 @@ export async function installMemory(ctx: Context, config: Config) {
       const section = await budgetedPayload(String(context.agent.session.id), input.text, input.receipt.message_id, context.signal);
       return section.text ? { ...result, contexts: [...result.contexts, section] } : result;
     }
-    const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32, input.receipt.message_id);
+    const recalled = await client.recall(input.text, 32, input.receipt.message_id, undefined, context.signal);
     context.signal?.throwIfAborted();
     const kept = [];
     let characters = 0;

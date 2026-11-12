@@ -6,10 +6,13 @@ from pathlib import Path
 import subprocess
 import sys
 import sqlite3
+import struct
+import math
 from contextlib import closing
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from evernook import Access, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
 
@@ -258,6 +261,154 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual(result.hits[0].evidence.message_id, target)
         self.assertIn("semantic_unavailable", result.degraded)
         self.assertEqual(result.semantic.state, "unavailable")
+
+    def test_full_history_candidate_beyond_ten_thousand_chunks_is_reachable(self) -> None:
+        self.backend.space = replace(self.backend.space, chunk_size=32, overlap=31)
+        self.workflow = SemanticRecall(self.runtime, self.backend)
+        text = "x" * 10040 + "合成终点"
+        target = self.save(text)
+        self.workflow.refresh(self.access, limit=1)
+        starts = list(range(0, len(text) - 31))
+        positions = {0: (1., 0., 0.), 5002: (0., 1., 0.), starts[-1]: (0., 0., 1.)}
+        with self.runtime._connection() as db:
+            db.executemany("INSERT OR REPLACE INTO semantic_chunks_v1 VALUES (?,?,?,?,?,?,?)", [
+                (self.backend.space.key, target, start, min(len(text), start + 32), 1, 1,
+                 struct.pack("<3f", *positions.get(start, (-1 / math.sqrt(3),) * 3))) for start in starts])
+            db.execute("UPDATE semantic_documents_v1 SET chunk_count=?", (len(starts),))
+        result = self.workflow.recall(self.access, "合成第三类查询", as_of="2026-10-30T00:00:00Z", recent_target_chars=1)
+        self.assertEqual(result.hits[0].evidence.message_id, target)
+        self.assertGreater(result.hits[0].evidence.spans[0].start, 9999)
+        self.assertFalse(result.semantic_scan_limited)
+        for position, vector in positions.items():
+            hits, scanned, limited, _ = self.workflow._semantic(self.access, vector, since=None, until=None, minimum=.4)
+            self.assertEqual(hits[0][0].spans[0].start, position)
+            self.assertEqual(scanned, len(starts))
+            self.assertFalse(limited)
+
+    def test_long_input_keeps_explicit_intent_and_checks_the_entire_original(self) -> None:
+        target = self.save("合成：辛辣的食物")
+        self.workflow.refresh(self.access)
+        result = self.workflow.recall(self.access, "irrelevant " * 100 + "最终问题：饮食偏好？", query_intent="饮食偏好")
+        self.assertEqual(result.hits[0].evidence.message_id, target)
+        calls = len(self.backend.calls)
+        with self.assertRaisesRegex(MemoryFailure, "protected_query"):
+            self.workflow.recall(self.access, "password=synthetic-secret " + "x" * 400, query_intent="饮食偏好")
+        self.assertEqual(len(self.backend.calls), calls)
+
+    def test_long_input_without_explicit_intent_discloses_bounded_tail_plan(self) -> None:
+        target = self.save("合成：辛辣的食物")
+        self.workflow.refresh(self.access)
+        result = self.workflow.recall(self.access, "无关背景。" * 100 + "真正的问题：饮食偏好？")
+        self.assertEqual(result.hits[0].evidence.message_id, target)
+        self.assertIn("query_coverage_limited", result.degraded)
+        assert result.query_plan is not None
+        self.assertEqual(result.query_plan.kind, "bounded_tail")
+
+    def test_optional_native_and_python_search_agree_without_a_second_index(self) -> None:
+        self.save("合成：辛辣")
+        self.save("合成：账单")
+        self.workflow.refresh(self.access)
+        native = self.workflow.recall(self.access, "饮食偏好")
+        with patch("evernook.vector_distance.importlib.import_module", side_effect=ImportError):
+            fallback = self.workflow.recall(self.access, "饮食偏好")
+        self.assertEqual(native.hits, fallback.hits)
+        self.assertEqual(fallback.semantic_search_backend, "python-exact")
+        self.assertEqual(native.semantic_scanned_chunks, fallback.semantic_scanned_chunks)
+        self.assertFalse(fallback.semantic_scan_limited)
+
+    def test_sql_search_deduplicates_source_chunks_before_candidate_limit(self) -> None:
+        first = self.save("辛辣" * 3300)
+        second = self.save("合成：辛辣")
+        while self.workflow.status(self.access).pending_messages:
+            self.workflow.refresh(self.access)
+        result = self.workflow.recall(self.access, "饮食偏好")
+        self.assertEqual({hit.evidence.message_id for hit in result.hits}, {first, second})
+
+    def test_sql_scan_rechecks_cancellation_and_preserves_its_error_code(self) -> None:
+        self.save("辛辣" * 3300)
+        while self.workflow.status(self.access).pending_messages:
+            self.workflow.refresh(self.access)
+        calls = 0
+        def check() -> float:
+            nonlocal calls
+            calls += 1
+            if calls > 12:
+                raise MemoryFailure("recall_canceled")
+            return 10.
+        for native in (True, False):
+            calls = 0
+            with patch("evernook.vector_distance.importlib.import_module", side_effect=ImportError) if not native else patch.dict("os.environ", {}):
+                with self.assertRaisesRegex(MemoryFailure, "recall_canceled"):
+                    self.workflow._semantic(self.access, (1., 0., 0.), since=None, until=None, minimum=.4, check=check)
+
+    def test_corrupt_vector_does_not_count_as_complete_no_matching_evidence(self) -> None:
+        self.save("合成：辛辣")
+        self.workflow.refresh(self.access)
+        with self.runtime._connection() as db:
+            db.execute("UPDATE semantic_chunks_v1 SET vector=?", (struct.pack("<3f", 0., 0., 0.),))
+        result = self.workflow.recall(self.access, "饮食偏好")
+        self.assertTrue(result.degraded)
+        self.assertEqual(result.evidence_state, "incomplete")
+
+    def test_explicit_time_focus_filters_before_top_k_but_unknown_year_keeps_global_opportunity(self) -> None:
+        old = self.save("合成：跨年承诺", "2019-01-01T00:00:00Z")
+        current = self.save("合成：跨年承诺", "2025-01-01T00:00:00Z")
+        unknown = self.save("合成：跨年承诺", None)
+        self.workflow.refresh(self.access)
+        focused = self.workflow.recall(self.access, "饮食偏好", since="2024-01-01T00:00:00Z", until="2026-01-01T00:00:00Z")
+        self.assertEqual({hit.evidence.message_id for hit in focused.hits}, {current})
+        unfocused = self.workflow.recall(self.access, "饮食偏好")
+        self.assertEqual({hit.evidence.message_id for hit in unfocused.hits}, {old, current, unknown})
+
+    def test_cancel_after_source_validation_prevents_small_batch_vector_or_failure_commit(self) -> None:
+        self.save("合成辛辣")
+        original_state = self.runtime._state
+        for unembeddable in (False, True):
+            canceled = threading.Event()
+            def stop_after_validation(db: sqlite3.Connection, message_id: str) -> object:
+                state = original_state(db, message_id)
+                canceled.set()
+                return state
+            self.backend.none_for = "合成辛辣" if unembeddable else None
+            with patch.object(self.runtime, "_state", side_effect=stop_after_validation):
+                with self.assertRaisesRegex(MemoryFailure, "semantic_refresh_canceled"):
+                    self.workflow.refresh(self.access, limit=1, cancel=canceled)
+            status = self.workflow.status(self.access)
+            self.assertEqual(status.stored_vectors, 0)
+            self.assertEqual(status.failed_chunks, 0)
+
+    def test_ready_keywords_retrieve_a_natural_question_below_the_semantic_threshold(self) -> None:
+        target = self.save("合成：我在银叶桥学会了独木舟。")
+        self.runtime.refresh_lexical(self.access)
+        without_model = SemanticRecall(self.runtime)
+        result = without_model.recall(self.access, "我在哪里学会水上划行？")
+        self.assertEqual(result.hits[0].evidence.message_id, target)
+        self.assertIn("keyword", result.hits[0].channels)
+        confirmation = self.save("合成：确认不再召回")
+        self.runtime.change(self.access, Change("keyword-hide", target, 1, "suppress", confirmation, "synthetic"))
+        self.assertEqual(without_model.recall(self.access, "我在哪里学会水上划行？").hits, ())
+
+    def test_keyword_channel_filters_time_before_top_k_and_ignores_question_stopwords(self) -> None:
+        old = self.save("合成：在银叶桥学会了独木舟。", "2019-01-01T00:00:00Z")
+        new = self.save("合成：在星湖学会了独木舟。", "2025-01-01T00:00:00Z")
+        self.runtime.refresh_lexical(self.access)
+        recall = SemanticRecall(self.runtime)
+        page = recall.recall(self.access, "我在哪里学会水上划行？", since="2024-01-01T00:00:00Z")
+        self.assertEqual({hit.evidence.message_id for hit in page.hits}, {new})
+        self.assertNotIn(old, [hit.evidence.message_id for hit in page.hits])
+        self.assertEqual(recall.recall(self.access, "我在哪里？").hits, ())
+
+    def test_duplicate_fts_rows_do_not_take_candidate_seats_or_add_rrf_votes(self) -> None:
+        first = self.save("合成：学会。")
+        second = self.save("合成：我曾在银叶桥旁的夏季训练营学会了独木舟。")
+        self.runtime.refresh_lexical(self.access)
+        with self.runtime._connection() as db:
+            db.executemany("INSERT INTO lexical(message_id,terms) SELECT message_id,terms FROM lexical WHERE message_id=? LIMIT 1", [(first,)] * 110)
+        self.assertEqual(self.runtime.lexical_status(self.access).state, "ready")
+        result = SemanticRecall(self.runtime).recall(self.access, "我在哪里学会水上划行？")
+        self.assertEqual({hit.evidence.message_id for hit in result.hits}, {first, second})
+        self.assertTrue(all(hit.channels.count("keyword") == 1 for hit in result.hits))
+        self.assertTrue(all(hit.score < .02 for hit in result.hits))
 
 
 if __name__ == "__main__":
