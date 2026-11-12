@@ -78,6 +78,9 @@ def source_contexts(db: sqlite3.Connection, spans: tuple[EvidenceSpan, ...], sta
                 or any(type(value) is not int for value in (span.start, span.end, span.state_version, span.content_version))
                 or span.start < 0 or span.end <= span.start or span.state_version < 1 or span.content_version < 1):
             raise MemoryFailure('invalid_observation_span')
+        from .runtime import _MEMORY_EVIDENCE
+        if not db.execute(f'SELECT 1 FROM messages WHERE id=? AND {_MEMORY_EVIDENCE}', (span.message_id,)).fetchone():
+            raise MemoryFailure('stale_observation_source')
         state = MemoryRuntime._state(db, span.message_id)
         stored = MemoryRuntime._stored(db.execute('SELECT event,receipt FROM messages WHERE id=?', (span.message_id,)).fetchone())
         event, receipt = stored.event, stored.receipt

@@ -20,6 +20,7 @@ from .models import Access, Event, MemoryFailure, Source
 from .paths import external, verify_private_directory
 from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, pair_client
 from .semantic import SemanticRecall
+from .reflection import ReflectionEngine
 from .service_transport import authenticate_client, authenticate_server, receive_json, send_json
 
 ENDPOINT = "memory-service.json"
@@ -31,7 +32,7 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "episode-status", "episode-configure", "episode-propose", "episode-read",
     "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
     "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence",
-    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit"})
+    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -81,7 +82,7 @@ class ServiceClient:
 
 
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
-             context_config: Path | None = None, embedding_config: Path | None = None) -> object:
+             context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -128,7 +129,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             raise MemoryFailure("invalid_arguments")
         backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
         operations, context, restricted = build_operations(runtime, access, profile=arguments["profile"],
-            backend=backend, context_config=context_config)
+            backend=backend, context_config=context_config, reflector=reflector)
         if operation == "mcp-list":
             return {"tools": [{"name": name, "schema": model.model_json_schema(), "description": description}
                 for name, (model, _, description) in operations.items()]}
@@ -141,6 +142,10 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             return context.build(access, **parsed.model_dump(), cancel=cancel)
         if name == "evernook_v1_recall":
             return SemanticRecall(runtime, backend).recall(access, **parsed.model_dump(), cancel=cancel)
+        if name == 'evernook_v1_reflect' and reflector is not None:
+            value = parsed.model_dump()
+            value['topic_view_ids'] = tuple(value['topic_view_ids'])
+            return reflector.reflect(access, **value, cancel=cancel)
         return invoke(parsed)
     if operation == "cli":
         from .cli import _execute, _parser
@@ -148,6 +153,19 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or not isinstance(arguments["input"], dict)):
             raise MemoryFailure("operation_not_allowed")
         command = arguments["command"]
+        if command in {'reflect', 'reflect-configure'}:
+            if reflector is None:
+                raise MemoryFailure('reflection_model_unconfigured')
+            value = dict(arguments['input'])
+            if command == 'reflect-configure':
+                if value:
+                    raise MemoryFailure('invalid_arguments')
+                return reflector.configure(access)
+            if 'topic_view_ids' in value:
+                if not isinstance(value['topic_view_ids'], list):
+                    raise MemoryFailure('invalid_arguments')
+                value['topic_view_ids'] = tuple(value['topic_view_ids'])
+            return reflector.reflect(access, **value, cancel=cancel)
         parser_arguments = [command, "--config", str(runtime.root / "runtime.json"),
             "--access", str(runtime.root / "unused-service-access.json")]
         if command in ("read", "state"):
@@ -187,11 +205,17 @@ class _Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = False
 
     def __init__(self, runtime: MemoryRuntime, key: bytes, *,
-                 context_config: Path | None = None, embedding_config: Path | None = None):
+                 context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None):
         self.runtime = runtime
         self.key = key
         self.context_config = context_config
         self.embedding_config = embedding_config
+        self.reflector: ReflectionEngine | None = None
+        if reflection_config is not None:
+            from .embedding import LocalMiniLM
+            from .reflection_model import from_file
+            self.reflector = from_file(runtime, SemanticRecall(runtime,
+                LocalMiniLM.from_file(embedding_config) if embedding_config else None), reflection_config)
         self.slots = threading.BoundedSemaphore(8)
         self.stopping = threading.Event()
         from .service_maintenance import ServiceMaintenance
@@ -252,7 +276,7 @@ class _Handler(socketserver.BaseRequestHandler):
             watcher.start()
             try:
                 result = dispatch(server.runtime, request, cancel=cancel,
-                    context_config=server.context_config, embedding_config=server.embedding_config)
+                    context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector)
             finally:
                 done.set()
                 watcher.join()
@@ -277,7 +301,7 @@ class _Handler(socketserver.BaseRequestHandler):
             pass  # Commit may have completed. Stable source IDs allow receipt recovery.
 
 
-def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None,
+def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None) -> None:
     runtime = MemoryRuntime(config, service_owner=True)
@@ -294,7 +318,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
             raise MemoryFailure("service_already_running") from None
         try:
             key = secrets.token_bytes(32)
-            with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config) as server:
+            with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config) as server:
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
@@ -330,13 +354,14 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--context-config", type=Path)
     parser.add_argument("--embedding-config", type=Path)
+    parser.add_argument("--reflection-config", type=Path)
     parser.add_argument("--maintenance-access", type=Path)
     parser.add_argument("--maintenance-interval", type=float, default=5)
     parser.add_argument("--navigation-policy", action="append", default=[])
     parser.add_argument("--activate-owner", type=Path)
     try:
         args = parser.parse_args()
-        serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config,
+        serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner)
     except KeyboardInterrupt:

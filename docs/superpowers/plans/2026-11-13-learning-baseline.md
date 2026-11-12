@@ -124,3 +124,22 @@ Interfaces: TopicViewDefinition(title,purpose,query,entries,sessions,source_ids,
 Ruling: 初版主题视图由原始摘录与已审观察组成，使用分开的持久证据/控制水位保守失效 — #118候选单独检索6/21/6不能替代raw，先保证定义/引用/撤回/刷新闭环，再由#120提供显式推理 — 成本是无关新输入可能使视图待刷新，触发器写入成本需实测而不能继承#84准入。
 
 Final: fixed跨操作幂等指纹、传递处理器版本、显式编辑scope、真实transport嵌套结果及分词期撤回；两轮独立指定范围复核通过。最终联合115项、安装28项、固定rc.5实际dsh1场景、mypy134+probe及TS通过。views检索21/6/6、引用19/8/6未优于raw，保留失败/missing；未定位ResourceWarning和此前隔离复跑通过的维护/文件锁失败。见docs/reports/topic-views-2026-11-13.md。
+
+## Task 6 — #120
+
+新增reflection.py负责显式只读探索和预算、reflection_model.py/reflection_worker.mjs负责固定本地Qwen实验进程和真实token计量。复用既有模型文件hash/离线运行，不新增依赖、不继承抽取用途质量准入。服务启动可选--reflection-config，可信reflect-configure显式安装既有三水位机制；查询本身不建派生资产、不写画像/事实/人设。普通召回不会触发模型。
+
+Interfaces: ReflectionBudget(seconds,search_rounds,model_rounds,tool_calls,candidates,sources,source_chars,input_tokens,output_tokens)；ReflectionPolicy(normal,deep,concurrency,cache_entries,cache_ttl)分别配置；ReflectionEngine.reflect(access,query,mode='deep',topic_view_ids=(),timeout=None,cancel=None)。私密/凭证信号在任何向量和模型调用前分流。模型只能返回严格search/read/navigation/view/done动作，动作参数二次验证；不传入维护身份或通用工具dispatcher。导航只沿已发现普通来源的session邻近事件探索；每次工具前重新授权，原始回源和最后交付均验证span/版本/全局时钟/选中视图。
+
+结果含原始精确引用、模型综合（始终unverified inference，不以引用存在证明蕴涵）、冲突、未知/澄清、覆盖/停止原因和实际预算计量。模型无证据结论拒绝；回源限额与候选额分开；无答案要保留raw探索是否完成。cache默认关闭，可选仅进程内、绑定身份/输入/模式/策略/实际处理器及证据控制水位，返回前仍复核，绝不把结果自动回灌长期记忆。超时返回可验证证据与空推断，取消杀worker且不再调用模型。
+
+- [x] RED→GREEN：两轮关联、未知弃答、冲突、伪造来源/跨度、prompt injection越权、敏感预分流；时钟/来源在model/token/return期间变化及cache撤销。这里是合成backend机制测试，不是模型质量。
+- [x] 独立normal/deep预算、工具/候选/回源/模型轮次和token独立上限、并发、时间、取消资源回收；服务端配置可信、MCP/dsh只读闭环。
+- [x] 实际固定Qwen有限案例和冻结reflect arm独立记录；必要相关测试/独立复核、文档，默认关闭的已验证功能基础提交推送/GitHub同步随本次提交。不改gold/policy或把synthetic backend当模型质量。
+- [ ] 真实模型用途质量逐项通过；目前6例judgment1/5/27、存在模板复读，#120保持open，不发布日用反思准入。
+
+Ruling: 反思默认临时、模型综合标为未验证推断，只有精确原始引用通过机械校验 — 小型模型尚未用途准入且引用合法不等于语义支持 — 代价是仍需冻结模型评测决定是否能日常启用，服务配置与实验通过不能替代质量成绩。
+
+Ruling: 原始工具审计保留但结构化反思产物不能再作为普通记忆依据 — 用户同时要求保留tool原始记录与避免模型自增信，删除审计或把生成内容当用户原话均不合适 — 成本是普通召回增加captures主键过滤，任意未标注助手改写仍只能按非独立角色处理，性能/更广血缘不在本次声称内。
+
+Final: fixed最终unknown/coverage旧正文残留、MCP默认提前超时及105条反思tool_result回流挤占，均RED→GREEN并独立复核。功能组102项、增量组113项、安装41项、rc.5实际dsh1场景、mypy139+probe及TS通过；实际Qwen取消worker剩余0。冻结reflect11/7/774、judgment1/5/27，三条合法done只复读模板，不关闭#120质量验收。见docs/reports/reflection-2026-11-13.md。

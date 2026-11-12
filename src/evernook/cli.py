@@ -142,6 +142,8 @@ def _parser() -> Parser:
         ("observation-status", "Observation processing policy and progress"),
         ("observation-process", "Run a bounded observation maintenance batch"),
         ("observation-evidence", "Page through active source atoms including quarantined topics"),
+        ("reflect", "Explicit temporary read-only memory reasoning"),
+        ("reflect-configure", "Trusted opt-in to reflection freshness clocks"),
         ("topic-view-define", "Define or revise a user-selected memory topic"),
         ("topic-view-read", "Read only a currently usable topic snapshot"),
         ("topic-view-control", "Pause resume or delete a topic view"),
@@ -205,6 +207,9 @@ def _parser() -> Parser:
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
             command.add_argument("--extraction-config", type=Path, required=True)
+        if name in ('reflect', 'reflect-configure'):
+            command.add_argument('--reflection-config', type=Path)
+            command.add_argument('--embedding-config', type=Path)
         if name in ("read", "state"):
             command.add_argument("--message-id", required=True)
     return parser
@@ -284,6 +289,22 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         return configure_audit(args.config, retention_days=args.retention_days)
     runtime = service_runtime if service_runtime is not None else MemoryRuntime(args.config)
     access = service_access if service_access is not None else runtime.access_from_file(args.access)
+    if args.command in {'reflect', 'reflect-configure'}:
+        from .reflection_model import from_file
+        if args.reflection_config is None:
+            raise MemoryFailure('reflection_model_unconfigured')
+        backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
+        reflector = from_file(runtime, SemanticRecall(runtime, backend), args.reflection_config)
+        value = read_input()
+        if args.command == 'reflect-configure':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return reflector.configure(access)
+        if 'topic_view_ids' in value:
+            if not isinstance(value['topic_view_ids'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['topic_view_ids'] = tuple(value['topic_view_ids'])
+        return reflector.reflect(access, **value, cancel=service_cancel)
     if args.command == "manage":
         from .management import MemoryManagement
         management = MemoryManagement(runtime)
@@ -670,7 +691,7 @@ def main() -> None:
             value = {} if args.command == "status" else (
                 {"message_id": args.message_id} if args.command in ("read", "state") else _input())
             result = ServiceClient(args.config).call(access, "cli",
-                {"command": args.command, "input": value})
+                {"command": args.command, "input": value}, timeout=130 if args.command == "reflect" else 30)
         else:
             result = _execute(args)
         from .serialization import result_value

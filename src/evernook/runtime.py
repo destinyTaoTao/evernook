@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
+_MEMORY_EVIDENCE = """NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id
+    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'
+    AND json_extract(generated.manifest,'$.kind')='tool_result')"""
 _LEXICAL_CURRENT = f"""d.normalization_version={NORMALIZATION_IDENTITY}
       AND d.content_version=json_extract(messages.receipt,'$.content_version')"""
 _LEXICAL_VALID_ROWS = f"""FROM lexical_docs d
@@ -1122,8 +1125,10 @@ class MemoryRuntime:
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
                until: str | None = None, limit: int = 10, offset: int = 0, timeout: float = 30,
-               cancel: threading.Event | None = None, current_input_id: str | None = None) -> SearchPage:
+               cancel: threading.Event | None = None, current_input_id: str | None = None, memory_evidence_only: bool = False) -> SearchPage:
         self._require_scope(access, "recall", "search")
+        if type(memory_evidence_only) is not bool:
+            raise MemoryFailure('invalid_arguments')
         if current_input_id is not None:
             _identifier(current_input_id)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
@@ -1154,6 +1159,7 @@ class MemoryRuntime:
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
             raise MemoryFailure("invalid_time_range")
+        recallable = _RECALLABLE + (' AND ' + _MEMORY_EVIDENCE if memory_evidence_only else '')
         with self._connection(check=budget) as db:
             db.execute("BEGIN")
             from .lexical_checkpoint import search_state
@@ -1163,7 +1169,7 @@ class MemoryRuntime:
             else:
                 status, indexed_query = checkpoint.status, checkpoint.valid_query
             scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
+                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {recallable}
                   AND (? IS NULL OR messages.id<>?)"""
             base = "SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version " + scope
             order = " ORDER BY occurred,received,messages.id"

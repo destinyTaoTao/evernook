@@ -113,7 +113,8 @@ export class MemoryClient {
   }
   async call<T>(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     try {
-      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args }, { signal });
+      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args },
+        { signal, ...(name === 'reflect' ? { timeout: 130000 } : {}) });
       const payload = result.structuredContent as { ok?: boolean; result?: T; error?: { code?: string } } | undefined;
       if (!payload?.ok || result.isError) {
         const code = payload?.error?.code;

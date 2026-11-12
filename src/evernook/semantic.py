@@ -13,13 +13,13 @@ import time
 
 from .embedding import EmbeddingBackend, EmbeddingSpace, unit_vector
 from .models import Access, LexicalStatus, MemoryFailure, SearchHit, SearchPage, SearchSpan
-from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _time
+from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVIDENCE, _time
 from .query_plan import QueryPlan, plan_query
 from .vector_distance import distance_function
 from .lexical import NORMALIZATION_IDENTITY, matching_spans, query_expression
 
 
-_ELIGIBLE = f"{_RECALLABLE} AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
+_ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
 
 
 @dataclass(frozen=True)
@@ -411,7 +411,7 @@ class SemanticRecall:
         def literal(*, mode: str = "lexical", since: str | None = None, until: str | None = None) -> SearchPage:
             try:
                 return self.runtime.search(access, query, mode=mode, since=since, until=until,
-                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id)
+                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id, memory_evidence_only=True)
             except MemoryFailure as failure:
                 if failure.code in {"search_timeout", "search_canceled"}:
                     raise MemoryFailure(failure.code.replace("search_", "recall_", 1)) from None

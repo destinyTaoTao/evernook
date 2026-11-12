@@ -1,6 +1,6 @@
 {
   "name": "dsh-evernook",
-  "version": "0.1.0-preview.23",
+  "version": "0.1.0-preview.24",
   "private": true,
   "description": "Local evidence-backed memory management preview for dsh",
   "type": "module",

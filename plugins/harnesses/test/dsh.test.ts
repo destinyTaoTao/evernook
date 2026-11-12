@@ -82,7 +82,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { service?: boolean; consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { service?: boolean; reflectionConfig?: string; consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); owner=config.parent/'mcp-access-owner.json'; pair_client(config,client_id='synthetic-owner',entry='owner',access_path=owner); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -104,6 +104,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   }
   ctx.llm.registerAdapter(['synthetic'], adapter);
   const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  if (lifecycle.reflectionConfig) config.reflection = true;
   if (lifecycle.consolidation) {
     const access = join(root, 'memory/mcp-access-consolidation.json');
     execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime; from evernook.scheduler import ConsolidationScheduler; c=Path(sys.argv[1]); owner=c.parent/'mcp-access-owner.json'; a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=owner); pair_client(c,client_id='synthetic-consolidation',entry='dsh-background',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept')); ConsolidationScheduler(MemoryRuntime(c)).configure(a,paused=True,min_pending=1,idle_seconds=0,max_sources_per_run=4,max_runs_per_trigger=2,max_trigger_seconds=2)", paths.config, access], { cwd: checkout });
@@ -142,6 +143,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
     config.serviceRequired = true;
     const args = ['-B', '-m', 'evernook.service', '--config', config.config, '--activate-owner', join(root, 'memory/mcp-access-owner.json')];
     if (config.contextConfig) args.push('--context-config', config.contextConfig);
+    if (lifecycle.reflectionConfig) args.push('--reflection-config', lifecycle.reflectionConfig);
     service = childProcess.spawn(python!, args, { cwd: checkout, windowsHide: true,
       stdio: ['ignore', 'ignore', 'ignore'] });
     const deadline = Date.now() + 15000;
@@ -153,7 +155,18 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
       }
     }
   }
-  const memory = await installMemory(ctx, config);
+  let memory: Awaited<ReturnType<typeof installMemory>>;
+  try { memory = await installMemory(ctx, config); }
+  catch (error) {
+    try { await ctx.fiber.dispose(); }
+    finally {
+      if (service && service.exitCode === null) {
+        const stopped = new Promise<void>(resolve => service!.once('exit', () => resolve()));
+        service.kill(); await stopped;
+      }
+    }
+    throw error;
+  }
   const errors: unknown[] = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error); });
   function rows() {
@@ -175,6 +188,27 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('explicit local reflection tool returns verified original evidence to the actual dsh provider',
+    { skip: !process.env.EVERNOOK_TEST_REFLECTION_CONFIG, timeout: 120000 }, async t => {
+  const adapter = new Synthetic(); adapter.toolOnce = true; adapter.toolName = 'evernook_memory_reflect';
+  adapter.toolArguments = JSON.stringify({ query: '旧相册' });
+  const patched = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+  const host = await boot(adapter, false, patched, { service: true, reflectionConfig: process.env.EVERNOOK_TEST_REFLECTION_CONFIG,
+    streamMode: patched ? 'durable_tools' : 'buffered', toolPublication: patched });
+  t.after(() => host.close());
+  const seed = "import sys,json; from pathlib import Path; from dataclasses import asdict; from evernook import Event,Source; from evernook.service import ServiceClient,client_access; c=Path(sys.argv[1]); a=client_access(c,c.parent/'mcp-access-owner.json'); s=ServiceClient(c); r=s.call(a,'remember',{'event':asdict(Event(Source('owner','old','main','1'),'user',1,'2020-01-01T00:00:00Z','complete','合成：旧相册记录了银叶桥湿地的苍鹭。'))}); s.call(a,'cli',{'command':'reflect-configure','input':{}}); print(json.dumps(r))";
+  const receipt = JSON.parse(execFileSync(python!, ['-B', '-c', seed, host.config.config], { cwd: checkout, encoding: 'utf8' })) as { message_id: string };
+  const handle = await host.create('explicit-reflection'); t.after(() => handle.dispose());
+  handle.agent.followup(user('reflect-input', '请深入追忆旧相册里的共同经历。')); await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  assert.ok(adapter.requests.length >= 2);
+  const finalRequest = JSON.stringify(adapter.requests.at(-1));
+  assert.ok(finalRequest.includes('untrusted_memory_reflection'));
+  assert.ok(finalRequest.includes(receipt.message_id));
+  assert.ok(finalRequest.includes('旧相册记录了银叶桥湿地的苍鹭'));
+  assert.ok(finalRequest.includes('temporary_only'));
+});
 
 for (const budgeted of [false, true]) test(`current input receipt stays native and saved while only prior identical input is evidence (dsh ${budgeted})`, async t => {
   const adapter = new Synthetic();

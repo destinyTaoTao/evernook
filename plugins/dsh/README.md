@@ -4,6 +4,8 @@
 
 **预览目标：Node 24、dsh 0.2.1-rc.5、Windows本机。** 未声明其他版本兼容或正式日用准入；文本可靠流模式拒绝工具/reasoning/多文本块，buffered 模式整段保存后显示。原生工具屏障需显式启用下述独立宿主组合；#94/#81/#82继续适用。
 
+preview.24/Core0.1.20增加默认关闭的`reflection: true`实验选项，注册`evernook_memory_reflect`只读深查工具。服务需另行以可信`--reflection-config`配置固定本地模型，并用可信CLI`reflect-configure`显式启用水位；普通身份不能配置或选择模型路径。预算/配置与未通过的模型质量见[反思契约](https://github.com/destinyTaoTao/evernook/blob/codex/dsh-memory-preview/docs/contracts/reflection-v1.md)。普通每轮不会自动调用，结果是临时低信任推断，不能作为事实、画像或外部动作授权。durable_text会拒绝工具调用，实际深查应使用既有buffered或固定补丁durable_tools组合；这不改变原有发布门禁。
+
 ## 构建与隔离安装
 
 当前Web仍是字符兼容路径，尚未接入SDK的目标tokenizer/完整请求预算；见[#105](https://github.com/destinyTaoTao/evernook/issues/105)。preview.21起页面披露实际预算模式，未知状态不按目标模式展示。字符上限不是真实token预算，也不等于正式日用准入。
@@ -17,7 +19,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.23.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.24.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'

@@ -24,6 +24,7 @@ from .cli import Parser
 from .runtime import MemoryRuntime
 from .embedding import EmbeddingBackend, LocalMiniLM
 from .semantic import SemanticRecall
+from .reflection import ReflectionEngine
 from .facts import FactRegistry
 from .experience import ExperienceRegistry
 from .host_context import HostContext
@@ -134,6 +135,14 @@ class Recall(Arguments):
     timeout: float = 30
 
 
+class Reflect(Arguments):
+    query: str
+    current_input_id: str | None = None
+    mode: str = 'deep'
+    topic_view_ids: list[str] = []
+    timeout: float = 60
+
+
 class FactQuery(Arguments):
     subject_id: str
     predicate: str
@@ -194,7 +203,7 @@ def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: Sema
 
 
 def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
-                     backend: EmbeddingBackend | None = None, context_config: Path | None = None
+                     backend: EmbeddingBackend | None = None, context_config: Path | None = None, reflector: ReflectionEngine | None = None
                      ) -> tuple[dict[str, tuple[type[Arguments], Callable[[Any], object], str]], HostContext | None, set[str]]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
@@ -254,7 +263,11 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
     if profile == "trusted-host":
         operations["evernook_v1_read_capture"] = (Read, lambda args: _required(runtime.read_capture(access, args.message_id)),
             "Trusted host only: recheck a saved capture receipt and attachment integrity without exposing attachment contents. No execution or permission grant.")
-    recall_tools = {"evernook_v1_read_capture", "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
+    if reflector is not None:
+        operations['evernook_v1_reflect'] = (Reflect, lambda args: reflector.reflect(access,
+            query=args.query, mode=args.mode, topic_view_ids=tuple(args.topic_view_ids), timeout=args.timeout, current_input_id=args.current_input_id),
+            'Explicit experimental local memory reasoning with bounded read-only evidence exploration. Temporary unverified inference; no external tools, publication, persona or vault authority.')
+    recall_tools = {"evernook_v1_reflect","evernook_v1_read_capture", "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
                     "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience", "evernook_v1_context"}
     restricted = set(operations) - recall_tools
     if profile == "recall":
@@ -301,7 +314,7 @@ def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str 
             if service_config is not None:
                 from .service import ServiceClient
                 cancel = threading.Event()
-                requested_timeout = (params.arguments or {}).get("timeout", 30)
+                requested_timeout = (params.arguments or {}).get("timeout", 60 if params.name == 'evernook_v1_reflect' else 30)
                 transport_timeout = 40.0
                 if type(requested_timeout) in (int, float) and 0 < requested_timeout <= 120:
                     transport_timeout = max(30.0, float(requested_timeout)) + 10

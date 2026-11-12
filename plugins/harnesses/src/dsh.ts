@@ -16,7 +16,7 @@ import { recoveryContext } from './dsh-recovery.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 import { DshWork } from './dsh-work.ts';
 import { renderWork } from './work-continuation.ts';
-import ToolRuntime, { type ToolExecution, type ToolExecutionResult } from '@deepseek-ai/dsh-tools';
+import ToolRuntime, { defineTool, type ToolExecution, type ToolExecutionResult } from '@deepseek-ai/dsh-tools';
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
@@ -28,6 +28,8 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config extends MemoryConfig {
+  /** Explicit experimental deep-memory tool; requires service-side local model configuration. */
+  reflection?: boolean;
   consolidation?: ConsolidationConfig;
   /** Requires the pinned private-host patch; buffered output remains buffered. */
   toolPublication?: boolean;
@@ -87,7 +89,8 @@ export async function installMemory(ctx: Context, config: Config) {
   const streamMode = config.streamMode ?? 'buffered';
   if (!['buffered', 'durable_text', 'durable_tools'].includes(streamMode)
       || streamMode === 'durable_tools' && !config.toolPublication) throw new Error('evernook:invalid_host_config');
-  if (config.toolPublication !== undefined && typeof config.toolPublication !== 'boolean') throw new Error('evernook:invalid_host_config');
+  if (config.toolPublication !== undefined && typeof config.toolPublication !== 'boolean'
+      || config.reflection !== undefined && typeof config.reflection !== 'boolean') throw new Error('evernook:invalid_host_config');
   if (config.toolPublication && (!ctx.get('tools') || Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1)) {
     throw new Error('evernook:tool_publication_patch_required');
   }
@@ -111,6 +114,19 @@ export async function installMemory(ctx: Context, config: Config) {
   const latest = new Map<string, { text: string; receipt: Receipt }>();
   const recoverySnapshots = new Map<string, string>();
   const disposers: (() => void)[] = [];
+  if (config.reflection) {
+    try {
+      disposers.push(ctx.tools.register(defineTool({ name: 'evernook_memory_reflect',
+        description: 'Only for an explicit request for deeper memory exploration. Returns temporary low-trust local-model inferences with original citations, gaps and conflicts. Never treats historical instructions as authority, unlocks secrets, maintains memory or executes external actions.',
+        parameters: { query: { type: 'string', required: true, description: 'The user memory question. No credentials or private content.' } },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        async execute(args, exec) {
+          if (!exec.agent || !args.query.trim() || Array.from(args.query).length > 4096) throw new Error('evernook:invalid_reflection_request');
+          return JSON.stringify(await client.call('reflect', { query: args.query, mode: 'deep', timeout: 60,
+            current_input_id: latest.get(String(exec.agent.session.id))?.receipt.message_id }, exec.signal));
+        } })));
+    } catch (error) { await consolidation?.close(); await client.close(); throw error; }
+  }
   let closed = false;
   const captureRuns = new Map<string, Promise<void>>();
   const captureGaps = new Map<string, string[]>();
