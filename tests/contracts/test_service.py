@@ -104,7 +104,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(command('episode-configure', {'enabled': True}), {'enabled': True, 'publication': 'review_only'})
         ordinary = pair_client(self.config, client_id='ordinary', entry='ordinary',
             access_path=self.config.parent / 'mcp-access-ordinary.json', scopes=('capture', 'recall'))
-        for name in ('episode-configure', 'preference-update-configure'):
+        for name in ('episode-configure', 'preference-update-configure', 'observation-configure'):
             with self.subTest(command=name), self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
                 self.client.call(ordinary, 'cli', {'command': name, 'input': {'enabled': True}})
 

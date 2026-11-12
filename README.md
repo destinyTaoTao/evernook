@@ -20,6 +20,8 @@ Core0.1.12另优化[请求内元数据核对和有界候选回源](docs/reports/
 
 Core0.1.17增加[完整段落有限偏好处理](docs/contracts/automatic-preferences-v1.md)与[跨会话经历候选](docs/contracts/episodes-v1.md)：临时例外、否定和冲突独立处理，原文及精确依据保留，经历候选仅供审查。独立服务可信CLI与实际dsh下一轮验证见[实施记录](docs/reports/automatic-profile-2026-11-13.md)；默认未准入，日用及模型质量门禁继续保留。
 
+Core0.1.18提供[综合观察基础层](docs/contracts/observations-v1.md)：支持/反例与原始依据版本化，可信发布、撤回、拆分及显式导入重映射；可选后台生成有限偏好待审观察。完整模型综合、主题视图与反思继续单独验收。
+
 ## 我们希望做到什么
 
 - **原话留存**：原始文本先可靠落盘；重要交代保存原文、标点、数字和来源，摘要不替代原文。

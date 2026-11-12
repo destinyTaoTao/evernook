@@ -92,3 +92,19 @@ Final: fixed #113独立复核四项：逗号前临时限定、未解析否定、
 ## 后续任务
 
 #118综合观察、#119主题视图、#120显式反思分别补充具体实施步骤，复用已冻结分项和控制失效契约。
+
+## Task 4 — #118
+
+复用SQLite权威来源检查与持久候选租约，增加独立ObservationRegistry。观察是派生理解，不等于用户自述或已确认画像。默认生成候选；后台仅对已识别有限偏好按确定性槽聚合原始依据。自由归纳需可信review确认，不能用频次/置信度或来源中的指令提升权限。
+
+Files: 新建src/evernook/observations.py（事件/来源/增量决定及只读投影）、observation_processing.py（有界任务/规则构建）；tests/contracts/test_observations.py；cli.py/service.py/service_maintenance.py提供可信控制与独立进程维护；purge.py/archive.py/runtime_restore.py传播删除与恢复控制。新表均为可重建派生资产，默认不启用自动处理，停用不影响原始记录。
+
+Interfaces: ObservationDraft(topic_key,conclusion,support,counterevidence,category,valid_from,valid_until,processor_version,policy_version,inference)；propose(access,request_id,draft,expected_revision=0,operation='create',observation_id=None,parents=())形成候选；decide(access,request_id,observation_id,expected_revision,action,confirmation_id)可信发布/撤回；read返回当前状态和完整原始依据角色/发生及获知时间；related按结构化槽及独立词面相关性查找，不使用问答RRF， exact slot始终优先。来源跨度去重，重复原始event、候选及摘要不增加独立证据数。
+
+1. [x] RED→GREEN：来源/span/版本、反例不丢弃、重复与摘要回灌；create/merge/narrow/split/change/correction/withdraw版本语义；角色/有效及获知时间；风险确认。
+2. [x] RED→GREEN：来源失效时正文阻断、提交前撤销与取消回滚、持久幂等任务/租约崩溃重试、换版不复用旧任务结果；去重查找不被问答融合挤出。
+3. [x] 独立服务可选后台维护与可信CLI闭环；普通读取不获得维护权限；删除彻底清理派生正文、旧备份需当前来源重新生成与ID重映射，不假设丢ID可继续用。
+4. [x] 冻结套件独立observations arm候选审计、分项/对照、独立复核及必要相关验证；文档、逐票提交推送、GitHub同步随本票提交。未运行模型或尚缺分项仍保留missing和门禁。
+
+Ruling: 默认采用有限偏好review候选，其他有来源归纳沿可信审查 — 当前本地模型尚未质量准入，不能用一个通用自由生成入口代替事实安全和证据验证 — 成本是非偏好及语义推断仍需后续模型准入，候选层独立替代原始召回的冻结检索只有6/21/6，未声称学习质量已通过。
+Final: fixed 聚合删除任务不一致、64跨度溢出永久重试、32候选预算不一致及overflow split遗漏晚反例 — 四组RED→GREEN，独立复跑3+1通过。相关87项、最终观察22项、独立安装24项及安装租约/换版2项通过，mypy129+probe通过。冻结候选审计12/42/738，失败和missing保留；报告docs/reports/observations-2026-11-13.md。

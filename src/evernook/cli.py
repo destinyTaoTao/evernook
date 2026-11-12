@@ -131,6 +131,17 @@ def _parser() -> Parser:
         ("episode-read", "Read a source-validated episode candidate with provenance"),
         ("episode-configure", "Configure optional review-only episode candidates in background batches"),
         ("episode-status", "Read effective episode candidate policy"),
+        ("observation-propose", "Trusted source-backed derived observation candidate"),
+        ("observation-rebind", "Explicitly remap imported evidence to current raw IDs; review only"),
+        ("observation-read", "Trusted current observation and provenance"),
+        ("observation-decide", "Explicitly publish or withdraw an observation"),
+        ("observation-split", "Atomically split a reviewed observation"),
+        ("observation-related", "Maintenance deduplication independent of QA ranking"),
+        ("observation-query", "Read currently published observations for a topic"),
+        ("observation-configure", "Configure optional finite-rule review candidates"),
+        ("observation-status", "Observation processing policy and progress"),
+        ("observation-process", "Run a bounded observation maintenance batch"),
+        ("observation-evidence", "Page through active source atoms including quarantined topics"),
         ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
         ("preference-resolve", "Trusted user clarification as correction or real change"),
         ("preference-update-configure", "Narrow finite preference rules and explicitly admit their pinned identity"),
@@ -342,6 +353,68 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command.startswith('observation-'):
+        from .candidates import EvidenceSpan
+        from .observations import ObservationDraft, ObservationRegistry
+        from .observation_processing import ObservationProcessing
+        observations = ObservationRegistry(runtime)
+        value = read_input()
+        if args.command == 'observation-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return ObservationProcessing(runtime).status(access)
+        if args.command == 'observation-configure':
+            return ObservationProcessing(runtime).configure(access, **value)
+        if args.command == 'observation-process':
+            return ObservationProcessing(runtime).tick(access, **value, cancel=service_cancel)
+        import time
+        timeout = value.pop('timeout', 10)
+        if type(timeout) not in (int, float) or not 0 < timeout <= 120:
+            raise MemoryFailure('invalid_observation_budget')
+        deadline = time.monotonic() + float(timeout)
+        def observation_check() -> float:
+            if service_cancel is not None and service_cancel.is_set():
+                raise MemoryFailure('observation_canceled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MemoryFailure('observation_timeout')
+            return remaining
+        if args.command == 'observation-read':
+            return observations.read(access, **value, check=observation_check)
+        if args.command == 'observation-evidence':
+            return ObservationProcessing(runtime).evidence(access, **value, check=observation_check)
+        if args.command == 'observation-related':
+            return observations.related(access, **value, check=observation_check)
+        if args.command == 'observation-query':
+            return observations.query(access, **value, check=observation_check)
+        if args.command == 'observation-decide':
+            return observations.decide(access, **value, check=observation_check)
+        def observation_draft(data: Any) -> ObservationDraft:
+            if not isinstance(data, dict):
+                raise MemoryFailure('invalid_arguments')
+            data = dict(data)
+            for name in ('support', 'counterevidence'):
+                if not isinstance(data.get(name), list):
+                    raise MemoryFailure('invalid_arguments')
+                data[name] = tuple(EvidenceSpan(**span) for span in data[name])
+            return ObservationDraft(**data)
+        if args.command == 'observation-split':
+            if not isinstance(value.get('drafts'), list):
+                raise MemoryFailure('invalid_arguments')
+            value['drafts'] = tuple(observation_draft(draft) for draft in value['drafts'])
+            return observations.split(access, **value, check=observation_check)
+        value['draft'] = observation_draft(value.get('draft'))
+        if args.command == 'observation-rebind':
+            return observations.rebind(access, **value, check=observation_check)
+        if 'parents' in value:
+            if not isinstance(value['parents'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['parents'] = tuple(value['parents'])
+        if 'source_remap' in value:
+            if not isinstance(value['source_remap'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['source_remap'] = tuple(tuple(pair) for pair in value['source_remap'])
+        return observations.propose(access, **value, check=observation_check)
     if args.command.startswith('episode-'):
         from .episodes import Episodes
         episodes = Episodes(runtime)

@@ -108,6 +108,32 @@ class ServiceMaintenanceTests(unittest.TestCase):
             "arguments": {"session": "foreground", "active": False, "ttl_seconds": 10}})
         self.assertEqual(self.wait_processed(1)["processed"], 1)
 
+    def test_optional_observation_candidates_continue_in_service_without_host(self) -> None:
+        self.start()
+        self.client.call(self.access, 'cli', {'command': 'observation-configure', 'input': {'enabled': True}})
+        event = asdict(Event(Source('test', 'observation-first', 'main', '1'), 'user', 1, None, 'complete', '我喜欢摄影。'))
+        receipt = self.client.call(self.access, 'remember', {'event': event})
+        self.assertEqual(self.client.call(self.access, 'remember', {'event': event}), receipt)
+        self.client.call(self.access, 'remember', {'event': asdict(Event(Source('test', 'observation-second', 'main', '1'),
+            'user', 1, None, 'complete', '我不喜欢摄影。'))})
+        deadline = time.monotonic() + 15
+        while True:
+            status = self.client.call(self.access, 'cli', {'command': 'observation-status', 'input': {}})
+            if status['completed_runs'] >= 2:
+                break
+            if time.monotonic() > deadline:
+                self.fail('independent observation maintenance did not finish')
+            time.sleep(.1)
+        from evernook.automatic_preferences import PreferenceUpdates
+        key, _ = PreferenceUpdates._key_value('我喜欢摄影。', 'general_interest')
+        related = self.client.call(self.access, 'cli', {'command': 'observation-related', 'input': {'topic_key': key}})
+        row, = related['rows']
+        self.assertEqual((row['independent_support'], row['independent_counterevidence']), (1, 1))
+        self.assertEqual(row['revision'], 2)
+        self.assertEqual(row['state'], 'candidate')
+        published = self.client.call(self.access, 'cli', {'command': 'observation-query', 'input': {'topic_key': key}})
+        self.assertEqual(published['rows'], [])
+
     def test_pause_during_indexing_stops_remaining_sources_and_consolidation(self) -> None:
         for number in range(3):
             self.runtime.submit(self.access, Event(Source("test", "mid-tick", "main", str(number)),

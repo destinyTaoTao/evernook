@@ -28,7 +28,9 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
     "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state",
     "preference-update-status", "preference-update-configure", "preference-update-process", "preference-clarify", "preference-resolve",
-    "episode-status", "episode-configure", "episode-propose", "episode-read"})
+    "episode-status", "episode-configure", "episode-propose", "episode-read",
+    "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
+    "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:

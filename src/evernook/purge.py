@@ -136,6 +136,8 @@ class PurgeWorkflow:
 
     @staticmethod
     def _clean_derived(db: sqlite3.Connection, ids: tuple[str, ...]) -> None:
+        from .observations import remove_sources as remove_observation_sources
+        remove_observation_sources(db, ids)
         targets = set(ids)
         placeholders = ",".join("?" for _ in ids)
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='candidate_runs_v1'").fetchone():

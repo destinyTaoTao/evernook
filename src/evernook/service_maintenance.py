@@ -14,6 +14,7 @@ from .embedding import LocalMiniLM
 from .semantic import SemanticRecall
 from .runtime import MemoryRuntime
 from .scheduler import ConsolidationScheduler
+from .observation_processing import ObservationProcessing
 
 
 class ServiceMaintenance:
@@ -77,9 +78,20 @@ class ServiceMaintenance:
                 if failure.code in {"unauthorized", "scope_forbidden", "incompatible_contract", "service_required"}:
                     raise
                 semantic = {"state": "unavailable", "error_code": failure.code}
+        observations = None
+        try:
+            observations = ObservationProcessing(self.runtime).tick(access, limit=1, timeout=1, cancel=signal)
+        except MemoryFailure as failure:
+            reason = signal.reason()
+            if reason:
+                return {'skipped': reason}
+            if failure.code in {'unauthorized', 'permission_denied', 'incompatible_contract', 'service_required'}:
+                raise
+            observations = {'state': 'unavailable', 'error_code': failure.code}
         tick = scheduler.trigger(access, reason="idle")
         return {"skipped": tick.skipped, "scheduler": asdict(scheduler.status(access)),
-            "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic}
+            "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic,
+            "observations": observations}
 
     def run(self) -> None:
         while not self.stopping.wait(self.interval):
