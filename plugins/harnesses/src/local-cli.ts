@@ -14,7 +14,7 @@ export function runLocalCli(config: MemoryConfig, access: string, operation: Loc
   return new Promise((resolve, reject) => {
     const worker = label === 'consolidation';
     const child = spawn(config.python, ['-m', worker ? 'evernook.worker' : 'evernook.cli', operation,
-      '--config', config.config, '--access', access],
+      '--config', config.config, '--access', access, ...(config.serviceRequired ? ['--require-service'] : [])],
       { cwd: config.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
         env: worker ? { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } : process.env });
     const chunks: Buffer[] = [];

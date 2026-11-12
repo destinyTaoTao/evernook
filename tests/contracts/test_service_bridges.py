@@ -10,6 +10,9 @@ import sys
 import tempfile
 import time
 import unittest
+import argparse
+import io
+from types import SimpleNamespace
 import threading
 from typing import Any
 from unittest.mock import patch
@@ -51,6 +54,26 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
         if self.service.poll() is None:
             self.service.terminate()
         self.service.wait(timeout=15)
+
+    def test_required_cli_never_falls_back_if_discovery_file_disappears(self) -> None:
+        from evernook.cli import main
+        from evernook.models import MemoryFailure
+        args = argparse.Namespace(command="manage", config=self.config,
+            access=self.owner_path, require_service=True)
+        fake_runtime = SimpleNamespace(access_from_file=lambda path: self.access)
+        with (
+            patch("evernook.cli.Parser.parse_args", return_value=args),
+            patch("pathlib.Path.exists", side_effect=[True, False]),
+            patch("evernook.cli.MemoryRuntime", return_value=fake_runtime),
+            patch("evernook.cli._execute", return_value={}) as direct,
+            patch("evernook.cli._input", return_value={}),
+            patch("evernook.service.ServiceClient.call", side_effect=MemoryFailure("service_unavailable")),
+            patch("sys.stdout", SimpleNamespace(buffer=io.BytesIO())),
+        ):
+            with self.assertRaises(SystemExit) as stopped:
+                main()
+            self.assertEqual(stopped.exception.code, 1)
+            direct.assert_not_called()
 
     async def test_mcp_preserves_long_operation_budget_in_service_transport(self) -> None:
         from mcp import types

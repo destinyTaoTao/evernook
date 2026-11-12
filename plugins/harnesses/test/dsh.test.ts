@@ -27,6 +27,12 @@ import { createRecovery } from '../src/dsh-recovery.ts';
 import { runLocalCli } from '../src/local-cli.ts';
 import { Tokenizer } from '@huggingface/tokenizers';
 import { MemoryClient } from '../src/client.ts';
+import { installWeb as installWebSource } from '../src/dsh-web.ts';
+import { pathToFileURL } from 'node:url';
+
+const installWeb: typeof installWebSource = process.env.EVERNOOK_TEST_WEB_MODULE
+  ? (await import(pathToFileURL(process.env.EVERNOOK_TEST_WEB_MODULE).href)).installWeb
+  : installWebSource;
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 if (!python) throw new Error('Set EVERNOOK_TEST_PYTHON to the external dev interpreter');
@@ -73,7 +79,7 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { service?: boolean; consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
   const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
@@ -128,6 +134,22 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
       countRequest: request => counter.encode(JSON.stringify({ messages: request.messages, system: request.system, tools: request.tools }), { add_special_tokens: false }).ids.length };
     if (lifecycle.compaction) config.memoryBudget.memoryTokens = 2048;
   }
+  let service: childProcess.ChildProcess | undefined;
+  if (lifecycle.service) {
+    config.serviceRequired = true;
+    const args = ['-B', '-m', 'evernook.service', '--config', config.config];
+    if (config.contextConfig) args.push('--context-config', config.contextConfig);
+    service = childProcess.spawn(python!, args, { cwd: checkout, windowsHide: true,
+      stdio: ['ignore', 'ignore', 'ignore'] });
+    const deadline = Date.now() + 15000;
+    while (true) {
+      try { await readFile(join(root, 'memory/memory-service.json')); break; }
+      catch {
+        if (service.exitCode !== null || Date.now() > deadline) throw new Error('service readiness failed');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  }
   const memory = await installMemory(ctx, config);
   const errors: unknown[] = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error); });
@@ -138,7 +160,15 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   }
   return { root, ctx, memory, config, errors, rows, target,
     create: (session: string) => ctx.agents.create({ sessionId: SessionId(session), meta: { cwd: root, delegationDepth: 0 }, agentOptions: { provider: 'synthetic', model: 'local-test' } }),
-    async close() { await memory.close(); await ctx.fiber.dispose(); },
+    async close() {
+      try { await memory.close(); await ctx.fiber.dispose(); }
+      finally {
+        if (service && service.exitCode === null) {
+          const stopped = new Promise<void>(resolve => service!.once('exit', () => resolve()));
+          service.kill(); await stopped;
+        }
+      }
+    },
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
@@ -2095,4 +2125,93 @@ for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-supp
     assert.equal(adapter.requests.length, 1);
     assert.equal(effects, 1);
   } finally { release.resolve(); await resumed?.dispose(); await recovery.close(); await source.dispose(); await host.close(); }
+});
+
+test('independent service carries real dsh save recall search and survives adapter closure', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const reader = new MemoryClient(host.config); await reader.connect();
+  t.after(() => reader.close());
+  const first = await host.create('service-first'); t.after(() => first.dispose());
+  first.agent.followup(user('service-one', 'hello world'));
+  await first.agent.whenIdle();
+  const earlier = host.memory.status(SessionId('service-first')).latest_input!;
+  assert.equal((await reader.read(earlier.message_id)).event.text, 'hello world');
+  const found = await reader.call<{ hits: { message_id: string }[] }>('search',
+    { query: 'hello world', mode: 'exact' });
+  assert.ok(found.hits.some(hit => hit.message_id === earlier.message_id));
+  const second = await host.create('service-second'); t.after(() => second.dispose());
+  second.agent.followup(user('service-two', 'hello world'));
+  await second.agent.whenIdle();
+  const request = adapter.requests.at(-1)!;
+  assert.ok(JSON.stringify(request).includes(earlier.message_id));
+  assert.deepEqual(host.errors, []);
+  await host.memory.close();
+  const status = await reader.call<{ service: { independent: boolean } }>('status', {});
+  assert.equal(status.service.independent, true);
+  assert.equal((await reader.read(earlier.message_id)).event.text, 'hello world');
+});
+
+test('web service page corrects and suppresses evidence used by fresh native dsh sessions', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, false, true, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c',
+    "import sys;from pathlib import Path;from evernook import pair_client;pair_client(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))",
+    host.config.config, owner], { cwd: checkout });
+  host.ctx.provide('connection', { fetch: { register: () => () => {} } });
+  const web = await installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' });
+  t.after(() => web.close());
+  const reader = new MemoryClient({ ...host.config, serviceRequired: true }); await reader.connect();
+  t.after(() => reader.close());
+  const first = await host.create('web-service-first'); t.after(() => first.dispose());
+  first.agent.followup(user('web-service-one', 'hello original world')); await first.agent.whenIdle();
+  const originalPage = await reader.call<{ hits: { message_id: string; role: string }[] }>('search',
+    { query: 'hello original world', mode: 'exact' });
+  const original = { hits: originalPage.hits.filter(hit => hit.role === 'user') };
+  assert.equal(original.hits.length, 1);
+  let csrf = '';
+  async function page(input: Record<string, unknown>) {
+    const response = await web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+      method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+        'content-type': 'application/json', ...(csrf ? { 'x-evernook-csrf': csrf } : {}) },
+      body: JSON.stringify(input) }));
+    const body = await response.json() as Record<string, any>;
+    assert.equal(response.status, 200, JSON.stringify(body));
+    return body;
+  }
+  const bootstrap = await page({ action: 'bootstrap' }); csrf = bootstrap.csrf;
+  async function confirm(operation: Record<string, unknown>) {
+    const preview = await page({ action: 'preview', operation });
+    return page({ action: 'confirm', proposal_id: preview.result.proposal_id, operation });
+  }
+  await confirm({ kind: 'source_correct', message_id: original.hits[0].message_id, text: 'hello changed world' });
+  const corrected = await reader.call<{ hits: { message_id: string }[] }>('search',
+    { query: 'hello changed world', mode: 'exact' });
+  assert.equal(corrected.hits.length, 1);
+  const second = await host.create('web-service-second'); t.after(() => second.dispose());
+  second.agent.followup(user('web-service-two', 'hello changed world')); await second.agent.whenIdle();
+  assert.ok(JSON.stringify(adapter.requests.at(-1)).includes(corrected.hits[0].message_id));
+  await confirm({ kind: 'source_suppress', message_id: corrected.hits[0].message_id });
+  const third = await host.create('web-service-third'); t.after(() => third.dispose());
+  third.agent.followup(user('web-service-three', 'hello changed world')); await third.agent.whenIdle();
+  assert.ok(!JSON.stringify(adapter.requests.at(-1)).includes(corrected.hits[0].message_id));
+  assert.deepEqual(host.errors, []);
+});
+
+test('web service startup rejects an ordinary identity missing capture', async t => {
+  const host = await boot(new Synthetic(), false, false, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c',
+    "import sys;from pathlib import Path;from evernook import pair_client;c=Path(sys.argv[1]);pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]));pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=Path(sys.argv[3]),scopes=('recall',))",
+    host.config.config, owner, host.config.access], { cwd: checkout });
+  await assert.rejects(installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' }),
+    /invalid_maintenance_identity/);
 });

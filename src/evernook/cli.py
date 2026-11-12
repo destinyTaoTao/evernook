@@ -166,6 +166,7 @@ def _parser() -> Parser:
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
+        command.add_argument("--require-service", action="store_true")
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
@@ -508,7 +509,10 @@ def main() -> None:
     try:
         args = _parser().parse_args()
         from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient
-        if args.command in CLI_OPERATIONS and (args.config.parent / ENDPOINT).exists():
+        required = getattr(args, "require_service", False)
+        if required and args.command not in CLI_OPERATIONS:
+            raise MemoryFailure("service_unavailable")
+        if args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
             runtime = MemoryRuntime(args.config)
             access = runtime.access_from_file(args.access)
             value = {} if args.command == "status" else _input()

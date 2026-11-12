@@ -43,7 +43,7 @@ export async function installWeb(ctx: Context, config: Config) {
     throw new Error('evernook:incomplete_web_config');
   }
   const options: MemoryOptions = { python: config.python, config: config.config, access: config.access,
-    entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication };
+    entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication, serviceRequired: true };
   async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' = 'manage') {
     if (running.size >= 4) throw new Error('evernook:management_busy');
     const promise = runLocalCli(options, config.maintenanceAccess, operation, input,
@@ -60,9 +60,11 @@ export async function installWeb(ctx: Context, config: Config) {
       const actor = await ordinary.call<RecordValue>('status', {});
       const privileged = await runLocalCli(options, config.maintenanceAccess, 'status', {});
       const a = actor.capabilities, b = privileged.capabilities;
+      const ordinaryScopes = object(a) && Array.isArray(a.scopes) ? a.scopes : [];
       const scopes = object(b) && Array.isArray(b.scopes) ? b.scopes : [];
       if (!object(a) || !object(b) || a.client_id === b.client_id || !Array.isArray(a.scopes)
           || a.scopes.some(scope => !['capture', 'recall'].includes(scope)) || !Array.isArray(b.scopes)
+          || !['capture', 'recall'].every(scope => ordinaryScopes.includes(scope))
           || !['recall', 'maintain', 'accept'].every(scope => scopes.includes(scope))) {
         throw new Error('evernook:invalid_maintenance_identity');
       }

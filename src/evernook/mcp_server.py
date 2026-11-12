@@ -334,12 +334,14 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
 
 
 async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None,
-                context_config: Path | None = None) -> None:
+                context_config: Path | None = None, require_service: bool = False) -> None:
     runtime = MemoryRuntime(config_path)
     access = runtime.access_from_file(access_path)
     backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
     from .service import ENDPOINT
     service_config = config_path if (runtime.root / ENDPOINT).exists() else None
+    if require_service and service_config is None:
+        raise MemoryFailure("service_unavailable")
     if service_config is not None and (embedding_config is not None or context_config is not None):
         from .service import ServiceClient
         ServiceClient(service_config).call(access, "policy-match", {
@@ -370,6 +372,7 @@ def main() -> None:
     parser.add_argument("--access", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, help="Trusted local MiniLM candidate configuration; disabled if omitted")
     parser.add_argument("--context-config", type=Path, help="Trusted local context policy and target tokenizer configuration")
+    parser.add_argument("--require-service", action="store_true")
     parser.add_argument("--profile", choices=("recall", "trusted-host"), default="recall",
                         help="recall: query tools only (default); trusted-host: all ordinary tools")
     try:
@@ -379,7 +382,8 @@ def main() -> None:
         raise SystemExit(1) from None
     logging.disable(logging.CRITICAL)  # SDK validation/trace logs must not echo request payloads.
     try:
-        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config, arguments.context_config)
+        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config,
+            arguments.context_config, arguments.require_service)
     except MemoryFailure as error:
         sys.stderr.write(f"evernook:{error.code}\n")
         raise SystemExit(1) from None

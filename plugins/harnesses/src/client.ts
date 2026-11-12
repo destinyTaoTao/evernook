@@ -10,6 +10,7 @@ export interface MemoryConfig {
   embeddingConfig?: string;
   contextConfig?: string;
   cwd?: string;
+  serviceRequired?: boolean;
 }
 
 export interface Source { entry: string; session: string; branch: string; event: string }
@@ -99,6 +100,7 @@ export class MemoryClient {
         ...(config.contextConfig ? [config.contextConfig] : [])].every(isAbsolute)
         || !config.entry || config.entry.length > 256) throw new Error('evernook:invalid_host_config');
     const args = ['-m', 'evernook.mcp_server', '--config', config.config, '--access', config.access, '--profile', 'trusted-host'];
+    if (config.serviceRequired) args.push('--require-service');
     if (config.embeddingConfig) args.push('--embedding-config', config.embeddingConfig);
     if (config.contextConfig) args.push('--context-config', config.contextConfig);
     this.client = new Client({ name: 'evernook-trusted-native', version: '1.0.0' });

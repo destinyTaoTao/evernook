@@ -53,3 +53,4 @@ MemoryClient及runLocalCli统一服务模式，Web身份必须capture+recall。�
 - #108 complete，62a5608，原回归36项、原MCP经服务20项、服务/桥接10项通过，strict mypy6文件。评审长预算缺陷已按RED→GREEN修复。真实tokenizer context取消后子进程回收通过。
 - #109 已验证，服务维护/scheduler/navigation共33项、补导航配置后服务维护3项通过，strict mypy4文件。运行中暂停改为单来源/阶段/导航协作检查。语义模型周期索引留给#112。
 - Ruling，传输采用标准库loopback TCP并双方HMAC认证，固定本机地址和owner-only发现文件。相对命名管道减少Windows专用封装，沿用同账户恶意程序不隔离的产品边界。
+- #110 已验证，Python22项、源SDK/Web4场景、独立安装Core/Web在rc.5宿主3场景通过，49/37成员源码包实装相同，61依赖边与审计通过。CLI required发现文件竞态已RED→GREEN修复，安装和错误回执记录见service-dsh-2026-11-12.md。
