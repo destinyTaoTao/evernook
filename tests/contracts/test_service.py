@@ -11,7 +11,7 @@ import time
 import unittest
 from typing import Any
 
-from evernook import Access, Event, Source, initialize
+from evernook import Access, Event, MemoryRuntime, Source, initialize
 from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient, client_access
@@ -89,6 +89,38 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "unknown_service_operation"):
             self.client.call(self.access, "arbitrary-command", {"secret": "synthetic"})
         self.assertEqual(self.client.call(self.access, "status", {})["ledger"]["messages"], 0)
+
+    def test_model_status_is_trusted_nonsecret_and_distinguishes_configuration(self) -> None:
+        from types import SimpleNamespace
+        from evernook.service import dispatch
+        command = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
+        status = self.client.call(self.access, 'cli', command)
+        self.assertEqual(status['model_configuration'], {'embedding': 'not_configured',
+            'reflection': 'not_configured', 'speech': 'host_owned'})
+        ordinary = pair_client(self.config, client_id='ordinary-status', entry='ordinary-status',
+            access_path=self.config.parent / 'mcp-access-ordinary-status.json', scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.client.call(ordinary, 'cli', command)
+        class Remote:
+            processor_version = 'synthetic'
+            allowed_clients = frozenset({'synthetic'})
+            max_cost_micro_usd = 1
+            turn_input_tokens = 1
+            turn_output_tokens = 1
+            def reserve_cost(self, input_tokens: int, output_tokens: int) -> int:
+                return 1
+            def turn(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+        request = {'version': 1, 'access': asdict(self.access), 'operation': 'cli', 'arguments': command}
+        result = dispatch(MemoryRuntime(self.config), request, embedding_config=self.config.parent / 'synthetic-secret-path',
+            reflector=SimpleNamespace(model=Remote()))  # type: ignore[arg-type]
+        assert isinstance(result, dict)
+        self.assertEqual(result['model_configuration'], {'embedding': 'configured_local',
+            'reflection': 'configured_remote', 'speech': 'host_owned'})
+        self.assertNotIn('synthetic-secret-path', json.dumps(result))
+        local = dispatch(MemoryRuntime(self.config), request, reflector=SimpleNamespace(model=object()))  # type: ignore[arg-type]
+        assert isinstance(local, dict)
+        self.assertEqual(local['model_configuration']['reflection'], 'configured_local')
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows ACL regression')
     def test_real_acl_change_between_access_and_endpoint_checks_is_rejected(self) -> None:

@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 test('memory links use the confirmed profile page and re-read source on click', async () => {
-  let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
+  let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
   const windowListeners = new Map();
   const React = {
@@ -43,7 +43,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.action === 'private_open') return Response.json({ result: { requested: true } });
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
-      ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
+      ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
+        ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned' } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
@@ -95,11 +96,20 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnostics')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticPrivate: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerLocal')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticReflection: providerRemote')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticSpeech: providerHost')));
   assert.ok(calls.some(call => call.view === 'status'));
+  statusModelsAvailable = false;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerUnknown')));
+  statusModelsAvailable = true;
   statusAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.some(child => typeof child === 'string' && child.includes('diagnosticUnavailable'))));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerUnknown')));
   statusAvailable = true;
   find(tree, node => node.type === 'button' && node.children.includes('history')).props.onClick();
   await new Promise(resolve => setTimeout(resolve, 10));

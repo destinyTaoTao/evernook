@@ -232,8 +232,17 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         namespace = _parser().parse_args(parser_arguments)
         if command in ("recall", "manage") or command.startswith('topic-view-'):
             namespace.embedding_config = embedding_config
-        return _execute(namespace, input_value=arguments["input"],
+        result = _execute(namespace, input_value=arguments["input"],
             service_runtime=runtime, service_access=access, service_cancel=cancel)
+        if (command == 'manage' and arguments['input'] == {'action': 'read', 'view': 'status'}
+                and isinstance(result, dict)):
+            from .reflection import RemoteModel
+            reflection_model = reflector.model if reflector is not None else None
+            return {**result, 'model_configuration': {
+                'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
+                'reflection': 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
+                'speech': 'host_owned'}}
+        return result
     if operation == "remember":
         if set(arguments) != {"event"}:
             raise MemoryFailure("invalid_arguments")
