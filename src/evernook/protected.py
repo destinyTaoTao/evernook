@@ -40,6 +40,20 @@ class ProtectedInventoryPage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True)
+class ProtectedLinkInventoryItem:
+    message_id: str
+    inbox_id: str
+    object_id: str
+    state: str
+
+
+@dataclass(frozen=True)
+class ProtectedLinkInventoryPage:
+    links: tuple[ProtectedLinkInventoryItem, ...]
+    next_cursor: str | None
+
+
 def _write(path: Path, value: bytes) -> None:
     with path.open("xb") as output:
         output.write(value)
@@ -315,3 +329,69 @@ class ProtectedInbox:
             objects = tuple(self._receipt(row) for row in rows[:limit])
         self.runtime._require_scope(access, 'admin', 'protected_inventory')
         return ProtectedInventoryPage(objects, str(rows[limit - 1]['id']) if len(rows) > limit else None)
+
+    def inventory_links(self, access: Access, *, after: str | None = None, limit: int = 100) -> ProtectedLinkInventoryPage:
+        """Inspect ledger references against this inbox; other inboxes remain unverified."""
+        self.runtime._require_scope(access, 'admin', 'protected_link_inventory')
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MemoryFailure('invalid_page')
+        if after is not None:
+            try:
+                if str(UUID(after)) != after:
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise MemoryFailure('invalid_protected_id') from None
+        links: list[ProtectedLinkInventoryItem] = []
+        with self.runtime._connection() as core:
+            exists = core.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
+            rows = core.execute('''SELECT l.message_id,l.reference,m.source,m.fingerprint,m.receipt,m.event
+                FROM protected_links_v1 l LEFT JOIN messages m ON m.id=l.message_id
+                WHERE (? IS NULL OR l.message_id>?) ORDER BY l.message_id LIMIT ?''',
+                (after, after, limit + 1)).fetchall() if exists else []
+            with self._connection() as inbox:
+                for row in rows[:limit]:
+                    try:
+                        reference = json.loads(row['reference'], object_pairs_hook=_unique_object)
+                        if (not isinstance(reference, dict) or set(reference) !=
+                                {'inbox_id', 'object_id', 'version', 'key_id', 'envelope_sha256'}
+                                or type(reference['version']) is not int or reference['version'] != 1
+                                or str(UUID(reference['inbox_id'])) != reference['inbox_id']
+                                or str(UUID(reference['object_id'])) != reference['object_id']
+                                or str(UUID(row['message_id'])) != row['message_id']
+                                or row['source'] is None or row['fingerprint'] is None
+                                or row['receipt'] is None or row['event'] is None):
+                            raise ValueError()
+                        for key in ('key_id', 'envelope_sha256'):
+                            value = reference[key]
+                            if not isinstance(value, str) or len(value) != 64 or value != value.lower() or len(bytes.fromhex(value)) != 32:
+                                raise ValueError()
+                    except (TypeError, ValueError, KeyError, AttributeError):
+                        raise MemoryFailure('protected_object_corrupt') from None
+                    state = 'foreign_unverified'
+                    if reference['inbox_id'] == self.inbox_id:
+                        item = inbox.execute('SELECT * FROM objects WHERE id=?', (reference['object_id'],)).fetchone()
+                        if item is None:
+                            raise MemoryFailure('protected_link_unavailable')
+                        _, projection = self._verified(item)
+                        try:
+                            receipt = Receipt(**json.loads(row['receipt'], object_pairs_hook=_unique_object))
+                            if (receipt.message_id != row['message_id'] or receipt.status != 'projection_only'
+                                    or receipt.representation != 'projection' or receipt.original_saved is not False):
+                                raise ValueError()
+                        except (TypeError, ValueError, KeyError):
+                            raise MemoryFailure('protected_object_corrupt') from None
+                        if (self._reference(str(item['id']), str(item['envelope'])) != row['reference']
+                                or item['source'] != row['source']
+                                or _json(asdict(projection)) != row['event']
+                                or not hmac.compare_digest(bytes(item['fingerprint']), bytes(row['fingerprint']))):
+                            raise MemoryFailure('protected_link_unavailable')
+                        if item['state'] == 'protected_linked' and item['receipt'] == row['receipt']:
+                            state = 'linked_verified'
+                        elif item['state'] == 'protected_pending_link' and item['receipt'] is None:
+                            state = 'pending_acknowledgment'
+                        else:
+                            raise MemoryFailure('protected_link_unavailable')
+                    links.append(ProtectedLinkInventoryItem(str(row['message_id']), reference['inbox_id'],
+                                                            reference['object_id'], state))
+        self.runtime._require_scope(access, 'admin', 'protected_link_inventory')
+        return ProtectedLinkInventoryPage(tuple(links), str(rows[limit - 1]['message_id']) if len(rows) > limit else None)

@@ -108,6 +108,106 @@ class ProtectedTests(unittest.TestCase):
         page = self.inbox.inventory(self.access)
         self.assertEqual(page.objects[0].object_id, receipt.object_id)
 
+    def test_reverse_inventory_pages_local_and_foreign_links_without_plaintext(self) -> None:
+        local = self.inbox.submit(self.access, self.event)
+        foreign_inbox = initialize_protected_inbox(self.runtime, self.root / 'other-inbox',
+            self.root / 'other-keys', self.password)
+        foreign = foreign_inbox.submit(self.access, replace(self.event,
+            source=replace(self.event.source, event='foreign')))
+        assert local.message is not None and foreign.message is not None
+        first = self.inbox.inventory_links(self.access, limit=1)
+        self.assertIsNotNone(first.next_cursor)
+        second = self.inbox.inventory_links(self.access, after=first.next_cursor, limit=1)
+        self.assertIsNone(second.next_cursor)
+        states = {item.message_id: item.state for item in (*first.links, *second.links)}
+        self.assertEqual(states, {local.message.message_id: 'linked_verified',
+                                  foreign.message.message_id: 'foreign_unverified'})
+        self.assertNotIn('synthetic-protected-sentinel-123', json.dumps(asdict(first)))
+        ordinary_path = self.config.parent / 'mcp-access-ordinary.json'
+        pair_client(self.config, client_id='ordinary', entry='ordinary', access_path=ordinary_path,
+                    scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.inventory_links(self.runtime.access_from_file(ordinary_path))
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
+            self.inbox.inventory_links(self.access, after='bad')
+        for invalid_limit in (0, 101, True):
+            with self.subTest(invalid_limit=invalid_limit), self.assertRaisesRegex(MemoryFailure, 'invalid_page'):
+                self.inbox.inventory_links(self.access, limit=invalid_limit)
+
+    def test_reverse_inventory_reports_crash_window_and_rejects_missing_or_corrupt_object(self) -> None:
+        linked = self.inbox.submit(self.access, self.event)
+        assert linked.message is not None
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3', isolation_level=None)) as db:
+            db.execute("UPDATE objects SET state='protected_pending_link', receipt=NULL WHERE id=?", (linked.object_id,))
+        page = self.inbox.inventory_links(self.access)
+        self.assertEqual(page.links[0].state, 'pending_acknowledgment')
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3', isolation_level=None)) as db:
+            db.execute("UPDATE objects SET envelope='{}' WHERE id=?", (linked.object_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            self.inbox.inventory_links(self.access)
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3', isolation_level=None)) as db:
+            db.execute('DELETE FROM objects WHERE id=?', (linked.object_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_link_unavailable'):
+            self.inbox.inventory_links(self.access)
+
+    def test_reverse_inventory_cli_and_corrupt_reference(self) -> None:
+        linked = self.inbox.submit(self.access, self.event)
+        assert linked.message is not None
+        command = [sys.executable, '-B', '-m', 'evernook.cli', 'vault-links',
+            '--config', str(self.config), '--access', str(self.access_path),
+            '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys')]
+        result = subprocess.run(command, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload['result']['links'][0]['state'], 'linked_verified')
+        self.assertNotIn(b'synthetic-protected-sentinel-123', result.stdout + result.stderr)
+        with closing(sqlite3.connect(self.config.parent / 'memory.sqlite3', isolation_level=None)) as db:
+            db.execute("UPDATE protected_links_v1 SET reference='{}' WHERE message_id=?", (linked.message.message_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            self.inbox.inventory_links(self.access)
+
+    def test_reverse_inventory_rejects_changed_projection_and_receipt(self) -> None:
+        linked = self.inbox.submit(self.access, self.event)
+        assert linked.message is not None
+        with closing(sqlite3.connect(self.config.parent / 'memory.sqlite3', isolation_level=None)) as db:
+            original_event, original_receipt = db.execute('SELECT event,receipt FROM messages WHERE id=?',
+                (linked.message.message_id,)).fetchone()
+            value = json.loads(original_event)
+            value['text'] = '[PROTECTED:DIFFERENT]'
+            db.execute('UPDATE messages SET event=? WHERE id=?', (json.dumps(value), linked.message.message_id))
+            with self.assertRaisesRegex(MemoryFailure, 'protected_link_unavailable'):
+                self.inbox.inventory_links(self.access)
+            db.execute('UPDATE messages SET event=? WHERE id=?', (original_event, linked.message.message_id))
+            value = json.loads(original_receipt)
+            value['original_saved'] = True
+            db.execute('UPDATE messages SET receipt=? WHERE id=?', (json.dumps(value), linked.message.message_id))
+            with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+                self.inbox.inventory_links(self.access)
+
+    def test_reverse_inventory_detects_actual_crash_after_core_commit(self) -> None:
+        process = subprocess.run([sys.executable, str(Path(__file__).with_name('protected_worker.py')),
+            str(self.config), str(self.access_path), str(self.root / 'inbox'), str(self.root / 'keys'), 'after-core'],
+            capture_output=True, timeout=30)
+        self.assertEqual(process.returncode, 72, process.stderr)
+        page = self.inbox.inventory_links(self.access)
+        self.assertEqual(len(page.links), 1)
+        self.assertEqual(page.links[0].state, 'pending_acknowledgment')
+        self.assertNotIn('synthetic-crash-inbox-sentinel-123', json.dumps(asdict(page)))
+
+    def test_reverse_inventory_rechecks_admin_before_return(self) -> None:
+        self.inbox.submit(self.access, self.event)
+        check = self.runtime._require_scope
+        calls = 0
+        def revoke_before_return(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryFailure('permission_denied')
+            return check(*args, **kwargs)  # type: ignore[arg-type]
+        with patch.object(self.runtime, '_require_scope', side_effect=revoke_before_return):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.inbox.inventory_links(self.access)
+
     def test_locked_receive_is_durable_linked_idempotent_and_original_absent_from_all_ordinary_paths(self) -> None:
         receipt = self.inbox.submit(self.access, self.event)
         self.assertEqual(receipt.state, "protected_linked")
