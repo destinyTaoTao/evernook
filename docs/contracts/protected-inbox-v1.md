@@ -35,6 +35,11 @@ assert result.message is not None and not result.message.original_saved
 - `vault-init --config ... --access ... --inbox-dir ... --key-dir ...`：本地 TTY 隐藏输入并二次确认口令；管道、参数或环境变量不能提供口令。
 - `vault-receive` 使用同样的四个路径选项，UTF-8 stdin 接受完整 Event；只输出脱敏回执。此 stdin 传输是可信本地采集接口，不是主口令输入途径。
 - `vault-pending` 列出本入口的待关联对象，`vault-reconcile --object-id ...` 显式补齐关联。普通 CLI 不新增读取明文命令。
+- `vault-inventory --config ... --access ... --inbox-dir ... --key-dir ... [--limit 1..100] [--after <cursor>]`：切换前由管理员明确指定一个收件箱，逐页检查 pending 与 linked 对象。Python 可调用 `ProtectedInbox.inventory(access, limit=100, after=None)`；返回已验证对象的脱敏回执和下一页 cursor。只校验信封签名、绑定及 linked 账本引用，不载入口令或解密；任一页对象或关联损坏时整页失败。普通身份不可清点其他入口。返回前重新核对管理员权限。
+
+清点不枚举其他目录、未知或缺失的收件箱，也不检查普通账本中指向其他收件箱或缺失对象的反向引用；分页及两个数据库不是原子快照，必须停止写入并按完整迁移流程复核。签名有效不证明持有恢复材料或可以解密，回执不能作为启动服务、销毁或迁移完成的授权。
+
+Core 0.1.34（#152）在隔离合成库完成源码受保护收件箱及 CLI 24 项测试，非 editable wheel 上新增清点回归5项及 strict mypy 通过。首个新增回归在未实现接口时按预期失败；另以合成环境验证，即使恢复文件缺失，签名清点仍可成功，因此不能将它误当作可解密证明。清点会写入普通授权审计，不更改密文或关联；本次未访问用户保险库。
 
 路径必须显式配置，未改现有 runtime.json 或日常宿主行为。`MemoryRuntime.submit/submit_capture`、dsh/pi 的敏感自动分流尚未接入此可选收件箱；原有普通路径仍然拒存敏感原件。当前加密收件仅覆盖 Event 正文，未将原始流或附件加密归档，不能声称 T22 全部验收。
 

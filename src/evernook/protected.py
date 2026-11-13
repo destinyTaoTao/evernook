@@ -34,6 +34,12 @@ class ProtectedReceipt:
     encrypted_original_saved: bool = True
 
 
+@dataclass(frozen=True)
+class ProtectedInventoryPage:
+    objects: tuple[ProtectedReceipt, ...]
+    next_cursor: str | None
+
+
 def _write(path: Path, value: bytes) -> None:
     with path.open("xb") as output:
         output.write(value)
@@ -291,3 +297,21 @@ class ProtectedInbox:
             rows = db.execute("SELECT * FROM objects WHERE state='protected_pending_link' AND json_extract(source,'$.entry')=? ORDER BY id LIMIT ?",
                               (identity.entry, limit)).fetchall()
             return tuple(self._receipt(row) for row in rows)
+
+    def inventory(self, access: Access, *, after: str | None = None, limit: int = 100) -> ProtectedInventoryPage:
+        """Advisory metadata page for one explicitly bound inbox; never decrypts."""
+        self.runtime._require_scope(access, 'admin', 'protected_inventory')
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MemoryFailure('invalid_page')
+        if after is not None:
+            try:
+                if str(UUID(after)) != after:
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise MemoryFailure('invalid_protected_id') from None
+        with self._connection() as db:
+            rows = db.execute('SELECT * FROM objects WHERE (? IS NULL OR id>?) ORDER BY id LIMIT ?',
+                              (after, after, limit + 1)).fetchall()
+            objects = tuple(self._receipt(row) for row in rows[:limit])
+        self.runtime._require_scope(access, 'admin', 'protected_inventory')
+        return ProtectedInventoryPage(objects, str(rows[limit - 1]['id']) if len(rows) > limit else None)

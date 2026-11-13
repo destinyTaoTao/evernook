@@ -69,7 +69,7 @@ def _parser() -> Parser:
     audit_config = commands.add_parser("audit-configure", help="Configure audit log retention in days")
     audit_config.add_argument("--config", type=Path, required=True)
     audit_config.add_argument("--retention-days", type=int, required=True)
-    for name in ("vault-init", "vault-receive", "vault-pending", "vault-reconcile", "vault-show"):
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-reconcile", "vault-show"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
         vault.add_argument("--access", type=Path, required=True)
@@ -77,6 +77,9 @@ def _parser() -> Parser:
         vault.add_argument("--key-dir", type=Path, required=True)
         if name in ("vault-reconcile", "vault-show"):
             vault.add_argument("--object-id", required=True)
+        if name == "vault-inventory":
+            vault.add_argument("--after")
+            vault.add_argument("--limit", type=int, default=100)
         if name == "vault-show":
             vault.add_argument("--purpose", required=True)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
@@ -248,6 +251,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return show_local(inbox, access, args.object_id, args.purpose)
         if args.command == "vault-pending":
             return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}
+        if args.command == "vault-inventory":
+            return inbox.inventory(access, after=args.after, limit=args.limit)
         if args.command == "vault-reconcile":
             return inbox.reconcile(access, args.object_id)
         value = read_input()

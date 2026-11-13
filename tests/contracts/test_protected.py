@@ -37,6 +37,77 @@ class ProtectedTests(unittest.TestCase):
         self.event = Event(Source("synthetic", "session", "main", "1"), "user", 1, None,
                            "complete", "合成🙂\r\npassword=synthetic-protected-sentinel-123")
 
+    def test_admin_inventory_pages_verified_linked_and_pending_objects_without_plaintext(self) -> None:
+        linked = self.inbox.submit(self.access, self.event)
+        other_path = self.config.parent / 'mcp-access-other.json'
+        pair_client(self.config, client_id='other', entry='other', access_path=other_path,
+                    scopes=('capture', 'recall'))
+        other = self.runtime.access_from_file(other_path)
+        pending = self.inbox.stage(other, replace(self.event, source=Source('other', 's', 'main', '2')))
+        first = self.inbox.inventory(self.access, limit=1)
+        self.assertEqual(len(first.objects), 1)
+        self.assertIsNotNone(first.next_cursor)
+        second = self.inbox.inventory(self.access, after=first.next_cursor, limit=1)
+        self.assertIsNone(second.next_cursor)
+        self.assertEqual({item.object_id for item in (*first.objects, *second.objects)},
+                         {linked.object_id, pending.object_id})
+        self.assertEqual({item.state for item in (*first.objects, *second.objects)},
+                         {'protected_linked', 'protected_pending_link'})
+        self.assertNotIn('synthetic-protected-sentinel-123', json.dumps(asdict(first), ensure_ascii=False))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.inventory(other)
+        for invalid in ('bad-cursor', '', '00000000-0000-0000-0000-00000000000G'):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
+                self.inbox.inventory(self.access, after=invalid)
+        for invalid_limit in (0, 101, True):
+            with self.subTest(invalid_limit=invalid_limit), self.assertRaisesRegex(MemoryFailure, 'invalid_page'):
+                self.inbox.inventory(self.access, limit=invalid_limit)
+
+    def test_admin_inventory_rejects_tampered_envelopes_and_missing_links(self) -> None:
+        linked = self.inbox.submit(self.access, self.event)
+        assert linked.message is not None
+        with closing(sqlite3.connect(self.config.parent / 'memory.sqlite3', isolation_level=None)) as db:
+            db.execute('DELETE FROM protected_links_v1 WHERE message_id=?', (linked.message.message_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_link_unavailable'):
+            self.inbox.inventory(self.access)
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3', isolation_level=None)) as db:
+            db.execute("UPDATE objects SET envelope='{}' WHERE id=?", (linked.object_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            self.inbox.inventory(self.access)
+
+    def test_local_cli_inventory_returns_metadata_without_secret(self) -> None:
+        receipt = self.inbox.stage(self.access, self.event)
+        command = [sys.executable, '-B', '-m', 'evernook.cli', 'vault-inventory',
+            '--config', str(self.config), '--access', str(self.access_path),
+            '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys'), '--limit', '1']
+        result = subprocess.run(command, capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['result']['objects'][0]['object_id'], receipt.object_id)
+        self.assertIsNone(payload['result']['next_cursor'])
+        self.assertNotIn(b'synthetic-protected-sentinel-123', result.stdout + result.stderr)
+
+    def test_inventory_rechecks_authorization_before_return(self) -> None:
+        self.inbox.stage(self.access, self.event)
+        check = self.runtime._require_scope
+        calls = 0
+        def revoke_before_return(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryFailure('permission_denied')
+            return check(*args, **kwargs)  # type: ignore[arg-type]
+        with patch.object(self.runtime, '_require_scope', side_effect=revoke_before_return):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.inbox.inventory(self.access)
+
+    def test_inventory_does_not_prove_recovery_material_is_present(self) -> None:
+        receipt = self.inbox.stage(self.access, self.event)
+        (self.root / 'keys/recovery.json').unlink()
+        page = self.inbox.inventory(self.access)
+        self.assertEqual(page.objects[0].object_id, receipt.object_id)
+
     def test_locked_receive_is_durable_linked_idempotent_and_original_absent_from_all_ordinary_paths(self) -> None:
         receipt = self.inbox.submit(self.access, self.event)
         self.assertEqual(receipt.state, "protected_linked")
