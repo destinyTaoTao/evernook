@@ -329,6 +329,13 @@ class MemoryManagement:
                     profile_view = self.profiles._view(db, dependency['id'])
                     if profile_view.record is not None and not profile_view.error_code:
                         item['label'] = profile_view.record.draft.label
+                elif dependency['kind'] == 'observation':
+                    from .observations import ObservationRegistry
+                    observed = ObservationRegistry._latest(db, dependency['id'])
+                    if observed is not None and observed.revision == dependency['revision']:
+                        observation_view = ObservationRegistry._view(db, observed)
+                        if observation_view.conclusion is not None:
+                            item['label'] = observation_view.conclusion
                 details['affected'].append(item)
         else:
             record = self.profiles._latest(db, operation["tag_id"])
@@ -378,6 +385,17 @@ class MemoryManagement:
             if len(rows) > 1000:
                 raise MemoryFailure("management_scope_too_large")
             affected.extend({"kind": table.split("_")[0], "id": row[0], "revision": row[1]} for row in rows)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_events_v1'").fetchone():
+            rows = db.execute("""SELECT t.observation_id,t.revision FROM observation_events_v1 t
+                WHERE json_extract(t.record,'$.confirmation_id')=?
+                   OR EXISTS (SELECT 1 FROM json_each(t.record,'$.draft.support') s
+                              WHERE json_extract(s.value,'$.message_id')=?)
+                   OR EXISTS (SELECT 1 FROM json_each(t.record,'$.draft.counterevidence') s
+                              WHERE json_extract(s.value,'$.message_id')=?)
+                ORDER BY 1,2 LIMIT 1001""", (message_id, message_id, message_id)).fetchall()
+            if len(rows) > 1000:
+                raise MemoryFailure("management_scope_too_large")
+            affected.extend({"kind": "observation", "id": row[0], "revision": row[1]} for row in rows)
         if len(affected) > 1000:
             raise MemoryFailure("management_scope_too_large")
         return affected
@@ -399,7 +417,7 @@ class MemoryManagement:
                        (proposal_id, identity.client_id, fingerprint, _json(snapshot), expires))
             db.execute("COMMIT")
         return {"proposal_id": proposal_id, "expires_at": expires, "operation": operation, **details,
-                "residuals": ["originals_retained", "previous_host_context_not_retracted"]}
+                "residuals": ["originals_retained", "previous_host_context_not_retracted", "topic_views_may_invalidate"]}
 
     def confirm(self, access: Access, proposal_id: str, operation: dict[str, Any]) -> dict[str, Any]:
         identity = self._authorize(access)

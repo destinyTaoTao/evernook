@@ -207,6 +207,28 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual([node["id"] for node in second["nodes"]], ["beta"])
         self.assertIsNone(second["next_offset"])
 
+    def test_source_preview_includes_observation_evidence_and_detects_new_revision(self) -> None:
+        from dataclasses import replace
+        from evernook.observations import ObservationDraft, ObservationRegistry
+
+        support, counter, confirmation = self.source("合成支持"), self.source("合成反证"), self.source("合成确认")
+        registry = ObservationRegistry(self.runtime)
+        draft = ObservationDraft("test:preview", "合成观察", (support,), (counter,), "experience", None, None,
+                                 "synthetic-v1", "synthetic-v1")
+        candidate = registry.propose(self.access, "preview-obs", draft)
+        published = registry.decide(self.access, "preview-publish", candidate.observation_id, candidate.revision,
+                                    action="publish", confirmation_id=confirmation.message_id)
+        for span in (support, counter, confirmation):
+            preview = self.ui.preview(self.access, {"kind": "source_suppress", "message_id": span.message_id})
+            self.assertIn(("observation", published.observation_id, published.revision),
+                          {(item["kind"], item["id"], item.get("revision")) for item in preview["affected"]})
+        operation = {"kind": "source_suppress", "message_id": support.message_id}
+        preview = self.ui.preview(self.access, operation)
+        registry.propose(self.access, "preview-change", replace(draft, conclusion="合成新观察"),
+                         expected_revision=published.revision, operation="change", observation_id=published.observation_id)
+        with self.assertRaisesRegex(MemoryFailure, "management_preview_stale"):
+            self.ui.confirm(self.access, preview["proposal_id"], operation)
+
     def test_canceled_preview_stays_canceled_after_restart_and_cannot_confirm(self) -> None:
         source_id = self.source().message_id
         operation = {'kind': 'source_suppress', 'message_id': source_id}

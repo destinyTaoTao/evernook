@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evernook"
-version = "0.1.27"
+version = "0.1.28"
 description = "Local evidence ledger with an optional authenticated MCP adapter"
 requires-python = ">=3.14,<3.15"
 license = "MIT"
