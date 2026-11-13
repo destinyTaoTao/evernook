@@ -6,7 +6,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const zh = {
     title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
-    networkHelp: '当前页已确认画像及其来源。点击来源会重新检查可见性；翻页可查看更多。', networkSource: '来源',
+    networkHelp: '按层查看当前页记忆与证据。点击来源会重新检查可见性；翻页可查看更多。', networkSource: '来源',
+    networkLayer: '记忆层', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
+    inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
     empty: '这里还没有记忆', emptyHelp: '已有原话不等于已经形成画像。可以先查看时间线，或到待审草案确认有来源的内容。',
@@ -39,7 +41,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const en = {
     title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
-    networkHelp: 'Confirmed profile entries and their sources on this page. Opening a source checks visibility again; use pagination to see more.', networkSource: 'Source',
+    networkHelp: 'Browse this page of memories and evidence by layer. Opening a source checks visibility again; use pagination to see more.', networkSource: 'Source',
+    networkLayer: 'Memory layer', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
+    inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
     empty: 'No memories here yet', emptyHelp: 'Saved words do not automatically become profile facts. Browse the timeline or review source-backed drafts.',
@@ -129,6 +133,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     function MemoryPage({ sessionId, host }) {
       const [enabled, setEnabled] = useState(active);
       const [tab, setTab] = useState(host === 'sidebar' ? 'timeline' : 'profiles');
+      const [networkLayer, setNetworkLayer] = useState('profiles');
       const [category, setCategory] = useState('');
       const [query, setQuery] = useState('');
       const [filter, setFilter] = useState('');
@@ -174,7 +179,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setContextMode(boot.context_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
-          const result = await call({ action: 'read', view: tab === 'network' ? 'profiles' : tab,
+          const result = await call({ action: 'read', view: tab === 'network' ? (networkLayer === 'profiles' ? 'profiles' : 'network_' + networkLayer) : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
             category: category || null,
             session_id: host === 'sidebar' && tab === 'timeline' ? sessionId ?? null : null }, controller.signal);
@@ -186,7 +191,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         })().catch(cause => { if (!controller.signal.aborted) setError(errorText(cause.message)); })
           .finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
-      }, [tab, category, filter, offsets.join(','), revision, sessionId, host, enabled]);
+      }, [tab, networkLayer, category, filter, offsets.join(','), revision, sessionId, host, enabled]);
       async function perform(action) {
         if (busy) return;
         setBusy(true); setError('');
@@ -234,7 +239,16 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             button(t('accept'), () => preview({ kind: 'profile_confirm', tag_id: record.tag_id }), { className: 'en-primary', disabled: busy }),
             button(t('reject'), () => preview({ kind: 'profile_reject', tag_id: record.tag_id }), { disabled: busy })) : null,
           record.state === 'rejected' ? button(t('reopen'), () => preview({ kind: 'profile_reopen', tag_id: record.tag_id }), { disabled: busy }) : null));
-      const networkCard = record => h('article', { className: 'en-network-cluster', key: record.tag_id },
+      const networkCard = record => networkLayer !== 'profiles' ? h('article', { className: 'en-network-cluster', key: record.fact_id ?? record.observation_id },
+        h('div', { className: 'en-network-node' }, h('span', { className: 'en-pill' }, t(networkLayer)),
+          h('span', { className: 'en-muted' }, ' · ' + t('version') + ' ' + record.revision + ' · '),
+          h('span', null, t(record.state)), record.inference ? h('span', { className: 'en-pill' }, t('inference')) : null,
+          h('p', null, record.text ?? record.conclusion)),
+        h('div', { className: 'en-network-edges', 'aria-label': t('sources') },
+          ...(record.sources ?? record.support ?? []).map((id, index) => button(t(record.sources ? 'networkSource' : 'support') + ' ' + (index + 1),
+            () => openSource(id), { key: 'support:' + id + ':' + index, disabled: busy })),
+          ...(record.counterevidence ?? []).map((id, index) => button(t('counterevidence') + ' ' + (index + 1),
+            () => openSource(id), { key: 'counter:' + id + ':' + index, disabled: busy })))) : h('article', { className: 'en-network-cluster', key: record.tag_id },
         h('div', { className: 'en-network-node' },
           h('span', { className: 'en-pill' }, t(record.draft.category)),
           h('span', { className: 'en-muted' }, ' · ' + t('version') + ' ' + record.revision),
@@ -274,15 +288,18 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
             h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); setOffsets([0]); } },
-              h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
-              tab !== 'timeline' && tab !== 'interests' ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
+              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
+                ...['profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
+              tab !== 'network' || networkLayer === 'profiles' ? h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }) : null,
+              tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
-              h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
+              tab !== 'network' || networkLayer === 'profiles' ? h('button', { type: 'submit', disabled: loading }, t('searchGo')) : null, button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
+            tab === 'network' && networkLayer !== 'profiles' ? h('p', { className: 'en-muted' }, t('networkFilterUnavailable')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
                 ...data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard)) :
-              h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t('emptyHelp'))),
+              h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t(tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
             h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
               button(t('previous'), () => setOffsets(value => value.slice(0, -1)), { disabled: loading || offsets.length < 2 }),
               button(t('next'), () => setOffsets(value => [...value, data.next_offset]), { disabled: loading || data.next_offset == null }))),

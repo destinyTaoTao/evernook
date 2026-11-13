@@ -42,6 +42,13 @@ test('memory links use the confirmed profile page and re-read source on click', 
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
     }] } });
+    if (body.view === 'network_facts') return Response.json({ result: { next_offset: null, items: [{
+      fact_id: 'fact-1', revision: 3, state: 'disputed', text: '合成事实', sources: ['source-1'],
+    }] } });
+    if (body.view === 'network_observations') return Response.json({ result: { next_offset: null, items: [{
+      observation_id: 'obs-1', revision: 2, state: 'published', inference: true,
+      conclusion: '合成观察', support: ['source-1'], counterevidence: ['source-2'],
+    }] } });
     if (body.view === 'source' && !sourceAvailable) return Response.json({ error: 'source_unavailable' }, { status: 400 });
     if (body.view === 'source') return Response.json({ result: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
       representation: 'original', text: '合成来源', received_at: null, next_cursor: null } });
@@ -86,4 +93,18 @@ test('memory links use the confirmed profile page and re-read source on click', 
   tree = render(); await flush(); tree = render();
   assert.ok(calls.some(call => call.view === 'profiles' && call.offset === 24));
   assert.ok(find(tree, node => node.children?.includes('第二页画像')));
+  const layer = find(tree, node => node.type === 'select' && node.props?.['aria-label'] === 'networkLayer');
+  assert.ok(layer); layer.props.onChange({ target: { value: 'facts' } });
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('合成事实')));
+  assert.ok(find(tree, node => node.children?.includes('disputed')));
+  assert.ok(calls.some(call => call.view === 'network_facts'));
+  layer.props.onChange({ target: { value: 'observations' } });
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('合成观察')));
+  assert.ok(find(tree, node => node.children?.includes('inference')));
+  const counter = find(tree, node => node.type === 'button' && node.children?.includes('counterevidence 1'));
+  assert.ok(counter); counter.props.onClick(); await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(calls.some(call => call.view === 'source' && call.message_id === 'source-2'));
+  assert.ok(calls.some(call => call.view === 'network_observations'));
 });
