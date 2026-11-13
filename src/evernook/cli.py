@@ -120,6 +120,7 @@ def _parser() -> Parser:
         ("remove-search-checkpoint", "Trusted removal of the optional coverage checkpoint and tracking triggers"),
         ("refresh-search-checkpoint", "Trusted bounded reconciliation of changed checkpoint IDs"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
+        ("context", "Build the authorized host context through the independent service"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
         ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
@@ -289,6 +290,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         return configure_audit(args.config, retention_days=args.retention_days)
     runtime = service_runtime if service_runtime is not None else MemoryRuntime(args.config)
     access = service_access if service_access is not None else runtime.access_from_file(args.access)
+    if args.command == 'context':
+        raise MemoryFailure('service_unavailable')
     if args.command in {'reflect', 'reflect-configure'}:
         from .reflection_model import from_file
         if args.reflection_config is None:

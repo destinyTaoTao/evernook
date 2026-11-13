@@ -1,5 +1,19 @@
 # T16 显式预算的证据上下文构造增量
 
+## 独立服务调用：CLI、Python SDK 与 API
+
+独立服务以可信启动参数 `--context-config` 设置目标 tokenizer 和上下文策略后，已配对且具有 recall 权限的调用端可以通过 CLI `context`、Python `ServiceClient.context` 或认证服务的 `mcp/evernook_v1_context` 获得相同的版本化上下文包；TypeScript SDK 的 `MemoryClient.context` 继续使用同一路径。CLI 接收 UTF-8 JSON 标准输入，例如：
+
+```json
+{"query":"合成：上次聊到什么？","model_id":"configured-model","max_tokens":512,"as_of":"2026-11-14T00:00:00Z","mode":"normal","timeout":30}
+```
+
+```powershell
+Get-Content -Raw ./synthetic-context-request.json | python -m evernook.cli context --config C:/outside/runtime/runtime.json --access C:/outside/runtime/mcp-access-owner.json --require-service
+```
+
+Python 调用为 `ServiceClient(config).context(access, query, model_id=..., max_tokens=..., as_of=...)`，并支持 `current_input_id`、`query_intent` 和取消。命令只通过独立服务运行；服务缺失、未配置上下文或身份不具备权限时失败，不接收调用方提供的 tokenizer、策略或模型路径。上下文包是宿主应放入低信任数据区域的背景，接口不授予记忆修改或工具执行权限。此接口连通不代表完整宿主 token 计数或日常质量门禁已通过。
+
 `evernook.context.ContextBuilder` 组合显式必读、时态事实/未完成计划/争议、显式选择并经用户审查的经验及相关原文。所有输出都标为 `untrusted_memory_context`，不修改人设、执行规则或工具权限。[dsh/pi 目标 tokenizer 模式](host-token-budget-v1.md)复用该核心，并通过受信设置配置的只读 MCP `context` 工具调用；两个入口的字符兼容模式另行标识。
 
 ## 必填策略与真实计数

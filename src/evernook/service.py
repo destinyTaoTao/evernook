@@ -32,7 +32,7 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "episode-status", "episode-configure", "episode-propose", "episode-read",
     "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
     "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence",
-    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure"})
+    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure", "context"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -48,6 +48,17 @@ def client_access(config: Path, access_path: Path) -> Access:
 
 
 class ServiceClient:
+    def context(self, access: Access, query: str, *, model_id: str, max_tokens: int, as_of: str,
+                mode: str = 'normal', timeout: float = 30, current_input_id: str | None = None,
+                query_intent: str | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
+        value = self.call(access, 'mcp', {'name': 'evernook_v1_context', 'profile': 'trusted-host',
+            'arguments': {'query': query, 'model_id': model_id, 'max_tokens': max_tokens, 'as_of': as_of,
+                'mode': mode, 'timeout': timeout, 'current_input_id': current_input_id,
+                'query_intent': query_intent}}, timeout=130, cancel=cancel)
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
     def reflect(self, access: Access, query: str, *, mode: str = 'deep', timeout: float = 60,
                 topic_view_ids: tuple[str, ...] = (), current_input_id: str | None = None,
                 allow_remote: bool = False, cancel: threading.Event | None = None) -> dict[str, Any]:
@@ -165,6 +176,11 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or not isinstance(arguments["input"], dict)):
             raise MemoryFailure("operation_not_allowed")
         command = arguments["command"]
+        if command == 'context':
+            return dispatch(runtime, {**request, 'operation': 'mcp',
+                'arguments': {'name': 'evernook_v1_context', 'profile': 'trusted-host',
+                    'arguments': arguments['input']}}, cancel=cancel, context_config=context_config,
+                embedding_config=embedding_config, reflector=reflector)
         if command in {'reflect', 'reflect-configure'}:
             if reflector is None:
                 raise MemoryFailure('reflection_model_unconfigured')

@@ -170,7 +170,9 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
         context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(fixture.config),
             "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
                 "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
-        arguments = {"name": "evernook_v1_context", "profile": "trusted-host", "arguments": {
+        capture_only = pair_client(self.config, client_id="capture-only", entry="capture-only",
+            access_path=self.config.parent / "mcp-access-capture.json", scopes=("capture",))
+        arguments: dict[str, Any] = {"name": "evernook_v1_context", "profile": "trusted-host", "arguments": {
             "query": "hello", "model_id": "synthetic-local", "max_tokens": 256,
             "as_of": "2026-11-04T00:00:00Z", "mode": "normal", "timeout": 5}}
         with _Server(MemoryRuntime(self.config), b"x" * 32, context_config=context_file) as server:
@@ -184,6 +186,22 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
                 result = await asyncio.to_thread(self.client.call, self.access, "mcp", arguments)
                 from evernook.tokenizer import LocalTokenCounter
                 self.assertEqual(result["counter_id"], LocalTokenCounter.from_file(fixture.config).counter_id)
+                bundle = await asyncio.to_thread(self.client.context, self.access, "hello",
+                    model_id="synthetic-local", max_tokens=256, as_of="2026-11-04T00:00:00Z", timeout=5)
+                self.assertEqual(bundle, result)
+                command = [sys.executable, "-B", "-m", "evernook.cli", "context",
+                    "--config", str(self.config), "--access", str(self.owner_path), "--require-service"]
+                cli = await asyncio.to_thread(subprocess.run, command,
+                    input=json.dumps(arguments["arguments"]).encode(), capture_output=True, timeout=30)
+                self.assertEqual(cli.returncode, 0, cli.stdout.decode("utf-8", errors="replace"))
+                self.assertEqual(json.loads(cli.stdout)["result"], result)
+                with self.assertRaises(MemoryFailure):
+                    await asyncio.to_thread(self.client.context, capture_only, "hello",
+                        model_id="synthetic-local", max_tokens=256, as_of="2026-11-04T00:00:00Z", timeout=5)
+                with self.assertRaises(MemoryFailure):
+                    await asyncio.to_thread(self.client.call, self.access, "cli",
+                        {"command": "context", "input": {**arguments["arguments"],
+                            "context_config": str(context_file)}})
                 canceled = threading.Event()
                 spawned = threading.Event()
                 children: list[subprocess.Popen[str]] = []
@@ -210,3 +228,9 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
                 server.shutdown()
                 thread.join(timeout=10)
                 endpoint.write_bytes(original)
+
+    async def test_context_fails_closed_without_service_configuration(self) -> None:
+        from evernook.models import MemoryFailure
+        with self.assertRaises(MemoryFailure):
+            await asyncio.to_thread(self.client.context, self.access, "hello",
+                model_id="synthetic-local", max_tokens=256, as_of="2026-11-04T00:00:00Z", timeout=5)
