@@ -38,6 +38,44 @@ class ObservationTests(unittest.TestCase):
         return ObservationDraft('user:wetland', '合成观察：用户多次提到湿地经历；不推断频率。', support, counters,
             'experience', '2020-01-01T00:00:00Z', None, 'synthetic-processor-v1', 'synthetic-policy-v1')
 
+    def test_management_network_requires_published_live_evidence(self) -> None:
+        from evernook.management import MemoryManagement
+        from evernook import pair_client
+
+        ui = MemoryManagement(self.runtime)
+        support = self.source('合成：第一次观察。')
+        counter = self.source('合成：另一种说法。')
+        candidate = self.registry.propose(self.access, 'network-candidate', self.draft((support,), (counter,)))
+        self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
+        confirmation = self.source('合成：确认发布观察。')
+        self.registry.decide(self.access, 'network-publish', candidate.observation_id, candidate.revision,
+                             action='publish', confirmation_id=confirmation.message_id)
+        item = ui.read(self.access, view='network_observations')['items'][0]
+        self.assertEqual(item['support'], [support.message_id])
+        self.assertEqual(item['counterevidence'], [counter.message_id])
+        self.assertTrue(item['inference'])
+        self.assertNotIn('expected_text', json.dumps(item, ensure_ascii=False))
+        self.runtime.change(self.access, Change('network-hide', counter.message_id, 1, 'suppress', confirmation.message_id, 'synthetic'))
+        self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
+        path = self.config.parent / 'mcp-access-network.json'
+        pair_client(self.config, client_id='network', entry='network', access_path=path, scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            ui.read(self.runtime.access_from_file(path), view='network_observations')
+
+    def test_management_network_omits_expired_and_rejects_unimplemented_filters(self) -> None:
+        from evernook.management import MemoryManagement
+
+        support = self.source('合成：已经过期的观察。')
+        draft = replace(self.draft((support,)), valid_until='2021-01-01T00:00:00Z')
+        candidate = self.registry.propose(self.access, 'expired-candidate', draft)
+        confirmation = self.source('合成：确认发布。')
+        self.registry.decide(self.access, 'expired-publish', candidate.observation_id, candidate.revision,
+                             action='publish', confirmation_id=confirmation.message_id)
+        ui = MemoryManagement(self.runtime)
+        self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
+            ui.read(self.access, view='network_observations', session_id='session-1')
+
     def test_provenance_deduplicates_raw_events_and_requires_explicit_publication(self) -> None:
         first = self.source('合成：我们在湿地见过白鹭。')
         second = self.source('合成：后来又聊到湿地。', role='assistant')

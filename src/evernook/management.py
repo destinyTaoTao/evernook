@@ -171,6 +171,35 @@ class MemoryManagement:
                                   "state": fact_view.state, "text": record.text,
                                   "sources": list(dict.fromkeys(span.message_id for span in record.sources))})
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            if view == "network_observations":
+                if query or category is not None or session_id is not None:
+                    raise MemoryFailure("invalid_arguments")
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_events_v1'").fetchone():
+                    return {"items": [], "next_offset": None}
+                from .observations import ObservationRegistry
+                from .runtime import _time
+                rows = db.execute("""SELECT e.record FROM observation_events_v1 e
+                    WHERE NOT EXISTS (SELECT 1 FROM observation_events_v1 newer
+                        WHERE newer.observation_id=e.observation_id AND newer.revision>e.revision)
+                    AND e.state IN ('published','conflicted')
+                    ORDER BY e.observation_id LIMIT ? OFFSET ?""", (limit + 1, offset)).fetchall()
+                items = []
+                now = datetime.now(timezone.utc).timestamp()
+                for row in rows[:limit]:
+                    record = ObservationRegistry._record(row[0])
+                    if ((record.draft.valid_from is not None and _time(record.draft.valid_from) > now)
+                            or (record.draft.valid_until is not None and _time(record.draft.valid_until) <= now)):
+                        continue
+                    observation = ObservationRegistry._view(db, record)
+                    if observation.conclusion is None:
+                        continue
+                    contexts = observation.source_contexts
+                    items.append({"observation_id": record.observation_id, "revision": record.revision,
+                                  "state": observation.state, "conclusion": observation.conclusion,
+                                  "inference": record.draft.inference,
+                                  "support": list(dict.fromkeys(c['message_id'] for c in contexts if c['stance'] == 'support')),
+                                  "counterevidence": list(dict.fromkeys(c['message_id'] for c in contexts if c['stance'] == 'counterevidence'))})
+                return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
             if view == "status":
                 count = db.execute("SELECT count(*) FROM messages").fetchone()[0]
                 return {"messages": count, "preview": True, "daily_admitted": False,
