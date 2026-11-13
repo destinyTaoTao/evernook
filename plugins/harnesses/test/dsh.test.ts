@@ -2370,6 +2370,11 @@ test('web service page corrects and suppresses evidence used by fresh native dsh
     return body;
   }
   const bootstrap = await page({ action: 'bootstrap' }); csrf = bootstrap.csrf;
+  assert.equal(bootstrap.private_capture, false);
+  const forbiddenOpen = await web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+    method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+      'content-type': 'application/json', 'x-evernook-csrf': csrf }, body: JSON.stringify({ action: 'private_open' }) }));
+  assert.equal(forbiddenOpen.status, 400);
   async function confirm(operation: Record<string, unknown>) {
     const preview = await page({ action: 'preview', operation });
     return page({ action: 'confirm', proposal_id: preview.result.proposal_id, operation });

@@ -5,6 +5,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const ns = 'evernook';
   const zh = {
     title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。', leaseNotice: '页面定期核验记忆；连接失效时隐藏内容。已交付的内容无法撤回。',
+    privateOpen: '私密记录（本机窗口）', privateHelp: '独立记录，不属于当前聊天；请仅在本机窗口输入。', privateRequested: '已请求启动本机窗口；请在窗口中确认保存结果。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
     graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察',
@@ -43,6 +44,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   };
   const en = {
     title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.', leaseNotice: 'Visible memories are rechecked periodically and hidden if the connection fails. Previously delivered content cannot be recalled.',
+    privateOpen: 'Private record (local window)', privateHelp: 'A separate record, not this chat. Enter it only in the local window.', privateRequested: 'Local window launch requested; confirm the save result in the window.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
     graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation',
@@ -158,6 +160,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [sessionStatus, setSessionStatus] = useState(null);
       const [recovery, setRecovery] = useState(null);
       const [recoverySupported, setRecoverySupported] = useState(false);
+      const [privateCapture, setPrivateCapture] = useState(false);
       const [currentEntry, setCurrentEntry] = useState('dsh');
       const [review, setReview] = useState(null);
       const [editing, setEditing] = useState(null);
@@ -275,6 +278,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setContextMode(boot.context_mode);
           setStreamMode(boot.stream_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
+          setPrivateCapture(boot.private_capture === true);
           if (!boot.configured) return;
           call({ action: 'read', view: 'status' }, controller.signal)
             .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
@@ -395,6 +399,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             h('div', null, h('h1', null, host === 'sidebar' ? t('session') : t('title')), h('div', { className: 'en-muted' }, t('subtitle')))),
             h('span', { className: 'en-pill' }, t('preview'))),
           h('div', { className: 'en-notice' }, t('notice')), h('p', { className: 'en-muted' }, t('leaseNotice')),
+          privateCapture ? h('div', { className: 'en-actions' }, button(t('privateOpen'), () => perform(async signal => {
+            await call({ action: 'private_open' }, signal); if (alive.current) setNotice(t('privateRequested'));
+          }), { disabled: busy }), h('span', { className: 'en-muted' }, t('privateHelp'))) : null,
           configured ? h('div', { className: 'en-notice' }, t('budgetMode') + ': ' + t(budgetMode === 'target_tokenizer'
             ? 'budgetTarget' : budgetMode === 'legacy_character_cap' ? 'budgetLegacy' : 'budgetUnknown')) : null,
           h('details', { className: 'en-notice' }, h('summary', null, t('diagnostics')),

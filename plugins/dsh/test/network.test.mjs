@@ -39,7 +39,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const fetch = async (_url, options) => {
     const body = JSON.parse(options.body); calls.push(body);
     const respond = value => Response.json({ result: body.action === 'read-versioned' ? { value, token: 'a'.repeat(64) } : value });
-    if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh' });
+    if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh', private_capture: true });
+    if (body.action === 'private_open') return Response.json({ result: { requested: true } });
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
@@ -86,6 +87,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
     for (const child of node.children ?? []) { const found = find(child, predicate); if (found) return found; }
   };
   let tree = render(); await flush(); tree = render();
+  find(tree, node => node.type === 'button' && node.children.includes('privateOpen')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_open' })));
+  assert.ok(find(tree, node => node.children?.includes('privateRequested')));
   assert.ok(find(tree, node => node.children?.includes('diagnostics')));
   assert.ok(calls.some(call => call.view === 'status'));
   statusAvailable = false;

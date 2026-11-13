@@ -7,6 +7,7 @@ import { runLocalCli } from './local-cli.ts';
 import { MemoryClient } from './client.ts';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import { createRecovery } from './dsh-recovery.ts';
+import { PrivateWindow } from './private-window.ts';
 
 export const name = 'dsh-evernook';
 export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPrompt', 'llm', 'agents'];
@@ -16,6 +17,7 @@ export interface Config {
   toolPublication?: boolean;
   reflection?: boolean;
   reflectionAllowRemote?: boolean;
+  privateCapture?: boolean;
 }
 export const Config: z<Config> = z.object({
   python: z.string().default(''), config: z.string().default(''), access: z.string().default(''),
@@ -24,6 +26,7 @@ export const Config: z<Config> = z.object({
   toolPublication: z.boolean().default(false),
   reflection: z.boolean().default(false),
   reflectionAllowRemote: z.boolean().default(false),
+  privateCapture: z.boolean().default(false),
 });
 interface Connection {
   fetch: { register(route: { path: string; methods: readonly string[]; requestBody: 'streaming';
@@ -43,6 +46,7 @@ export async function installWeb(ctx: Context, config: Config) {
   const running = new Set<Promise<unknown>>();
   const csrf = randomBytes(32).toString('hex');
   const configured = [config.python, config.config, config.access, config.maintenanceAccess].every(Boolean);
+  const privateWindow = configured && config.privateCapture ? new PrivateWindow(config) : undefined;
   if (!configured && [config.python, config.config, config.access, config.maintenanceAccess].some(Boolean)) {
     throw new Error('evernook:incomplete_web_config');
   }
@@ -118,13 +122,18 @@ export async function installWeb(ctx: Context, config: Config) {
       if (input.action === 'bootstrap' && Object.keys(input).length === 1) {
         return json({ csrf, configured, preview: true, daily_admitted: false, stream_mode: config.streamMode,
           context_mode: !configured ? 'unconfigured' : options.memoryBudget ? 'target_tokenizer' : 'legacy_character_cap',
-          entry: config.entry, recovery_supported: Boolean(recovery) });
+          entry: config.entry, recovery_supported: Boolean(recovery), private_capture: Boolean(privateWindow) });
       }
       const supplied = request.headers.get('x-evernook-csrf') ?? '';
       if (!/^[a-f0-9]{64}$/.test(supplied) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(csrf))) {
         return json({ error: 'forbidden' }, 403);
       }
       if (!configured) return json({ error: 'configuration_required' }, 409);
+      if (input.action === 'private_open' && Object.keys(input).length === 1) {
+        if (!privateWindow) throw new Error('evernook:private_window_unavailable');
+        await privateWindow.open();
+        return json({ result: { requested: true } });
+      }
       if (String(input.action).startsWith('recovery_')) {
         if (!recovery) throw new Error('evernook:recovery_patch_required');
         if (input.action === 'recovery_cancel' && Object.keys(input).length === 2 && typeof input.proposal_id === 'string') {
@@ -158,7 +167,7 @@ export async function installWeb(ctx: Context, config: Config) {
   } catch (error) { lifetime.abort(); await recovery?.close(); await memory?.close(); throw error; }
   return { handle, async close() {
     if (closed) return;
-    closed = true; unregister?.(); lifetime.abort();
+    closed = true; unregister?.(); lifetime.abort(); privateWindow?.close();
     await recovery?.close();
     await Promise.allSettled([...running]);
     await memory?.close();
