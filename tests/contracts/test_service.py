@@ -102,12 +102,19 @@ class ServiceTests(unittest.TestCase):
         second = ServiceClient(self.config)
         event = asdict(Event(Source('peer', 'synthetic', 'main', '1'), 'user', 1,
                              None, 'complete', '合成：跨客户端记录'))
-        second.call(peer, 'remember', {'event': event})
+        receipt = second.call(peer, 'remember', {'event': event})
         changed = manage('fingerprint')
         self.assertNotEqual(initial['token'], changed['token'])
         self.assertNotIn('合成', json.dumps(changed, ensure_ascii=False))
+        requests = [{'view': 'timeline'}, {'view': 'source', 'message_id': receipt['message_id']}]
+        batch = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'fingerprints', 'requests': requests}})
+        self.assertEqual(len(batch['tokens']), 2)
+        self.assertEqual(batch['tokens'][0], changed['token'])
+        self.assertNotIn('合成', json.dumps(batch, ensure_ascii=False))
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             second.call(peer, 'cli', {'command': 'manage', 'input': {'action': 'fingerprint', 'view': 'timeline'}})
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            second.call(peer, 'cli', {'command': 'manage', 'input': {'action': 'fingerprints', 'requests': requests}})
         self.processes[0].terminate()
         self.processes[0].wait(timeout=15)
         self.start()

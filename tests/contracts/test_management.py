@@ -130,6 +130,18 @@ class ManagementTests(unittest.TestCase):
         self.assertTrue(snapshot['value']['nodes'])
         self.assertNotEqual(self.ui.fingerprint(self.access, view='network_graph')['token'], snapshot['token'])
 
+    def test_batch_fingerprints_are_ordered_bounded_and_fail_closed(self) -> None:
+        span = self.source()
+        requests = [{'view': 'timeline', 'limit': 24}, {'view': 'source', 'message_id': span.message_id}]
+        expected = [self.ui.fingerprint(self.access, **request)['token'] for request in requests]
+        self.assertEqual(self.ui.fingerprints(self.access, requests), {'tokens': expected})
+        for invalid in ([], requests * 2, [{'view': 'source', 'message_id': span.message_id, 'action': 'confirm'}], ['bad']):
+            with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
+                self.ui.fingerprints(self.access, invalid)
+        self.apply({'kind': 'source_suppress', 'message_id': span.message_id})
+        with self.assertRaisesRegex(MemoryFailure, 'source_unavailable'):
+            self.ui.fingerprints(self.access, requests)
+
     def test_permissions_expiry_payload_binding_and_cross_client(self) -> None:
         status = self.ui.read(self.access, view="status")
         self.assertEqual(status["configuration_schema_version"], 1)

@@ -319,6 +319,10 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return management.read_versioned(access, **value)
         if action == "fingerprint":
             return management.fingerprint(access, **value)
+        if action == "fingerprints":
+            if set(value) != {'requests'}:
+                raise MemoryFailure('invalid_arguments')
+            return management.fingerprints(access, value['requests'])
         if action == "preview":
             return management.preview(access, **value)
         if action == "confirm":

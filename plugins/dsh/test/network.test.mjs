@@ -40,7 +40,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
     const body = JSON.parse(options.body); calls.push(body);
     const respond = value => Response.json({ result: body.action === 'read-versioned' ? { value, token: 'a'.repeat(64) } : value });
     if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh' });
-    if (body.action === 'fingerprint') return Response.json({ result: { token: 'a'.repeat(64) } });
+    if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });

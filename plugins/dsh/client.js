@@ -211,8 +211,12 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           try {
             const deadline = new Promise((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('lease_expired')); }, remaining); });
             const checkedAt = now();
-            const checks = Promise.all(snapshot.map(async ([slot, lease]) => ({ slot, lease,
-              result: await call({ ...lease.parameters, action: 'fingerprint' }, controller.signal) })));
+            const checks = call({ action: 'fingerprints', requests: snapshot.map(([, lease]) => lease.parameters) }, controller.signal)
+              .then(result => {
+                if (!result || !Array.isArray(result.tokens) || result.tokens.length !== snapshot.length
+                    || result.tokens.some(token => typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))) throw new Error('management_unavailable');
+                return snapshot.map(([slot, lease], index) => ({ slot, lease, result: { token: result.tokens[index] } }));
+              });
             const results = await Promise.race([checks, deadline]);
             if (!alive.current || epoch !== readEpoch.current) return;
             if (snapshot.some(([, lease]) => remainingLease(lease) <= 0)) { expire(); return; }

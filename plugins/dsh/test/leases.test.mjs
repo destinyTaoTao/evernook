@@ -4,8 +4,8 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 test('visible projections clear on change, timeout and background; late responses stay hidden', async () => {
-  let plugin, page, cursor = 0, now = 0, nextTimer = 0, version = 'a', sourceVersion = 'c', historyVersion = 'e', hang = false, forceMismatch = false, resolveLate;
-  const state = [], refs = [], effects = [], timers = new Map(), listeners = new Map();
+  let plugin, page, cursor = 0, now = 0, nextTimer = 0, version = 'a', sourceVersion = 'c', historyVersion = 'e', hang = false, forceMismatch = false, malformed = false, resolveLate;
+  const state = [], refs = [], effects = [], timers = new Map(), listeners = new Map(), batches = [];
   const React = {
     Fragment: Symbol('fragment'), createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     useState: initial => { const i = cursor++; if (!(i in state)) state[i] = initial;
@@ -31,7 +31,7 @@ test('visible projections clear on change, timeout and background; late response
     const request = JSON.parse(options.body);
     if (request.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh' });
     if (request.view === 'status') return Response.json({ result: { configuration_schema_version: 1 } });
-    if (request.action === 'fingerprint') return hang ? new Promise(resolve => { resolveLate = resolve; }) : Response.json({ result: { token: (forceMismatch ? 'f' : request.view === 'source' ? sourceVersion : request.view === 'history' ? historyVersion : version).repeat(64) } });
+    if (request.action === 'fingerprints') { batches.push(request.requests.map(item => item.view)); return hang ? new Promise(resolve => { resolveLate = resolve; }) : Response.json({ result: { tokens: malformed ? [] : request.requests.map(item => (forceMismatch ? 'f' : item.view === 'source' ? sourceVersion : item.view === 'history' ? historyVersion : version).repeat(64)) } }); }
     if (request.action === 'read-versioned' && request.view === 'source') return Response.json({ result: { token: sourceVersion.repeat(64), value: {
       message_id: 's', state_version: 1, content_version: request.cursor ? 2 : 1, source: { entry: 'test', session: 's' }, representation: 'original', text: '合成原文', next_cursor: request.cursor ? null : 4 } } });
     if (request.action === 'read-versioned' && request.view === 'history') return Response.json({ result: { token: historyVersion.repeat(64), value: { items: [], next_offset: null } } });
@@ -61,18 +61,22 @@ test('visible projections clear on change, timeout and background; late response
   find(tree, node => node.type === 'button' && node.children.includes('source 1')).props.onClick(); await settle(); tree = render();
   assert.ok(find(tree, node => node.props?.title === 'raw'));
   sourceVersion = 'd'; await advance(3000); tree = render(); assert.equal(find(tree, node => node.props?.title === 'raw'), undefined);
+  assert.ok(batches.some(items => items.includes('profiles') && items.includes('source')));
   await flush(); tree = render(); assert.ok(contains(tree, '合成画像a'));
   find(tree, node => node.type === 'button' && node.children.includes('history')).props.onClick(); await settle(); tree = render();
   assert.ok(find(tree, node => node.props?.title === 'history'));
   historyVersion = 'f'; await advance(3000); tree = render(); assert.equal(find(tree, node => node.props?.title === 'history'), undefined);
+  assert.ok(batches.some(items => items.includes('profiles') && items.includes('history')));
   await flush(); tree = render(); assert.ok(contains(tree, '合成画像a'));
   version = 'b'; await advance(3000); tree = render(); assert.ok(!contains(tree, '合成画像a'));
   await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   hang = true; await advance(3000); await advance(12000); tree = render(); assert.ok(!contains(tree, '合成画像b'));
-  resolveLate(Response.json({ result: { token: version.repeat(64) } })); await settle(); tree = render(); assert.ok(!contains(tree, '合成画像b'));
+  resolveLate(Response.json({ result: { tokens: [version.repeat(64)] } })); await settle(); tree = render(); assert.ok(!contains(tree, '合成画像b'));
   hang = false; listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   document.visibilityState = 'hidden'; listeners.get('visibilitychange')(); tree = render(); assert.ok(!contains(tree, '合成画像b'));
   document.visibilityState = 'visible'; listeners.get('visibilitychange')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
+  malformed = true; await advance(3000); tree = render(); assert.ok(!contains(tree, '合成画像b'));
+  malformed = false; listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   forceMismatch = true;
   for (let attempt = 0; attempt < 4; attempt += 1) { await advance(3000); tree = render(); if (attempt < 3) { await flush(); tree = render(); } }
   assert.ok(!contains(tree, '合成画像b'));

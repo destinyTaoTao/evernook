@@ -55,6 +55,15 @@ class MemoryManagement:
         # Reuse the same authorized read, including source/version checks. No content is returned.
         return {'token': str(self.read_versioned(access, **arguments)['token'])}
 
+    def fingerprints(self, access: Access, requests: list[dict[str, Any]]) -> dict[str, list[str]]:
+        allowed = {'view', 'offset', 'limit', 'session_id', 'query', 'message_id', 'tag_id',
+                   'cursor', 'category', 'entry', 'since', 'until'}
+        if (not isinstance(requests, list) or not 1 <= len(requests) <= 3
+                or any(not isinstance(item, dict) or 'view' not in item or not set(item) <= allowed for item in requests)):
+            raise MemoryFailure('invalid_arguments')
+        # Each bounded projection is reauthorized and read independently; no partial tokens escape on failure.
+        return {'tokens': [self.fingerprint(access, **item)['token'] for item in requests]}
+
     @staticmethod
     def _profile(record: Any) -> dict[str, Any]:
         value: dict[str, Any] = asdict(record)

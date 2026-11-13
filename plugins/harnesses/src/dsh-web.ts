@@ -143,7 +143,7 @@ export async function installWeb(ctx: Context, config: Config) {
         if (!/^[\w:.-]{1,256}$/.test(input.session_id)) return json({ error: 'invalid_session' }, 400);
         return json({ result: memory?.status(input.session_id as Parameters<NonNullable<typeof memory>['status']>[0]) });
       }
-      if (!['read', 'read-versioned', 'fingerprint', 'preview', 'confirm', 'cancel'].includes(String(input.action))) return json({ error: 'invalid_action' }, 400);
+      if (!['read', 'read-versioned', 'fingerprint', 'fingerprints', 'preview', 'confirm', 'cancel'].includes(String(input.action))) return json({ error: 'invalid_action' }, 400);
       return json({ result: await manage(input, request.signal) });
     } catch (error) {
       const code = error instanceof Error ? /^evernook:([a-z_]{1,80})$/.exec(error.message)?.[1] : undefined;
