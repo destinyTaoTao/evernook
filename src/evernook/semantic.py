@@ -65,6 +65,8 @@ class SemanticRecall:
         self.runtime = runtime
         self.backend = backend
         self.space = backend.space if backend is not None else None
+        self._embed_documents = backend.embed if backend is not None else None
+        self._embed_query = backend.embed if backend is not None else None
         if self.space is not None:
             space = self.space
             if (type(space.dimensions) is not int or not 1 <= space.dimensions <= 4096
@@ -75,6 +77,16 @@ class SemanticRecall:
                 raise MemoryFailure("invalid_embedding_space")
             for value in (space.model, space.revision, space.artifact_digest, space.encoding):
                 _identifier(value)
+            assert backend is not None
+            has_documents = hasattr(backend, 'embed_documents')
+            has_query = hasattr(backend, 'embed_query')
+            if has_documents or has_query:
+                documents = getattr(backend, 'embed_documents', None)
+                query = getattr(backend, 'embed_query', None)
+                if not callable(documents) or not callable(query) or not space.encoding.startswith('asymmetric-'):
+                    raise MemoryFailure('invalid_embedding_backend')
+                self._embed_documents = documents
+                self._embed_query = query
 
     @staticmethod
     def _schema(db: sqlite3.Connection) -> None:
@@ -198,7 +210,8 @@ class SemanticRecall:
                     break
         if not pending:
             return self.status(access, check=budget)
-        vectors = backend.embed(tuple(item[-1] for item in pending), timeout=budget(), cancel=cancel)
+        assert self._embed_documents is not None
+        vectors = self._embed_documents(tuple(item[-1] for item in pending), timeout=budget(), cancel=cancel)
         budget()
         if len(vectors) != len(pending):
             raise MemoryFailure("invalid_embedding")
@@ -459,7 +472,8 @@ class SemanticRecall:
         backend, space = self.backend, self.space
         if backend is not None and space is not None and semantic_status.state in {"ready", "behind"}:
             try:
-                vectors = backend.embed((query,), timeout=budget(), cancel=cancel)
+                assert self._embed_query is not None
+                vectors = self._embed_query((query,), timeout=budget(), cancel=cancel)
                 if len(vectors) != 1:
                     raise MemoryFailure("invalid_embedding")
                 vector = unit_vector(vectors[0], space.dimensions)

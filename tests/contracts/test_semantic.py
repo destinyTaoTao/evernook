@@ -40,6 +40,22 @@ class SyntheticEmbedding:
                      else (0.0, 1.0, 0.0) if "账单" in text else (0.0, 0.0, 1.0) for text in texts)
 
 
+class RoleEmbedding(SyntheticEmbedding):
+    space = replace(SyntheticEmbedding.space, encoding='asymmetric-synthetic-v1')
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.roles: list[tuple[str, float, threading.Event | None]] = []
+
+    def embed_documents(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
+        self.roles.append(('documents', timeout, cancel))
+        return super().embed(texts, timeout=timeout, cancel=cancel)
+
+    def embed_query(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
+        self.roles.append(('query', timeout, cancel))
+        return super().embed(texts, timeout=timeout, cancel=cancel)
+
+
 class SemanticTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-semantic-")
@@ -188,6 +204,47 @@ class SemanticTests(unittest.TestCase):
         disabled = SemanticRecall(self.runtime).recall(self.access, "辛辣")
         self.assertEqual(disabled.hits[0].evidence.message_id, target)
         self.assertIn("semantic_disabled", disabled.degraded)
+
+    def test_role_aware_backend_isolated_from_symmetric_space(self) -> None:
+        target = self.save('合成辛辣')
+        self.workflow.refresh(self.access)
+        backend = RoleEmbedding()
+        workflow = SemanticRecall(self.runtime, backend)
+        self.assertNotEqual(workflow.space.key, self.workflow.space.key)
+        self.assertEqual(workflow.status(self.access).indexed_messages, 0)
+        signal = threading.Event()
+        self.assertEqual(workflow.refresh(self.access, timeout=20, cancel=signal).state, 'ready')
+        page = workflow.recall(self.access, '饮食偏好', timeout=20, cancel=signal)
+        self.assertEqual(page.hits[0].evidence.message_id, target)
+        self.assertEqual([role for role, _, _ in backend.roles], ['documents', 'query'])
+        self.assertTrue(all(0 < budget <= 20 and cancel is signal for _, budget, cancel in backend.roles))
+        self.assertEqual(self.workflow.status(self.access).indexed_messages, 1)
+        self.assertEqual(self.workflow.recall(self.access, '饮食偏好').hits[0].evidence.message_id, target)
+
+    def test_incomplete_or_unversioned_role_backend_is_rejected(self) -> None:
+        class Partial(SyntheticEmbedding):
+            def embed_query(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
+                return super().embed(texts, timeout=timeout, cancel=cancel)
+
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_embedding_backend'):
+            SemanticRecall(self.runtime, Partial())
+        backend = RoleEmbedding()
+        backend.space = SyntheticEmbedding.space
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_embedding_backend'):
+            SemanticRecall(self.runtime, backend)
+
+    def test_role_aware_document_cancellation_cannot_publish_stale_vectors(self) -> None:
+        self.save('合成辛辣')
+        backend = RoleEmbedding()
+        workflow = SemanticRecall(self.runtime, backend)
+        signal = threading.Event()
+        backend.hook = signal.set
+        with self.assertRaisesRegex(MemoryFailure, 'semantic_refresh_canceled'):
+            workflow.refresh(self.access, cancel=signal)
+        self.assertEqual(workflow.status(self.access).stored_vectors, 0)
+        signal.clear()
+        backend.hook = None
+        self.assertEqual(workflow.refresh(self.access, cancel=signal).state, 'ready')
 
     def test_suppression_during_embedding_rolls_back_and_old_vectors_never_reappear(self) -> None:
         target = self.save("合成辛辣")

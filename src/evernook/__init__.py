@@ -10,7 +10,7 @@ from .archive import ArchiveStatus, CaptureReview, EvidenceArchive, ImportantRev
 from .candidates import CandidateDraft, CandidateLease, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource, FactCandidate
 from .consolidation import CONSOLIDATION_KINDS, ConsolidationDraft, ConsolidationDraftRow, ConsolidationQueuePage, ConsolidationResult, ConsolidationWorkflow
 from .facts import FACT_CATEGORIES
-from .embedding import EmbeddingSpace, LocalMiniLM
+from .embedding import EmbeddingBackend, EmbeddingSpace, LocalMiniLM, RoleAwareEmbeddingBackend
 from .semantic import RecallHit, RecallPage, SemanticRecall, SemanticStatus
 from .purge import PurgeDecision, PurgePreview, PurgeResult, PurgeWorkflow
 from .scheduler import SCHEDULER_REASONS, ConsolidationScheduler, SchedulerStatus, SchedulerTick, extractive_provider
@@ -30,7 +30,7 @@ __all__ = [
     "CandidateDraft", "CandidateLease", "CandidateRun", "CandidateWorkflow", "EvidenceSpan", "ExtractionSource", "FactCandidate",
     "CONSOLIDATION_KINDS", "ConsolidationDraft", "ConsolidationDraftRow", "ConsolidationQueuePage", "ConsolidationResult", "ConsolidationWorkflow",
     "FACT_CATEGORIES",
-    "EmbeddingSpace", "LocalMiniLM", "RecallHit", "RecallPage", "SemanticRecall", "SemanticStatus",
+    "EmbeddingBackend", "EmbeddingSpace", "LocalMiniLM", "RoleAwareEmbeddingBackend", "RecallHit", "RecallPage", "SemanticRecall", "SemanticStatus",
     "PurgeDecision", "PurgePreview", "PurgeResult", "PurgeWorkflow",
     "SCHEDULER_REASONS", "ConsolidationScheduler", "SchedulerStatus", "SchedulerTick", "extractive_provider",
     "COMPANION_PRESET", "COMPANION_PRESET_VERSION", "PresetView", "apply_preset", "show_preset",

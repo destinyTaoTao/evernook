@@ -40,6 +40,17 @@ class EmbeddingBackend(Protocol):
     def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]: ...
 
 
+class RoleAwareEmbeddingBackend(EmbeddingBackend, Protocol):
+    """Trusted backend with distinct document and query encodings.
+
+    Its space encoding must identify both transformations and their versions.
+    """
+
+    def embed_documents(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]: ...
+
+    def embed_query(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]: ...
+
+
 def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
     if not isinstance(values, (list, tuple)) or len(values) != dimensions:
         raise MemoryFailure("invalid_embedding")
