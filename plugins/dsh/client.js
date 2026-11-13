@@ -9,6 +9,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     networkHelp: '按层查看当前页记忆与证据。点击来源会重新检查可见性；翻页可查看更多。', networkSource: '来源',
     networkLayer: '记忆层', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
     inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
+    filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
     empty: '这里还没有记忆', emptyHelp: '已有原话不等于已经形成画像。可以先查看时间线，或到待审草案确认有来源的内容。',
@@ -44,6 +45,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     networkHelp: 'Browse this page of memories and evidence by layer. Opening a source checks visibility again; use pagination to see more.', networkSource: 'Source',
     networkLayer: 'Memory layer', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
     inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
+    filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
     empty: 'No memories here yet', emptyHelp: 'Saved words do not automatically become profile facts. Browse the timeline or review source-backed drafts.',
@@ -120,7 +122,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     }
     const errorText = code => t(['management_preview_stale', 'recovery_stale'].includes(code) ? 'changed' : ['management_preview_expired', 'recovery_expired'].includes(code) ? 'expired'
       : code === 'forbidden' ? 'forbidden' : code === 'source_unavailable' ? 'sourceUnavailable'
-      : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
+      : code === 'invalid_time_range' ? 'invalidTimeRange' : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
     const time = value => value ? new Date(value).toLocaleString() : t('unknown');
     const button = (label, action, props = {}) => h('button', { type: 'button', onClick: action, ...props }, label);
     function Modal({ title, children, close, busy = false, error }) {
@@ -137,6 +139,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [category, setCategory] = useState('');
       const [query, setQuery] = useState('');
       const [filter, setFilter] = useState('');
+      const [timelineInput, setTimelineInput] = useState({ entry: '', session: '', since: '', until: '' });
+      const [timelineFilter, setTimelineFilter] = useState({ entry: '', session: '', since: '', until: '' });
       const [offsets, setOffsets] = useState([0]);
       const [data, setData] = useState({ items: [] });
       const [loading, setLoading] = useState(true);
@@ -179,10 +183,14 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setContextMode(boot.context_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
+          if (host === 'sidebar' && tab === 'timeline' && !sessionId) throw new Error('invalid_session');
           const result = await call({ action: 'read', view: tab === 'network' ? (networkLayer === 'profiles' ? 'profiles' : 'network_' + networkLayer) : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
             category: category || null,
-            session_id: host === 'sidebar' && tab === 'timeline' ? sessionId ?? null : null }, controller.signal);
+            session_id: tab === 'timeline' ? (host === 'sidebar' ? sessionId ?? null : timelineFilter.session || null) : null,
+            ...(tab === 'timeline' ? { entry: timelineFilter.entry || null,
+              since: timelineFilter.since ? new Date(timelineFilter.since + 'T00:00:00').toISOString() : null,
+              until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal);
           if (!controller.signal.aborted) setData(result);
           if (sessionId) {
             const status = await call({ action: 'session', session_id: sessionId }, controller.signal);
@@ -191,7 +199,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         })().catch(cause => { if (!controller.signal.aborted) setError(errorText(cause.message)); })
           .finally(() => { if (!controller.signal.aborted) setLoading(false); });
         return () => controller.abort();
-      }, [tab, networkLayer, category, filter, offsets.join(','), revision, sessionId, host, enabled]);
+      }, [tab, networkLayer, category, filter, timelineFilter.entry, timelineFilter.session, timelineFilter.since, timelineFilter.until, offsets.join(','), revision, sessionId, host, enabled]);
       async function perform(action) {
         if (busy) return;
         setBusy(true); setError('');
@@ -224,7 +232,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         if (recovery.proposal_id && !recovery.result) await call({ action: 'recovery_cancel', proposal_id: recovery.proposal_id }, signal);
         if (alive.current) setRecovery(null);
       }); }
-      const changeTab = name => { setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setOffsets([0]); setNotice(''); };
+      const changeTab = name => { setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setTimelineInput({ entry: '', session: '', since: '', until: '' }); setTimelineFilter({ entry: '', session: '', since: '', until: '' }); setOffsets([0]); setNotice(''); };
       const sourceButtons = record => h('div', { className: 'en-actions' }, ...record.draft.sources.map((item, index) =>
         button(`${t('source')} ${index + 1}`, () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy })));
       const profileCard = record => h('article', { className: 'en-card', key: record.tag_id },
@@ -287,14 +295,21 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
-            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); setOffsets([0]); } },
+            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline') setTimelineFilter(timelineInput); setOffsets([0]); } },
               tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
                 ...['profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
               tab !== 'network' || networkLayer === 'profiles' ? h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }) : null,
+              ...(tab === 'timeline' ? ['entry', ...(host === 'sidebar' ? [] : ['session']), 'since', 'until'].map(key => {
+                const label = 'filter' + key[0].toUpperCase() + key.slice(1);
+                return h('label', { key }, t(label), h('input', { type: key === 'since' || key === 'until' ? 'date' : 'text',
+                  maxLength: key === 'entry' || key === 'session' ? 256 : undefined, value: timelineInput[key], 'aria-label': t(label),
+                  onChange: event => setTimelineInput(value => ({ ...value, [key]: event.target.value })) }));
+              }) : []),
               tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               tab !== 'network' || networkLayer === 'profiles' ? h('button', { type: 'submit', disabled: loading }, t('searchGo')) : null, button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
+            tab === 'timeline' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             tab === 'network' && networkLayer !== 'profiles' ? h('p', { className: 'en-muted' }, t('networkFilterUnavailable')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },

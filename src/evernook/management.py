@@ -14,7 +14,7 @@ from uuid import uuid4
 from .candidates import EvidenceSpan
 from .models import Access, Change, Event, MemoryFailure, Source
 from .profile import ProfileDecision, ProfileRegistry
-from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE
+from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _time
 from .safety import credential_signal
 
 
@@ -67,13 +67,21 @@ class MemoryManagement:
 
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,
              session_id: str | None = None, query: str = "", message_id: str | None = None,
-             tag_id: str | None = None, cursor: int = 0, category: str | None = None) -> dict[str, Any]:
+             tag_id: str | None = None, cursor: int = 0, category: str | None = None,
+             entry: str | None = None, since: str | None = None, until: str | None = None) -> dict[str, Any]:
         self._authorize(access)
         self._page(offset, limit)
         if session_id is not None:
             _identifier(session_id)
         if category is not None:
             _identifier(category)
+        if entry is not None:
+            _identifier(entry)
+        if view != "timeline" and any(value is not None for value in (entry, since, until)):
+            raise MemoryFailure("invalid_arguments")
+        start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
+        if start is not None and end is not None and start >= end:
+            raise MemoryFailure("invalid_time_range")
         if not isinstance(query, str) or len(query) > 256 or credential_signal(query):
             raise MemoryFailure("invalid_query")
         with self.runtime._connection() as db:
@@ -139,10 +147,12 @@ class MemoryManagement:
                 rows = db.execute(f"""SELECT event,receipt FROM messages WHERE {_RECALLABLE}
                     AND json_extract(event,'$.role') IN ('user','assistant','tool')
                     AND json_extract(event,'$.source.branch')<>'management-confirmation'
+                    AND (? IS NULL OR json_extract(event,'$.source.entry')=?)
                     AND (? IS NULL OR json_extract(event,'$.source.session')=?)
+                    AND (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?)
                     AND (?='' OR instr(json_extract(event,'$.text'),?)>0)
                     ORDER BY received DESC,id DESC LIMIT ? OFFSET ?""",
-                    (session_id, session_id, query, query, limit + 1, offset)).fetchall()
+                    (entry, entry, session_id, session_id, start, start, end, end, query, query, limit + 1, offset)).fetchall()
                 items = []
                 for row in rows[:limit]:
                     message = self.runtime._stored(row)
@@ -177,7 +187,6 @@ class MemoryManagement:
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_events_v1'").fetchone():
                     return {"items": [], "next_offset": None}
                 from .observations import ObservationRegistry
-                from .runtime import _time
                 rows = db.execute("""SELECT e.record FROM observation_events_v1 e
                     WHERE NOT EXISTS (SELECT 1 FROM observation_events_v1 newer
                         WHERE newer.observation_id=e.observation_id AND newer.revision>e.revision)

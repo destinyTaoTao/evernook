@@ -124,8 +124,36 @@ class ManagementTests(unittest.TestCase):
                                 capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertFalse(json.loads(result.stdout)["result"]["daily_admitted"])
+        filtered = subprocess.run([sys.executable, "-m", "evernook.cli", "manage", "--config", str(self.config),
+                                   "--access", str(path)],
+                                  input=b'{"action":"read","view":"timeline","entry":"owner","session_id":"synthetic-session"}',
+                                  capture_output=True, timeout=30)
+        self.assertEqual(filtered.returncode, 0, filtered.stdout)
+        self.assertEqual(json.loads(filtered.stdout)["result"]["items"][0]["message_id"], source_id)
         with self.assertRaisesRegex(MemoryFailure, "invalid_management_operation"):
             self.ui.preview(self.access, {"kind": "purge", "message_id": source_id})
+
+    def test_timeline_filters_entry_session_and_occurrence_time(self) -> None:
+        def submit(session: str, event_id: str, occurred: str | None) -> str:
+            return self.runtime.submit(self.access, Event(Source("owner", session, "main", event_id),
+                "user", 1, occurred, "complete", "合成筛选记录")).message_id
+
+        first = submit("session-a", "one", "2022-01-01T00:00:00Z")
+        submit("session-b", "two", "2023-01-01T00:00:00Z")
+        unknown = submit("session-a", "three", None)
+        def ids(**kwargs: object) -> set[str]:
+            return {item["message_id"] for item in self.ui.read(self.access, view="timeline", **kwargs)["items"]}
+        self.assertEqual(ids(entry="owner", session_id="session-a"), {first, unknown})
+        self.assertEqual(ids(entry="other"), set())
+        self.assertEqual(ids(since="2022-01-01T08:00:00+08:00", until="2023-01-01T00:00:00Z"), {first})
+        page = self.ui.read(self.access, view="timeline", entry="owner", session_id="session-a", limit=1)
+        self.assertIsNotNone(page["next_offset"])
+        tail = self.ui.read(self.access, view="timeline", entry="owner", session_id="session-a", limit=1, offset=page["next_offset"])
+        self.assertEqual({page["items"][0]["message_id"], tail["items"][0]["message_id"]}, {first, unknown})
+        with self.assertRaisesRegex(MemoryFailure, "invalid_time_range"):
+            ids(since="2023-01-01T00:00:00Z", until="2023-01-01T00:00:00Z")
+        self.apply({"kind": "source_suppress", "message_id": first})
+        self.assertEqual(ids(since="2022-01-01T00:00:00Z", until="2023-01-01T00:00:00Z"), set())
 
     def test_canceled_preview_stays_canceled_after_restart_and_cannot_confirm(self) -> None:
         source_id = self.source().message_id

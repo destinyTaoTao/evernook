@@ -49,6 +49,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
       observation_id: 'obs-1', revision: 2, state: 'published', inference: true,
       conclusion: '合成观察', support: ['source-1'], counterevidence: ['source-2'],
     }] } });
+    if (body.view === 'timeline') return Response.json({ result: { next_offset: null, items: [] } });
     if (body.view === 'source' && !sourceAvailable) return Response.json({ error: 'source_unavailable' }, { status: 400 });
     if (body.view === 'source') return Response.json({ result: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
       representation: 'original', text: '合成来源', received_at: null, next_cursor: null } });
@@ -107,4 +108,18 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(counter); counter.props.onClick(); await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(calls.some(call => call.view === 'source' && call.message_id === 'source-2'));
   assert.ok(calls.some(call => call.view === 'network_observations'));
+  find(tree, node => node.type === 'button' && node.children.includes('timeline')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterEntry').props.onChange({ target: { value: 'dsh' } });
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSession').props.onChange({ target: { value: 's1' } });
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSince').props.onChange({ target: { value: '2022-01-01' } });
+  tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  tree = render(); await flush();
+  assert.ok(calls.some(call => call.view === 'timeline' && call.entry === 'dsh' && call.session_id === 's1'
+    && call.since === new Date('2022-01-01T00:00:00').toISOString()));
+  cursor = 0; const scoped = page({ host: 'sidebar', sessionId: 'sidebar-session' }); scoped.type(scoped.props); await flush();
+  assert.ok(calls.some(call => call.view === 'timeline' && call.session_id === 'sidebar-session'));
+  const before = calls.length;
+  cursor = 0; const sidebar = page({ host: 'sidebar' }); sidebar.type(sidebar.props); await flush();
+  assert.equal(calls.slice(before).some(call => call.view === 'timeline'), false);
 });
