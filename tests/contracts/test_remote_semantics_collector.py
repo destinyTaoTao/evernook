@@ -30,11 +30,10 @@ class SafeResponseTests(unittest.TestCase):
         self.assertIsNone(safe_response(b'{"status":"ok","body":"{"}', 'secret-key'))
 
     def test_real_worker_retains_response_and_budget_blocks_dispatch(self) -> None:
-        calls: list[int] = []
+        calls: list[dict[str, object]] = []
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
-                calls.append(1)
-                self.rfile.read(int(self.headers['Content-Length']))
+                calls.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
                 body = json.dumps({'model': 'synthetic-v1', 'choices': [{'finish_reason': 'stop',
                     'message': {'role': 'assistant', 'content': json.dumps(
                         {'action': 'answer', 'value': 'x', 'support': {'e1': 'x'}})}}],
@@ -63,6 +62,8 @@ class SafeResponseTests(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaisesRegex(ValueError, 'screen_cost_budget'):
                 collect(root / 'blocked', config, 1)
+            with self.assertRaisesRegex(ValueError, 'screen_output_budget'):
+                collect(root / 'too-large', config, 100000, output_tokens=1024)
             self.assertEqual(calls, [])
             report = collect(root / 'run', config, 5000)
             raw = (root / 'run' / 'one.response.json').read_bytes()
@@ -70,6 +71,11 @@ class SafeResponseTests(unittest.TestCase):
             self.assertEqual(report['rows'][0]['response_model'], 'synthetic-v1')
             self.assertEqual(report['rows'][0]['judgment']['state'], 'passed')
             self.assertEqual(len(calls), 1)
+            expanded = {**config, 'output_tokens': 1024, 'max_cost_micro_usd': 6000}
+            result = collect(root / 'expanded', expanded, 6000, output_tokens=1024)
+            self.assertEqual(calls[-1]['max_tokens'], 1024)
+            self.assertEqual(result['rows'][0]['reserved_micro_usd'], 5120)
+            self.assertEqual(result['budget']['output_tokens'], 1024)
 
 
 if __name__ == '__main__':

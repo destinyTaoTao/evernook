@@ -55,7 +55,7 @@ def safe_response(raw: bytes, secret: str) -> str | None:
         return None
 
 
-def collect(output: Path, config: dict[str, Any], total_budget: int) -> dict[str, Any]:
+def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_tokens: int = 512) -> dict[str, Any]:
     cases, digest = load_cases(ROOT / 'eval/zh-reflection-semantics-v1')
     if digest != SUITE_HASH:
         raise ValueError('unexpected_frozen_suite')
@@ -63,7 +63,9 @@ def collect(output: Path, config: dict[str, Any], total_budget: int) -> dict[str
     secret = os.environ.get(config['api_key_env'], '')
     if len(secret) < 8:
         raise ValueError('credential_unavailable')
-    reservation = model.reserve_cost(4096, 512)
+    if type(output_tokens) is not int or not 1 <= output_tokens <= model.turn_output_tokens:
+        raise ValueError('screen_output_budget')
+    reservation = model.reserve_cost(4096, output_tokens)
     if reservation > model.max_cost_micro_usd or reservation * len(cases) > total_budget:
         raise ValueError('screen_cost_budget')
     destination = external(output)
@@ -84,7 +86,7 @@ def collect(output: Path, config: dict[str, Any], total_budget: int) -> dict[str
         start = time.monotonic()
         try:
             with patch('evernook.reflection_remote.subprocess.Popen', TraceProcess):
-                turn = model.turn(payload, input_tokens=4096, output_tokens=512, timeout=30, cancel=None)
+                turn = model.turn(payload, input_tokens=4096, output_tokens=output_tokens, timeout=30, cancel=None)
             row: dict[str, Any] = {'id': case['id'], 'category': case['category'], 'action': turn.action,
                 'error': turn.error, 'input_tokens': turn.input_tokens, 'output_tokens': turn.output_tokens,
                 'cost_micro_usd': turn.cost_micro_usd,
@@ -112,7 +114,7 @@ def collect(output: Path, config: dict[str, Any], total_budget: int) -> dict[str
                     row['raw_judgment'] = judge_generated(case['expected'], message.get('content'), payload, aliases)
         rows.append(row)
         result = {'suite_sha256': digest, 'processor': model.processor_version, 'model_requested': config['model'],
-            'budget': {'seconds': 30, 'input_tokens': 4096, 'output_tokens': 512,
+            'budget': {'seconds': 30, 'input_tokens': 4096, 'output_tokens': output_tokens,
                 'total_reserved_micro_usd': reservation * len(rows), 'total_cap_micro_usd': total_budget},
             'rows': rows, 'admission': 'pending'}
         (destination / 'report.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -123,9 +125,11 @@ def collect(output: Path, config: dict[str, Any], total_budget: int) -> dict[str
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output-tokens', type=int, choices=[512, 1024], default=512)
     args = parser.parse_args()
     collect(args.output, {'base_url': 'https://api.deepseek.com', 'model': 'deepseek-v4-pro',
         'api_key_env': 'DEEPSEEK_API_KEY', 'allowed_clients': ['synthetic'], 'allow_loopback_http': False,
         'output_limit': 'max_tokens', 'pricing': {'input_micro_usd_per_million': 1320000,
             'output_micro_usd_per_million': 3960000, 'request_micro_usd': 0},
-        'max_cost_micro_usd': 8000}, total_budget=80000)
+        'output_tokens': args.output_tokens, 'max_cost_micro_usd': 10000},
+        total_budget=100000, output_tokens=args.output_tokens)
