@@ -14,7 +14,7 @@ from typing import Any
 from evernook import Access, Event, Source, initialize
 from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
-from evernook.service import ServiceClient
+from evernook.service import ServiceClient, client_access
 from evernook.service_transport import authenticate_client, receive_json, send_json
 
 
@@ -88,6 +88,34 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "unknown_service_operation"):
             self.client.call(self.access, "arbitrary-command", {"secret": "synthetic"})
         self.assertEqual(self.client.call(self.access, "status", {})["ledger"]["messages"], 0)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows ACL regression')
+    def test_real_acl_change_between_access_and_endpoint_checks_is_rejected(self) -> None:
+        access_path = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id=self.access.client_id, entry='test', access_path=access_path)
+        endpoint = self.config.parent / 'memory-service.json'
+        everyone = '*S-1-1-0'
+
+        def acl(path: Path, *arguments: str) -> None:
+            # This test changes only files under its freshly created temporary runtime.
+            self.assertTrue(path.resolve().is_relative_to(Path(self.temporary.name).resolve()))
+            subprocess.run(['icacls.exe', str(path), *arguments], capture_output=True, check=True, timeout=10)
+
+        loaded = client_access(self.config, access_path)
+        try:
+            acl(endpoint, '/grant', everyone + ':R')
+            with self.assertRaisesRegex(MemoryFailure, 'unsafe_runtime_permissions'):
+                self.client.call(loaded, 'status', {})
+        finally:
+            acl(endpoint, '/remove:g', everyone)
+        self.assertEqual(self.client.call(loaded, 'status', {})['ledger']['messages'], 0)
+        try:
+            acl(access_path, '/grant', everyone + ':R')
+            with self.assertRaisesRegex(MemoryFailure, 'unsafe_runtime_permissions'):
+                client_access(self.config, access_path)
+        finally:
+            acl(access_path, '/remove:g', everyone)
+        self.assertEqual(client_access(self.config, access_path), loaded)
 
     def test_versioned_management_projection_across_paired_clients_and_restart(self) -> None:
         def manage(action: str) -> dict[str, Any]:
