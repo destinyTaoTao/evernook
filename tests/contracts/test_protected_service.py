@@ -4,8 +4,10 @@ from dataclasses import asdict
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
 import sqlite3
+import socket
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,7 @@ from evernook import Event, MemoryRuntime, Source, initialize, pair_client
 from evernook.models import MemoryFailure
 from evernook.protected import initialize_protected_inbox
 from evernook.service import ServiceClient
+from evernook.service_transport import authenticate_client, receive_json, send_json
 
 
 class ProtectedServiceTests(unittest.TestCase):
@@ -90,7 +93,24 @@ class ProtectedServiceTests(unittest.TestCase):
         incomplete['completion'] = 'partial'
         with self.assertRaisesRegex(MemoryFailure, 'protected_incomplete_unsupported'):
             client.call(self.owner, 'protected-receive', {'event': incomplete})
-        first = client.call(self.owner, 'protected-receive', {'event': asdict(self.event)})
+        import evernook.service as service_module
+        transmitted: list[object] = []
+        received: list[object] = []
+        send, receive = send_json, receive_json
+        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
+            transmitted.append(value)
+            send(connection, value, deadline)
+        def capture_receive(connection: socket.socket, deadline: float, cancel: object = None) -> object:
+            value = receive(connection, deadline, cancel)  # type: ignore[arg-type]
+            received.append(value)
+            return value
+        with patch.object(service_module, 'send_json', side_effect=capture_send), \
+                patch.object(service_module, 'receive_json', side_effect=capture_receive):
+            first = client.call(self.owner, 'protected-receive', {'event': asdict(self.event)})
+        wire = json.dumps([transmitted, received], ensure_ascii=False)
+        self.assertNotIn('synthetic-private-sentinel-154', wire)
+        self.assertNotIn(self.owner.token, wire)
+        self.assertIn('sealed', wire)
         again = client.call(self.owner, 'protected-receive', {'event': asdict(self.event)})
         self.assertEqual(first, again)
         self.assertEqual(first['state'], 'protected_linked')
@@ -136,6 +156,126 @@ class ProtectedServiceTests(unittest.TestCase):
             client.call(self.owner, 'protected-receive', {'event': asdict(self.event)})
         with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM objects').fetchone()[0], 0)
+
+    def test_plaintext_protected_request_is_rejected_before_persistence(self) -> None:
+        client = self.start(configured=True)
+        endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
+        with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+            deadline = time.monotonic() + 5
+            authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+            send_json(connection, {'version': 1, 'access': asdict(self.owner), 'operation': 'protected-receive',
+                                   'arguments': {'event': asdict(self.event)}}, deadline)
+            response = receive_json(connection, deadline)
+        self.assertEqual(response['error']['code'], 'protected_encryption_required')
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    def test_missing_client_crypto_never_sends_private_request(self) -> None:
+        client = self.start(configured=True)
+        with patch('evernook.service_transport._private_box', side_effect=MemoryFailure('vault_dependency_missing')), \
+                patch('evernook.service.send_json') as send:
+            with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
+                client.protected_receive(self.owner, self.event)
+            send.assert_not_called()
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    def test_client_encryption_failure_never_sends_or_echoes_private_request(self) -> None:
+        client = self.start(configured=True)
+        class BrokenBox:
+            def encrypt(self, value: bytes) -> bytes:
+                raise RuntimeError('synthetic-private-sentinel-154')
+        with patch('evernook.service_transport._private_box', return_value=BrokenBox()), \
+                patch('evernook.service.send_json') as send:
+            with self.assertRaisesRegex(MemoryFailure, '^protected_encryption_failed$') as failure:
+                client.protected_receive(self.owner, self.event)
+            self.assertNotIn('synthetic-private-sentinel-154', str(failure.exception))
+            send.assert_not_called()
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    def test_plaintext_response_from_older_peer_never_causes_fallback(self) -> None:
+        client = self.start(configured=False)
+        with patch('evernook.service.receive_json', return_value={'ok': False, 'error': {'code': 'invalid_service_request'}}), \
+                patch('evernook.service.send_json', wraps=send_json) as send:
+            with self.assertRaisesRegex(MemoryFailure, 'protected_encryption_required'):
+                client.protected_receive(self.owner, self.event)
+            self.assertEqual(send.call_count, 1)
+            wire = json.dumps(send.call_args.args[1], ensure_ascii=False)
+            self.assertNotIn('synthetic-private-sentinel-154', wire)
+            self.assertNotIn(self.owner.token, wire)
+
+    @unittest.skipUnless(os.environ.get('EVERNOOK_TEST_PREVIOUS_PYTHON'), 'previous installed service not supplied')
+    def test_actual_previous_service_never_receives_plaintext_from_new_client(self) -> None:
+        previous = os.environ['EVERNOOK_TEST_PREVIOUS_PYTHON']
+        endpoint = self.config.parent / 'memory-service.json'
+        env = dict(os.environ, PYTHONPATH='')
+        self.process = subprocess.Popen([previous, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.owner_path), '--protected-inbox', str(self.root / 'inbox'),
+            '--protected-keys', str(self.root / 'keys')], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)
+        deadline = time.monotonic() + 20
+        while not endpoint.exists():
+            if self.process.poll() is not None or time.monotonic() >= deadline:
+                self.fail('previous synthetic service did not start')
+            time.sleep(0.05)
+        client = ServiceClient(self.config)
+        with patch('evernook.service.send_json', wraps=send_json) as send:
+            with self.assertRaisesRegex(MemoryFailure, 'protected_encryption_required'):
+                client.protected_receive(self.owner, self.event)
+            self.assertEqual(send.call_count, 1)
+            wire = json.dumps(send.call_args.args[1], ensure_ascii=False)
+            self.assertNotIn('synthetic-private-sentinel-154', wire)
+            self.assertNotIn(self.owner.token, wire)
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    @unittest.skipUnless(os.environ.get('EVERNOOK_TEST_PREVIOUS_PYTHON'), 'previous installed client not supplied')
+    def test_actual_previous_client_is_rejected_by_new_service(self) -> None:
+        client = self.start(configured=True)
+        result = subprocess.run([os.environ['EVERNOOK_TEST_PREVIOUS_PYTHON'], '-B', '-m', 'evernook.cli',
+            'service-protected-receive', '--config', str(self.config), '--access', str(self.owner_path)],
+            input=json.dumps(asdict(self.event)).encode('utf-8'), capture_output=True, timeout=30,
+            env=dict(os.environ, PYTHONPATH=''))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'protected_encryption_required')
+        self.assertNotIn(b'synthetic-private-sentinel-154', result.stdout + result.stderr)
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    @unittest.skipUnless(os.environ.get('EVERNOOK_TEST_NO_VAULT_PYTHON'), 'client without vault extra not supplied')
+    def test_actual_client_without_crypto_fails_before_private_send(self) -> None:
+        client = self.start(configured=True)
+        python = os.environ['EVERNOOK_TEST_NO_VAULT_PYTHON']
+        env = dict(os.environ, PYTHONPATH='')
+        check = subprocess.run([python, '-c', 'import importlib.util; assert importlib.util.find_spec("nacl") is None'],
+                               capture_output=True, timeout=15, env=env)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        result = subprocess.run([python, '-B', '-m', 'evernook.cli', 'service-protected-receive',
+            '--config', str(self.config), '--access', str(self.owner_path)],
+            input=json.dumps(asdict(self.event)).encode('utf-8'), capture_output=True, timeout=30, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'vault_dependency_missing')
+        self.assertNotIn(b'synthetic-private-sentinel-154', result.stdout + result.stderr)
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+
+    def test_tampered_and_cross_session_private_frames_are_rejected(self) -> None:
+        from evernook.service_transport import open_private_frame, seal_private_frame
+        client = self.start(configured=True)
+        endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
+        request = {'version': 1, 'access': asdict(self.owner), 'operation': 'protected-receive',
+                   'arguments': {'event': asdict(self.event)}}
+        with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+            deadline = time.monotonic() + 5
+            session = authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+            frame = seal_private_frame(session, request, direction='request')
+            with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_frame'):
+                open_private_frame(session, frame, direction='response')
+            tampered = dict(frame)
+            cipher = tampered['sealed']
+            tampered['sealed'] = ('0' if cipher[0] != '0' else '1') + cipher[1:]
+            send_json(connection, tampered, deadline)
+            self.assertEqual(receive_json(connection, deadline)['error']['code'], 'invalid_protected_frame')
+        with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+            deadline = time.monotonic() + 5
+            authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+            send_json(connection, frame, deadline)
+            self.assertEqual(receive_json(connection, deadline)['error']['code'], 'invalid_protected_frame')
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
 
     def test_activation_refuses_existing_pending_inbox(self) -> None:
         self.inbox.stage(self.owner, self.event)

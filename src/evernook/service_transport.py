@@ -48,7 +48,11 @@ def _write(connection: socket.socket, value: bytes, deadline: float) -> None:
     connection.sendall(value)
 
 
-def authenticate_client(connection: socket.socket, key: bytes, deadline: float) -> None:
+def _session_key(key: bytes, challenge: bytes, nonce: bytes) -> bytes:
+    return hmac.digest(key, b'evernook-private-session-v1' + challenge + nonce, 'sha256')
+
+
+def authenticate_client(connection: socket.socket, key: bytes, deadline: float) -> bytes:
     challenge = secrets.token_bytes(32)
     _write(connection, challenge, deadline)
     reply = _read(connection, 64, deadline)
@@ -56,9 +60,10 @@ def authenticate_client(connection: socket.socket, key: bytes, deadline: float) 
     if not hmac.compare_digest(reply[32:], expected):
         raise MemoryFailure("service_authentication_failed")
     _write(connection, hmac.digest(key, b"evernook-client-v1" + challenge + reply[:32], "sha256"), deadline)
+    return _session_key(key, challenge, reply[:32])
 
 
-def authenticate_server(connection: socket.socket, key: bytes, deadline: float) -> None:
+def authenticate_server(connection: socket.socket, key: bytes, deadline: float) -> bytes:
     challenge = _read(connection, 32, deadline)
     nonce = secrets.token_bytes(32)
     proof = hmac.digest(key, b"evernook-server-v1" + challenge + nonce, "sha256")
@@ -67,6 +72,7 @@ def authenticate_server(connection: socket.socket, key: bytes, deadline: float) 
     expected = hmac.digest(key, b"evernook-client-v1" + challenge + nonce, "sha256")
     if not hmac.compare_digest(actual, expected):
         raise MemoryFailure("service_authentication_failed")
+    return _session_key(key, challenge, nonce)
 
 
 def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -80,6 +86,47 @@ def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _invalid_constant(value: str) -> Any:
     raise ValueError
+
+
+def _private_box(session: bytes, direction: str) -> Any:
+    if not isinstance(session, bytes) or len(session) != 32 or direction not in ('request', 'response'):
+        raise MemoryFailure('invalid_protected_frame')
+    try:
+        from nacl.secret import SecretBox
+    except ImportError:
+        raise MemoryFailure('vault_dependency_missing') from None
+    key = hmac.digest(session, b'evernook-private-frame-v1:' + direction.encode('ascii'), 'sha256')
+    return SecretBox(key)
+
+
+def seal_private_frame(session: bytes, value: dict[str, Any], *, direction: str) -> dict[str, Any]:
+    box = _private_box(session, direction)
+    try:
+        raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+    except (TypeError, ValueError, UnicodeError):
+        raise MemoryFailure('invalid_protected_frame') from None
+    if len(raw) > (MAX_FRAME - 256) // 2 - 40:
+        raise MemoryFailure('service_frame_too_large')
+    try:
+        return {'version': 1, 'sealed': box.encrypt(raw).hex()}
+    except Exception:
+        raise MemoryFailure('protected_encryption_failed') from None
+
+
+def open_private_frame(session: bytes, frame: dict[str, Any], *, direction: str) -> dict[str, Any]:
+    box = _private_box(session, direction)
+    try:
+        from nacl.exceptions import CryptoError
+        if (set(frame) != {'version', 'sealed'} or type(frame['version']) is not int or frame['version'] != 1
+                or not isinstance(frame['sealed'], str) or len(frame['sealed']) > MAX_FRAME - 128):
+            raise ValueError()
+        value = json.loads(box.decrypt(bytes.fromhex(frame['sealed'])).decode('utf-8'),
+                           object_pairs_hook=_unique, parse_constant=_invalid_constant)
+        if not isinstance(value, dict):
+            raise ValueError()
+        return value
+    except (CryptoError, UnicodeError, ValueError, TypeError, KeyError, RecursionError):
+        raise MemoryFailure('invalid_protected_frame') from None
 
 
 def receive_json(connection: socket.socket, deadline: float,

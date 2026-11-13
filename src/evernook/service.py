@@ -21,7 +21,8 @@ from .paths import external, verify_private_directory
 from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, pair_client
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
-from .service_transport import authenticate_client, authenticate_server, receive_json, send_json
+from .service_transport import (authenticate_client, authenticate_server, open_private_frame,
+                                receive_json, seal_private_frame, send_json)
 
 if TYPE_CHECKING:
     from .protected import ProtectedInbox
@@ -98,10 +99,15 @@ class ServiceClient:
                 raise MemoryFailure("invalid_service_endpoint")
             deadline = time.monotonic() + timeout
             with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=min(timeout, 5)) as connection:
-                authenticate_client(connection, key, deadline)
-                send_json(connection, {"version": 1, "access": asdict(access),
-                    "operation": operation, "arguments": arguments}, deadline)
+                session = authenticate_client(connection, key, deadline)
+                request = {"version": 1, "access": asdict(access), "operation": operation, "arguments": arguments}
+                private = operation == 'protected-receive'
+                send_json(connection, seal_private_frame(session, request, direction='request') if private else request, deadline)
                 response = receive_json(connection, deadline, cancel)
+                if private:
+                    if 'sealed' not in response:
+                        raise MemoryFailure('protected_encryption_required')
+                    response = open_private_frame(session, response, direction='response')
             if response.get("ok") is not True:
                 code = response.get("error", {}).get("code", "service_failed")
                 raise MemoryFailure(code if isinstance(code, str) and code.isidentifier() else "service_failed")
@@ -305,11 +311,19 @@ class _Handler(socketserver.BaseRequestHandler):
         assert isinstance(server, _Server)
         deadline = time.monotonic() + 5
         try:
-            authenticate_server(self.request, server.key, deadline)
+            session = authenticate_server(self.request, server.key, deadline)
         except (OSError, MemoryFailure):
             return
+        private = False
         try:
             request = receive_json(self.request, deadline)
+            if 'sealed' in request:
+                request = open_private_frame(session, request, direction='request')
+                private = True
+                if request.get('operation') != 'protected-receive':
+                    raise MemoryFailure('invalid_protected_frame')
+            elif request.get('operation') == 'protected-receive':
+                raise MemoryFailure('protected_encryption_required')
             cancel = threading.Event()
             done = threading.Event()
             def monitor() -> None:
@@ -352,7 +366,8 @@ class _Handler(socketserver.BaseRequestHandler):
         except Exception:
             response = {"version": 1, "ok": False, "error": {"code": "service_operation_failed"}}
         try:
-            send_json(self.request, response, time.monotonic() + 5)
+            send_json(self.request, seal_private_frame(session, response, direction='response') if private else response,
+                      time.monotonic() + 5)
         except (OSError, MemoryFailure):
             pass  # Commit may have completed. Stable source IDs allow receipt recovery.
 
