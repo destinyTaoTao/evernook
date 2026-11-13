@@ -18,6 +18,34 @@ from probes.admission.semantic_reflection import load_cases
 
 class LocalReflectionProbeTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'win32', 'Windows native diagnostic runner')
+    def test_reference_binding_cannot_hide_an_unsupported_affirmation(self) -> None:
+        cases, digest = load_cases(Path('eval/zh-reflection-semantics-v1'))
+        def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            if command[1].endswith('native_chat.mjs'):
+                return subprocess.CompletedProcess(command, 0, b'synthetic prefix\n', b'')
+            size = len(Path(command[command.index('--binary-file') + 1]).read_bytes())
+            header = ('Read ' + str(size) + ' bytes from binary file synthetic\n').encode()
+            return subprocess.CompletedProcess(command, 0, b'{"action":"answer","value":"unsupported","support":["demo"]} [end of text]\n',
+                header + b'0.00.010.001 I llama_completion: number of tokens in prompt = 20\n0.00.010.002 D n_remain: 511\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch('probes.admission.local_reflection.verify_assets', return_value=({'file': 'synthetic.gguf'}, root, {})), \
+                    patch('probes.admission.local_reflection.digest', return_value='synthetic'), \
+                    patch('probes.admission.local_reflection.model_template', return_value='synthetic'), \
+                    patch('probes.admission.local_reflection.load_cases', return_value=(cases[3:4], digest)), \
+                    patch('probes.admission.local_reflection.subprocess.run', side_effect=run):
+                result = collect(root, 'synthetic', root / 'output', root / 'node.exe', root / 'jinja',
+                    wire='refs', constrained=True, compact_memory=True)
+            self.assertEqual(result['unsupported_answers'], 1)
+            self.assertFalse(result['quality_screen'])
+            row = result['rows'][0]
+            self.assertEqual(row['raw_judgment']['reason'], 'reflection_invalid_support')
+            self.assertIn('demo', row['final_text'])
+            self.assertNotIn('projected_text', row)
+            self.assertIn('--json-schema-file', row['command'])
+            self.assertEqual(row['command'][row['command'].index('-ub') + 1], '32')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows native diagnostic runner')
     def test_native_runner_preserves_the_complete_generation_prefix(self) -> None:
         cases, digest = load_cases(Path('eval/zh-reflection-semantics-v1'))
         commands: list[list[str]] = []

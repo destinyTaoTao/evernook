@@ -32,6 +32,10 @@ LFM使用`--mode profile --seed 120101`（Instruct）或`120102`（Thinking）�
 
 报告的quality_screen只表示完整有效输出至少8/10、可回答案例至少5/6、错误肯定0；资源仍须读独立monitor结果，同时查看owned private bytes与working set，mmap模型文件大小另列。采样不能证明硬峰值；任何query failure都保留，不能据低private bytes忽略已映射权重。admission始终pending，CLI没有启用profile、写画像或授予工具权限的路径。
 
+Task11增加三个彼此独立的诊断开关，默认全部关闭：`--wire refs`将模型support改为证据ID数组，仅替换原格式说明及原三个演示的support字段；适配器只绑定模型所选ID的完整当前quote，不补引用、不改decision/value，不截短超过现有2048跨度限制的原文。`--constrained`把请求的结构schema交给原生JSON-schema解码；value仍为自由字符串，support允许空集合，全部只读search/read/navigation及已允许view动作仍可选，缺证据仍由原冻结评分失败。schema不读取gold、问题或来源角色，不强制引用所有输入。保存原始final_text、机械projected_text和schema摘要，不能把绑定的原文算作模型逐字复制能力。
+
+`--compact-memory`仅调整CPU执行：physical batch32（原128）、flash-attention on、K/V q4_0；logical batch128、context4608、4线程、512全部输出和单例30秒不变。实测输入超过4096会被明确标为预算失败（诊断的后验计量，不是生产预检）。较强权重与此设置的比较包含两个变量，不宣称单变量模型能力结论。新IQ3权重仍为固定第三方量化，清单不构成Core profile或自动下载配置。
+
 最新完整结果与失败边界见[弃答定位与正确前缀重验](../../docs/reports/reflection-abstention-2026-11-13.md)；[早期记录](../../docs/reports/local-reflection-candidates-2026-11-13.md)保留传输缺陷更正。没有候选通过筛选时，不继续接入或重复宿主/安装验收。
 
 ## 弃答因果诊断

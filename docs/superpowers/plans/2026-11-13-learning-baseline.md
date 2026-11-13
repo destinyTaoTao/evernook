@@ -215,3 +215,15 @@ Ruling: 本轮仅评估LiquidAI/LFM2.5-1.2B-Instruct Q8_0（8ed288026e23958ad9df
 Ruling/更正: 在LFM技术对照发现native --file会删除编译prompt末尾换行（b12360 common/arg.cpp原有行为）。同一两消息输入，旧路径24个prompt token，原生Jinja25个；改--binary-file后25个且ID逐项相同 — 这是确定的输入传输缺陷，先前保存prompt不等于真实消费token，前述反事实诊断和Task9 native结果均须标受影响，不能据此归因模型能力上限 — RED回归固定完整生成前缀；修复后复跑2B基线与两个LFM完整集，再重做诊断，原gold/评分和源码Node模型路径不改。
 
 Final: 正确前缀下tool-data已从空弃答变成3项，严格gold仍3而失败；assistant-log仍空弃答，等义描述问法/删除来源确认句可改变结果，只作因果证据不作为生产改写。修复失败通道丢usage，实际单例816输入/512输出/without_eog留存。无模型达到事前筛选线，生产不接入；见docs/reports/reflection-abstention-2026-11-13.md。
+
+## Task 11 — #120 引用接口、约束解码与较强本地权重
+
+基线52fd11f。先将格式负担和语义能力分开测量；本轮仅admission合成诊断，现有生产接口不先行改动。
+
+- [x] 提供flat-schema格式控制、refs引用接口及refs-schema条件。refs仅替换support的格式说明和原三个演示的对应字段，不新增语义句/示例。模型自己决定decision、原样value及引用ID集合；程序只绑定已选ID的完整当前quote，不能补ID、改答案/标签或截短原文，超过现有2048支持跨度上限则失败。分别记录模型原始wire与机械投影，不把原话绑定归功于模型。
+- [x] 现有2B Q4三条件各完整冻结十例：flat-schema、refs（无grammar）、refs-schema；基线使用已核对的正确前缀十例。schema仅约束结构/可用ID，允许空引用由原评分失败，不强制多跳全部来源，保留全部只读动作，不使用gold生成schema。原始问题/角色/安全语义不变。
+- [x] 固定Qwen3.5-4B UD-IQ3_XXS（e87f176479d0855a907a41277aca2f8ee7a09523，1949047968bytes，00aab66a2359a9afc52f0ab757e61f9be1656e6fcaba8468bd95579a8b2cbc40），贪心seed12009，比较flat与refs-schema。为容纳更高量化精度，两个条件统一physical batch32、flash-attention on、K/V q4_0；逻辑batch128、context4608、4096输入/512全部输出/30s/4线程不变。新执行条件不和旧2B直接声称单变量因果。
+- [x] 沿用严格>=8/10、positive>=5/6、四负例错误肯定0及完整有效输出，owned private和working-set均<=2GiB；250ms采样局限/任何query failure明确保留。不通过不接入，不挑seed/逐题调参数。通过后才做相同条件复验与原八例，再决定生产接入；日用门禁独立。
+- [x] 回归、类型检查、最终diff/独立复核，单次相关提交推送并同步#120/#106，保留无关工作区改动。
+
+Final: 五条件严格6/4/4/6/6，可回答4/2/2/3/3，无条件达到原筛选线。4B refs-schema修复助手历史描述、数量和转述理由三焦点例，但三个多跳全失败；两个4B工作集约2105.4MiB，超过2GiB。不接入生产、不扩跑候选原八例，#120/default-off及日用门禁保留。51项、strict mypy147+9/Node及50条原字节重算通过；详见docs/reports/reflection-structured-2026-11-13.md。最终独立复核与提交信息同步GitHub。

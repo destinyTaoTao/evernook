@@ -15,9 +15,11 @@ from typing import Any
 import zipfile
 
 from evernook.paths import external
+from evernook.models import MemoryFailure
 from evernook.reflection_protocol import build_messages
 from probes.admission.native_completion import binary_input_bytes, completion_text, token_usage
 from probes.admission.semantic_reflection import judge_generated, load_cases, packet
+from probes.admission.structured_reflection import messages, project, schema
 
 HERE = Path(__file__).resolve().parent
 MANIFEST = HERE / 'local-reflection-candidates.json'
@@ -123,12 +125,13 @@ def verify_assets(assets: Path, profile: str, jinja: Path) -> tuple[dict[str, An
     if model.stat().st_size != spec['bytes'] or digest(model) != spec['sha256']:
         raise ValueError('candidate_integrity_mismatch')
     paths = {'local-reflection-candidates.json': MANIFEST, 'local_reflection.py': Path(__file__).resolve(),
-        **{name: HERE / name for name in ('native_chat.mjs', 'native_completion.py', 'semantic_reflection.py')}}
+        **{name: HERE / name for name in ('native_chat.mjs', 'native_completion.py', 'semantic_reflection.py', 'structured_reflection.py')}}
     identity = {name: digest(path) for name, path in paths.items()}
     return spec, directory, identity
 
 
-def collect(assets: Path, profile: str, output: Path, node: Path, jinja: Path, *, mode: str = 'greedy', seed: int = 12009) -> dict[str, Any]:
+def collect(assets: Path, profile: str, output: Path, node: Path, jinja: Path, *, mode: str = 'greedy', seed: int = 12009,
+            wire: str = 'flat', constrained: bool = False, compact_memory: bool = False) -> dict[str, Any]:
     if sys.platform != 'win32':
         raise ValueError('unsupported_native_diagnostic')
     assets, output, node, jinja = (external(path) for path in (assets, output, node, jinja))
@@ -145,21 +148,28 @@ def collect(assets: Path, profile: str, output: Path, node: Path, jinja: Path, *
     environment = {key: value for key, value in os.environ.items() if not key.upper().startswith('LLAMA_ARG_') and key.upper() != 'HF_TOKEN'}
     for case in cases:
         payload, aliases = packet(case)
-        messages = build_messages(payload)
+        request_messages = build_messages(payload) if wire == 'flat' else messages(payload, wire)
         root = output / case['id']; root.mkdir()
-        (root / 'messages.json').write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding='utf-8')
+        (root / 'messages.json').write_text(json.dumps(request_messages, ensure_ascii=False, indent=2), encoding='utf-8')
         started = time.monotonic()
         row: dict[str, Any] = {'case_id': case['id'], 'expected_answerable': case['expected']['decision'] == 'answer'}
         stage = 'render'
         try:
             rendered = subprocess.run([str(node), str(HERE / 'native_chat.mjs')], input=json.dumps({'template': template,
-                'messages': messages, 'jinja_dir': str(jinja), 'thinking': thinking}, ensure_ascii=False).encode(),
+                'messages': request_messages, 'jinja_dir': str(jinja), 'thinking': thinking}, ensure_ascii=False).encode(),
                 capture_output=True, check=True, timeout=10, env=environment, creationflags=subprocess.CREATE_NO_WINDOW)
             prompt = root / 'prompt.txt'; prompt.write_bytes(rendered.stdout)
             command = [str(runtime / 'llama-completion.exe'), '-m', str(assets / spec['file']), '--offline', '-no-cnv',
                 '--no-escape', '--no-display-prompt', '--simple-io', '--no-warmup', '--perf', '--log-colors', 'off',
                 '--log-verbosity', '5', '--verbose-prompt', '--binary-file', str(prompt), '-n', '512', '-c', '4608', '-t', '4', '-tb', '4',
-                '-b', '128', '-ub', '128', '-ngl', '0', '--no-repack', '--no-context-shift', *decoding]
+                '-b', '128', '-ub', '32' if compact_memory else '128', '-ngl', '0', '--no-repack', '--no-context-shift', *decoding]
+            if compact_memory:
+                command += ['-fa', 'on', '-ctk', 'q4_0', '-ctv', 'q4_0']
+            if constrained:
+                constraint = root / 'schema.json'
+                constraint.write_text(json.dumps(schema(payload, wire), ensure_ascii=False), encoding='utf-8')
+                command += ['--json-schema-file', str(constraint)]
+                row['schema_sha256'] = digest(constraint)
             row.update(command=command, prompt_sha256=digest(prompt))
             stage = 'native'
             process = subprocess.run(command, capture_output=True, timeout=max(.001, 30 - (time.monotonic() - started)),
@@ -171,11 +181,19 @@ def collect(assets: Path, profile: str, output: Path, node: Path, jinja: Path, *
             row['input_read_bytes'] = binary_input_bytes(process.stderr, len(rendered.stdout))
             inputs, outputs = token_usage(process.stderr, 512)
             row.update(input_tokens=inputs, output_tokens=outputs)
+            if inputs > 4096:
+                raise ValueError('native_input_budget_exceeded')
             raw, eog, _ = completion_text(process.stdout, thinking=False)
             row['finish'] = 'eog' if eog else 'without_eog'
             final, _, reasoning = completion_text(process.stdout, thinking=True) if thinking else (raw, eog, None)
             row.update(reasoning_chars=reasoning, final_text=final)
-            outcome = judge_generated(case['expected'], final, payload, aliases)
+            try:
+                projected = project(final, payload, wire)
+                row['projected_text'] = projected
+                outcome = judge_generated(case['expected'], projected, payload, aliases)
+            except MemoryFailure as error:
+                outcome = judge_generated(case['expected'], final, payload, aliases)
+                outcome.update(state='invalid', reason=str(error))
         except subprocess.TimeoutExpired as error:
             (root / (stage + '-partial-stdout.bin')).write_bytes(error.stdout or b'')
             (root / (stage + '-partial-stderr.log')).write_bytes(error.stderr or b'')
@@ -191,6 +209,8 @@ def collect(assets: Path, profile: str, output: Path, node: Path, jinja: Path, *
     positives = sum(row['expected_answerable'] and row['raw_judgment']['state'] == 'passed' for row in rows)
     wrong = sum(row['raw_judgment'].get('unsupported_answer') is True for row in rows)
     result = {'cases_sha256': cases_hash, 'profile': spec, 'mode': mode, 'seed': seed, 'thinking': thinking, 'identity': identity,
+        'wire': wire, 'constrained': constrained, 'compact_memory': compact_memory,
+        'citation_origin': 'adapter binds only model-selected IDs to full current quotes' if wire == 'refs' else 'model copied quotes',
         'native_template_sha256': hashlib.sha256(template.encode()).hexdigest(), 'rows': rows, 'raw_totals': totals,
         'answerable_passed': positives, 'unsupported_answers': wrong,
         'quality_screen': totals['passed'] >= 8 and positives >= 5 and wrong == 0 and totals['invalid'] == totals['unobserved'] == 0,
@@ -211,5 +231,9 @@ if __name__ == '__main__':
     parser.add_argument('--profile', required=True)
     parser.add_argument('--mode', choices=('greedy', 'sampling', 'thinking', 'profile'), default='greedy')
     parser.add_argument('--seed', type=int, default=12009)
+    parser.add_argument('--wire', choices=('flat', 'refs'), default='flat')
+    parser.add_argument('--constrained', action='store_true')
+    parser.add_argument('--compact-memory', action='store_true')
     args = parser.parse_args()
-    collect(args.assets, args.profile, args.output, args.node, args.jinja, mode=args.mode, seed=args.seed)
+    collect(args.assets, args.profile, args.output, args.node, args.jinja, mode=args.mode, seed=args.seed,
+        wire=args.wire, constrained=args.constrained, compact_memory=args.compact_memory)
