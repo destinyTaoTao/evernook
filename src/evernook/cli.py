@@ -103,6 +103,8 @@ def _parser() -> Parser:
         ("service-pair", "Pair a client through the service using an existing administrator"),
         ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
         ('service-protected-receive', 'Trusted local private Event from stdin; service configuration required'),
+        ('service-protected-inventory', 'Administrator inventory of the bound encrypted inbox'),
+        ('service-protected-links', 'Administrator inventory of protected ledger links'),
         ('service-private-window', 'Enter one private note in a dedicated local window'),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
@@ -709,7 +711,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -721,6 +723,13 @@ def main() -> None:
         elif args.command == 'service-protected-receive':
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).call(access, 'protected-receive', {'event': _input()})
+        elif args.command in ('service-protected-inventory', 'service-protected-links'):
+            access = client_access(args.config, args.access)
+            value = _input()
+            if set(value) - {'after', 'limit'}:
+                raise MemoryFailure('invalid_arguments')
+            method = ServiceClient(args.config).protected_inventory if args.command == 'service-protected-inventory' else ServiceClient(args.config).protected_links
+            result = method(access, **value)
         elif args.command == 'service-private-window':
             try:
                 from .private_capture_local import LocalPrivateCapture, show_private_capture

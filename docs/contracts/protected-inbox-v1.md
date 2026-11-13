@@ -38,7 +38,13 @@ assert result.message is not None and not result.message.original_saved
 - `vault-inventory --config ... --access ... --inbox-dir ... --key-dir ... [--limit 1..100] [--after <cursor>]`：切换前由管理员明确指定一个收件箱，逐页检查 pending 与 linked 对象。Python 可调用 `ProtectedInbox.inventory(access, limit=100, after=None)`；返回已验证对象的脱敏回执和下一页 cursor。只校验信封签名、绑定及 linked 账本引用，不载入口令或解密；任一页对象或关联损坏时整页失败。普通身份不可清点其他入口。返回前重新核对管理员权限。
 - `vault-links` 使用相同路径、limit 和 cursor，或调用 `ProtectedInbox.inventory_links(...)`，从普通账本反向列出受保护引用。当前收件箱的签名、原始投影、指纹、回执和引用一致时标记 `linked_verified`；核心已提交但收件箱尚未确认时标记 `pending_acknowledgment`；其他收件箱标记 `foreign_unverified`，不能当成验证通过。当前收件箱的对象缺失或损坏、引用不一致时整页拒绝。
 
-上述清点仅用于旧账本本地切换前；独立服务已激活后旧的直接访问会被拒绝，这不是服务接口或模型工具。`linked_verified` 只表示当次检查的结构和关联一致，不表示对象可解密、仍被授权展示，或其他收件箱已验证。
+上述旧版本地清点命令用于账本切换前；独立服务已激活后，旧的直接访问会被拒绝。Core 0.1.42 另提供下述服务接口；两者都不是模型工具。`linked_verified` 只表示当次检查的结构和关联一致，不表示对象可解密、仍被授权展示，或其他收件箱已验证。
+
+### 激活后的管理员清点
+
+Core 0.1.42 的已激活独立服务可对启动时绑定的收件箱执行同样的元数据清点。可信管理员使用 Python `ServiceClient.protected_inventory(access, after=None, limit=100)` 和 `protected_links(...)`，或分别调用 `service-protected-inventory` / `service-protected-links`，参数和已有管理 CLI 一样通过 stdin JSON 提供，例如 `{}` 或 `{"limit": 10, "after": "<上页游标>"}`。请求及回执使用经双方认证的加密通道；没有 vault 依赖、绑定收件箱或管理员权限时拒绝，不回退明文。MCP 和模型工具不暴露这两项操作。
+
+清点返回脱敏回执、对象／账本 ID、关联状态与分页游标；它不载入口令、不解密原件，也不证明本人的身份、对象可授权交付或迁移完成。未配置的其他收件箱不会自动发现，跨库清点仍不是原子快照；文件损坏或当前收件箱关联缺失时拒绝相应页。应通过可信本地终端或 SDK 使用，勿将这些元数据当作普通聊天内容。
 
 ### 显式服务端加密收件
 

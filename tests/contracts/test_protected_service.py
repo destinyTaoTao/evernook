@@ -119,6 +119,8 @@ class ProtectedServiceTests(unittest.TestCase):
         self.assertNotIn('synthetic-private-sentinel-154', json.dumps(first))
         tools = client.call(self.owner, 'mcp-list', {'profile': 'trusted-host'})['tools']
         self.assertNotIn('protected-receive', [item['name'] for item in tools])
+        self.assertNotIn('protected-inventory', [item['name'] for item in tools])
+        self.assertNotIn('protected-links', [item['name'] for item in tools])
         read = client.call(self.owner, 'read', {'message_id': first['message']['message_id']})
         self.assertNotIn('synthetic-private-sentinel-154', json.dumps(read))
         self.assertEqual(client.call(self.owner, 'search', {'query': 'synthetic-private-sentinel-154'})['hits'], [])
@@ -182,12 +184,88 @@ class ProtectedServiceTests(unittest.TestCase):
         self.assertEqual(response['error']['code'], 'protected_encryption_required')
         self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
 
+    def test_service_inventory_is_encrypted_admin_only_paginated_and_metadata_only(self) -> None:
+        client = self.start(configured=True)
+        first = client.protected_receive(self.owner, self.event)
+        other = asdict(self.event)
+        other['source']['event'] = 'second'
+        other['text'] = 'synthetic-inventory-secret-164'
+        second = client.call(self.owner, 'protected-receive', {'event': other})
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.protected_inventory(self.reader)
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.protected_links(self.reader)
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_page'):
+            client.protected_inventory(self.owner, limit=101)
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
+            client.protected_links(self.owner, after='not-a-cursor')
+        import evernook.service as service_module
+        sent: list[object] = []
+        received: list[object] = []
+        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
+            sent.append(value); send_json(connection, value, deadline)
+        def capture_receive(connection: socket.socket, deadline: float, cancel: object = None) -> object:
+            value = receive_json(connection, deadline, cancel)  # type: ignore[arg-type]
+            received.append(value); return value
+        with patch.object(service_module, 'send_json', side_effect=capture_send), \
+                patch.object(service_module, 'receive_json', side_effect=capture_receive):
+            client.protected_inventory(self.owner)
+            client.protected_links(self.owner)
+        self.assertTrue(all('sealed' in value for value in (*sent, *received)))
+        wire = json.dumps([sent, received])
+        self.assertNotIn(self.owner.token, wire)
+        self.assertNotIn(first['object_id'], wire)
+        pages = []
+        page = client.protected_inventory(self.owner, limit=1)
+        pages.extend(page['objects'])
+        self.assertIsNotNone(page['next_cursor'])
+        page = client.protected_inventory(self.owner, after=page['next_cursor'], limit=1)
+        pages.extend(page['objects'])
+        self.assertIsNone(page['next_cursor'])
+        self.assertEqual({item['object_id'] for item in pages}, {first['object_id'], second['object_id']})
+        links = client.protected_links(self.owner)
+        self.assertEqual({item['state'] for item in links['links']}, {'linked_verified'})
+        self.assertNotIn('synthetic-inventory-secret-164', json.dumps([pages, links]))
+        for operation in ('protected-inventory', 'protected-links'):
+            endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
+            with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+                deadline = time.monotonic() + 5
+                authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+                send_json(connection, {'version': 1, 'access': asdict(self.owner), 'operation': operation,
+                                       'arguments': {'after': None, 'limit': 100}}, deadline)
+                self.assertEqual(receive_json(connection, deadline)['error']['code'], 'protected_encryption_required')
+        for name in ('service-protected-inventory', 'service-protected-links'):
+            result = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', name, '--config', str(self.config),
+                '--access', str(self.owner_path)], input=b'{}', capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertTrue(json.loads(result.stdout)['ok'])
+            self.assertNotIn(b'synthetic-inventory-secret-164', result.stdout + result.stderr)
+            self.assertNotIn(self.owner.token.encode(), result.stdout + result.stderr)
+        with closing(sqlite3.connect(self.root / 'inbox' / 'inbox.sqlite3')) as db:
+            db.execute("UPDATE objects SET envelope='{}' WHERE id=?", (first['object_id'],))
+            db.commit()
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            client.protected_inventory(self.owner)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            client.protected_links(self.owner)
+
+    def test_service_inventory_fails_when_inbox_unconfigured(self) -> None:
+        client = self.start(configured=False)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_service_unconfigured'):
+            client.protected_inventory(self.owner)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_service_unconfigured'):
+            client.protected_links(self.owner)
+
     def test_missing_client_crypto_never_sends_private_request(self) -> None:
         client = self.start(configured=True)
         with patch('evernook.service_transport._private_box', side_effect=MemoryFailure('vault_dependency_missing')), \
                 patch('evernook.service.send_json') as send:
             with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
                 client.protected_receive(self.owner, self.event)
+            with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
+                client.protected_inventory(self.owner)
+            with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
+                client.protected_links(self.owner)
             send.assert_not_called()
         self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
 

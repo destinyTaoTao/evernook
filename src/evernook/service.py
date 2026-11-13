@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
+PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-decide", "candidate-list", "fact-query",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
@@ -54,6 +55,18 @@ def client_access(config: Path, access_path: Path) -> Access:
 class ServiceClient:
     def protected_receive(self, access: Access, event: Event, *, timeout: float = 30) -> dict[str, Any]:
         value = self.call(access, 'protected-receive', {'event': asdict(event)}, timeout=timeout)
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def protected_inventory(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
+        value = self.call(access, 'protected-inventory', {'after': after, 'limit': limit})
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def protected_links(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
+        value = self.call(access, 'protected-links', {'after': after, 'limit': limit})
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -101,7 +114,7 @@ class ServiceClient:
             with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=min(timeout, 5)) as connection:
                 session = authenticate_client(connection, key, deadline)
                 request = {"version": 1, "access": asdict(access), "operation": operation, "arguments": arguments}
-                private = operation == 'protected-receive'
+                private = operation in PRIVATE_OPERATIONS
                 send_json(connection, seal_private_frame(session, request, direction='request') if private else request, deadline)
                 response = receive_json(connection, deadline, cancel)
                 if private:
@@ -143,6 +156,14 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if private_event.completion != 'complete':
             raise MemoryFailure('protected_incomplete_unsupported')
         return protected_inbox.submit(access, private_event)
+    if operation in {'protected-inventory', 'protected-links'}:
+        if protected_inbox is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        if set(arguments) != {'after', 'limit'}:
+            raise MemoryFailure('invalid_arguments')
+        if operation == 'protected-inventory':
+            return protected_inbox.inventory(access, after=arguments['after'], limit=arguments['limit'])
+        return protected_inbox.inventory_links(access, after=arguments['after'], limit=arguments['limit'])
     if operation in ("pair-unlock", "pair-configure"):
         from .runtime import unlock_pairing, configure_lockout
         runtime._require_scope(access, "admin", "service_pair_control")
@@ -329,9 +350,9 @@ class _Handler(socketserver.BaseRequestHandler):
             if 'sealed' in request:
                 request = open_private_frame(session, request, direction='request')
                 private = True
-                if request.get('operation') != 'protected-receive':
+                if request.get('operation') not in PRIVATE_OPERATIONS:
                     raise MemoryFailure('invalid_protected_frame')
-            elif request.get('operation') == 'protected-receive':
+            elif request.get('operation') in PRIVATE_OPERATIONS:
                 raise MemoryFailure('protected_encryption_required')
             cancel = threading.Event()
             done = threading.Event()
