@@ -38,39 +38,41 @@ test('memory links use the confirmed profile page and re-read source on click', 
   };
   const fetch = async (_url, options) => {
     const body = JSON.parse(options.body); calls.push(body);
+    const respond = value => Response.json({ result: body.action === 'read-versioned' ? { value, token: 'a'.repeat(64) } : value });
     if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh' });
+    if (body.action === 'fingerprint') return Response.json({ result: { token: 'a'.repeat(64) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
-    if (body.view === 'profiles' || body.view === 'network_profiles') return Response.json({ result: { next_offset: body.offset === 0 ? 24 : null, items: [{
+    if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
-    }] } });
-    if (body.view === 'network_facts') return Response.json({ result: { next_offset: null, items: [{
+    }] });
+    if (body.view === 'network_facts') return respond({ next_offset: null, items: [{
       fact_id: 'fact-1', revision: 3, state: 'disputed', text: '合成事实', sources: ['source-1'],
-    }] } });
-    if (body.view === 'network_observations') return Response.json({ result: { next_offset: null, items: [{
+    }] });
+    if (body.view === 'network_observations') return respond({ next_offset: null, items: [{
       observation_id: 'obs-1', revision: 2, state: 'published', inference: true,
       conclusion: '合成观察', support: ['source-1'], counterevidence: ['source-2'],
-    }] } });
+    }] });
     if (body.view === 'network_graph' && delayGraph) return new Promise(resolve => { resolveGraph = resolve; });
-    if (body.view === 'network_graph') return Response.json({ result: { next_offset: null, nodes: [
+    if (body.view === 'network_graph') return respond({ next_offset: null, nodes: [
       { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
       { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
       { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence' }] },
-    ] } });
-    if (body.view === 'timeline') return Response.json({ result: { next_offset: null, items: [] } });
+    ] });
+    if (body.view === 'timeline') return respond({ next_offset: null, items: [] });
     if (body.view === 'history') return new Promise(resolve => { resolveHistory = resolve; });
     if (body.view === 'source' && !sourceAvailable) return Response.json({ error: 'source_unavailable' }, { status: 400 });
     if (body.view === 'source' && delaySource) return new Promise(resolve => { resolveSource = resolve; });
-    if (body.view === 'source') return Response.json({ result: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
-      representation: 'original', text: '合成来源', received_at: null, next_cursor: null } });
+    if (body.view === 'source') return respond({ message_id: 'source-1', source: { entry: 'dsh', session: 's' },
+      representation: 'original', text: '合成来源', received_at: null, next_cursor: null });
     return Response.json({ error: 'unexpected' }, { status: 400 });
   };
   const window = { addEventListener(name, callback) { windowListeners.set(name, callback); }, removeEventListener(name) { windowListeners.delete(name); },
     __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => React); } } };
   vm.runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'),
-    { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date });
+    { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date, performance, setTimeout: () => 1, clearTimeout() {} });
   plugin.apply(ctx);
   const render = () => { cursor = 0; const outer = page({ host: 'main' }); return outer.type(outer.props); };
   const flush = async () => {
@@ -96,7 +98,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const network = find(tree, node => node.type === 'button' && node.children.includes('network'));
   assert.ok(network); network.props.onClick();
   tree = render(); await flush(); tree = render();
-  resolveHistory(Response.json({ result: { items: [], next_offset: null } }));
+  resolveHistory(Response.json({ result: { value: { items: [], next_offset: null }, token: 'a'.repeat(64) } }));
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
   assert.equal(find(tree, node => node.props?.title === 'history'), undefined);
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
@@ -106,8 +108,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   delayGraph = true; windowListeners.get('focus')(); tree = render(); await flush();
   assert.ok(resolveGraph);
   delayGraph = false; windowListeners.get('focus')(); tree = render(); await flush();
-  resolveGraph(Response.json({ result: { next_offset: null, nodes: [{ kind: 'fact', id: 'old',
-    revision: 1, state: 'current', label: '过期图', edges: [{ source_id: 'source-1', kind: 'evidence' }] }] } }));
+  resolveGraph(Response.json({ result: { value: { next_offset: null, nodes: [{ kind: 'fact', id: 'old',
+    revision: 1, state: 'current', label: '过期图', edges: [{ source_id: 'source-1', kind: 'evidence' }] }] }, token: 'a'.repeat(64) } }));
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
   assert.equal(find(tree, node => node.children?.includes('过期图')), undefined);
   assert.ok(find(tree, node => node.children?.includes('合成事实')));
@@ -116,10 +118,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
   assert.ok(find(tree, node => node.children?.includes('合成画像')));
-  assert.ok(calls.some(call => call.action === 'read' && call.view === 'network_profiles'));
+  assert.ok(calls.some(call => call.action === 'read-versioned' && call.view === 'network_profiles'));
   const source = find(tree, node => node.type === 'button' && node.children.includes('networkSource 1'));
   assert.ok(source); source.props.onClick(); await new Promise(resolve => setTimeout(resolve, 10));
-  assert.ok(calls.some(call => call.action === 'read' && call.view === 'source' && call.message_id === 'source-1'));
+  assert.ok(calls.some(call => call.action === 'read-versioned' && call.view === 'source' && call.message_id === 'source-1'));
   tree = render();
   assert.ok(find(tree, node => node.props?.role === 'alert' && node.children.includes('sourceUnavailable')));
   assert.equal(find(tree, node => node.children?.includes('合成来源')), undefined);
@@ -135,8 +137,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(resolveSource);
   windowListeners.get('focus')();
   tree = render(); await flush();
-  resolveSource(Response.json({ result: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
-    representation: 'original', text: '过期来源', received_at: null, next_cursor: null } }));
+  resolveSource(Response.json({ result: { value: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
+    representation: 'original', text: '过期来源', received_at: null, next_cursor: null }, token: 'a'.repeat(64) } }));
   await new Promise(resolve => setTimeout(resolve, 10));
   tree = render();
   assert.equal(find(tree, node => node.props?.title === 'raw'), undefined);

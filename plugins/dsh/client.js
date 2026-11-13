@@ -4,7 +4,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const { createElement: h, useState, useEffect, useRef } = React;
   const ns = 'evernook';
   const zh = {
-    title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。',
+    title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。', leaseNotice: '页面定期核验记忆；连接失效时隐藏内容。已交付的内容无法撤回。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
     graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察',
@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     clarification: '此项需要专门的冲突澄清，不能作为普通草案直接接纳', page: '页', result: '实际结果',
   };
   const en = {
-    title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.',
+    title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.', leaseNotice: 'Visible memories are rechecked periodically and hidden if the connection fails. Previously delivered content cannot be recalled.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
     graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation',
@@ -167,8 +167,84 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const alive = useRef(true);
       const controllers = useRef(new Set());
       const readEpoch = useRef(0);
-      const invalidateReads = () => { readEpoch.current += 1; setSource(null); setHistory(null); };
-      const refresh = () => { invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); };
+      const leases = useRef(new Map());
+      const leaseTimer = useRef(null);
+      const leaseAbort = useRef(null);
+      const changeStreak = useRef(0);
+      const now = () => ({ wall: Date.now(), mono: performance.now() });
+      const remainingLease = lease => Math.min(lease.wall - Date.now(), lease.mono - performance.now());
+      const invalidateReads = () => {
+        readEpoch.current += 1; for (const lease of leases.current.values()) clearTimeout(lease.watchdog); leases.current.clear();
+        if (leaseTimer.current !== null) clearTimeout(leaseTimer.current);
+        leaseTimer.current = null; leaseAbort.current?.abort(); leaseAbort.current = null;
+        setSource(null); setHistory(null);
+      };
+      const refresh = (resetStreak = true) => { if (resetStreak) changeStreak.current = 0; invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); };
+      const expire = () => {
+        invalidateReads(); setData({ items: [] }); setReview(null); setEditing(null); setLoading(false); setError(t('unavailable'));
+      };
+      function armLease(slot, lease) {
+        if (lease.watchdog !== undefined) clearTimeout(lease.watchdog);
+        lease.watchdog = setTimeout(() => {
+          if (leases.current.get(slot) !== lease || !alive.current) return;
+          if (remainingLease(lease) > 0) { armLease(slot, lease); return; }
+          expire();
+        }, Math.max(0, remainingLease(lease)));
+      }
+      function dropLease(slot) {
+        const lease = leases.current.get(slot);
+        if (lease) clearTimeout(lease.watchdog);
+        leases.current.delete(slot);
+      }
+      function scheduleLease() {
+        if (!alive.current || leaseTimer.current !== null || leaseAbort.current || !leases.current.size) return;
+        const epoch = readEpoch.current;
+        const delay = Math.max(0, Math.min(3000, ...[...leases.current.values()].map(remainingLease)));
+        leaseTimer.current = setTimeout(async () => {
+          leaseTimer.current = null;
+          if (!alive.current || epoch !== readEpoch.current || !leases.current.size) return;
+          const snapshot = [...leases.current.entries()];
+          const remaining = Math.min(...snapshot.map(([, lease]) => remainingLease(lease)));
+          if (remaining <= 0) { expire(); return; }
+          const controller = new AbortController(); leaseAbort.current = controller;
+          let timeout;
+          try {
+            const deadline = new Promise((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('lease_expired')); }, remaining); });
+            const checkedAt = now();
+            const checks = Promise.all(snapshot.map(async ([slot, lease]) => ({ slot, lease,
+              result: await call({ ...lease.parameters, action: 'fingerprint' }, controller.signal) })));
+            const results = await Promise.race([checks, deadline]);
+            if (!alive.current || epoch !== readEpoch.current) return;
+            if (snapshot.some(([, lease]) => remainingLease(lease) <= 0)) { expire(); return; }
+            for (const { slot, lease, result } of results) {
+              if (leases.current.get(slot) !== lease) continue;
+              if (!result || result.token !== lease.token) {
+                changeStreak.current += 1;
+                if (changeStreak.current > 3) expire(); else refresh(false);
+                return;
+              }
+              lease.wall = checkedAt.wall + 12000; lease.mono = checkedAt.mono + 12000;
+              armLease(slot, lease);
+            }
+            changeStreak.current = 0;
+          } catch {
+            if (alive.current && epoch === readEpoch.current) expire();
+            return;
+          } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
+            if (leaseAbort.current === controller) leaseAbort.current = null;
+          }
+          scheduleLease();
+        }, delay);
+      }
+      async function versionedRead(parameters, signal, slot) {
+        const epoch = readEpoch.current, started = now();
+        const response = await call({ ...parameters, action: 'read-versioned' }, signal);
+        if (signal.aborted || epoch !== readEpoch.current) throw new Error('view_changed');
+        if (!response || !/^[a-f0-9]{64}$/.test(response.token) || !response.value || Date.now() - started.wall >= 12000 || performance.now() - started.mono >= 12000) throw new Error('management_unavailable');
+        if (slot) { dropLease(slot); const lease = { parameters, token: response.token, wall: started.wall + 12000, mono: started.mono + 12000 }; leases.current.set(slot, lease); armLease(slot, lease); scheduleLease(); }
+        return response.value;
+      }
       useEffect(() => {
         alive.current = true;
         const listener = () => refresh();
@@ -177,7 +253,10 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         updates.addEventListener('changed', listener);
         updates.addEventListener('disposed', dispose);
         window.addEventListener('focus', listener);
-        return () => { alive.current = false; readEpoch.current += 1; updates.removeEventListener('changed', listener); updates.removeEventListener('disposed', dispose); window.removeEventListener('focus', listener);
+        const visibility = () => { if (window.document?.visibilityState === 'hidden') expire(); else refresh(); };
+        window.document?.addEventListener('visibilitychange', visibility);
+        return () => { alive.current = false; readEpoch.current += 1; for (const lease of leases.current.values()) clearTimeout(lease.watchdog); leases.current.clear(); if (leaseTimer.current !== null) clearTimeout(leaseTimer.current); leaseAbort.current?.abort();
+          updates.removeEventListener('changed', listener); updates.removeEventListener('disposed', dispose); window.removeEventListener('focus', listener); window.document?.removeEventListener('visibilitychange', visibility);
           for (const controller of controllers.current) controller.abort(); };
       }, []);
       useEffect(() => {
@@ -197,13 +276,13 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
             .catch(() => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: false }); });
           if (host === 'sidebar' && tab === 'timeline' && !sessionId) throw new Error('invalid_session');
-          const result = await call({ action: 'read', view: tab === 'network' ? 'network_' + networkLayer : tab,
+          const result = await versionedRead({ view: tab === 'network' ? 'network_' + networkLayer : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
             category: category || null,
             session_id: tab === 'timeline' || tab === 'network' ? (host === 'sidebar' && tab === 'timeline' ? sessionId ?? null : timelineFilter.session || null) : null,
             ...(tab === 'timeline' || tab === 'network' ? { entry: timelineFilter.entry || null,
               since: timelineFilter.since ? new Date(timelineFilter.since + 'T00:00:00').toISOString() : null,
-              until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal);
+              until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal, 'page');
           if (!controller.signal.aborted && epoch === readEpoch.current) setData(tab === 'network' && networkLayer === 'graph' ? { ...result, items: result.nodes } : result);
           if (sessionId) {
             const status = await call({ action: 'session', session_id: sessionId }, controller.signal);
@@ -222,8 +301,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         finally { controllers.current.delete(controller); if (alive.current) setBusy(false); }
       }
       function preview(operation) { return perform(async signal => {
+        const epoch = readEpoch.current;
         const result = await call({ action: 'preview', operation }, signal);
-        if (alive.current) { setReview(result); setEditing(null); setSource(null); }
+        if (alive.current && !signal.aborted && epoch === readEpoch.current) { setReview(result); setEditing(null); setSource(null); }
       }); }
       function cancelReview() { return perform(async signal => {
         await call({ action: 'cancel', proposal_id: review.proposal_id }, signal);
@@ -231,12 +311,15 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       }); }
       function openSource(messageId, cursor = 0) { return perform(async signal => {
         const epoch = readEpoch.current;
-        const result = await call({ action: 'read', view: 'source', message_id: messageId, cursor }, signal);
+        let result;
+        try { result = await versionedRead({ view: 'source', message_id: messageId, cursor }, signal, cursor ? null : 'source'); }
+        catch (error) { if (cursor && alive.current && epoch === readEpoch.current) expire(); throw error; }
+        if (cursor && (!source || source.message_id !== messageId || source.state_version !== result.state_version || source.content_version !== result.content_version)) { expire(); throw new Error('source_unavailable'); }
         if (alive.current && !signal.aborted && epoch === readEpoch.current) setSource(previous => cursor && previous?.message_id === messageId ? { ...result, text: previous.text + result.text } : result);
       }); }
       function openHistory(tagId) { return perform(async signal => {
         const epoch = readEpoch.current;
-        const result = await call({ action: 'read', view: 'history', tag_id: tagId, limit: 50 }, signal);
+        const result = await versionedRead({ view: 'history', tag_id: tagId, limit: 50 }, signal, 'history');
         if (alive.current && !signal.aborted && epoch === readEpoch.current) setHistory(result);
       }); }
       function openRecovery(id) { return perform(async signal => {
@@ -307,7 +390,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           h('div', { className: 'en-head' }, h('div', { className: 'en-brand' }, h('span', { className: 'en-mark', 'aria-hidden': true }, '❧'),
             h('div', null, h('h1', null, host === 'sidebar' ? t('session') : t('title')), h('div', { className: 'en-muted' }, t('subtitle')))),
             h('span', { className: 'en-pill' }, t('preview'))),
-          h('div', { className: 'en-notice' }, t('notice')),
+          h('div', { className: 'en-notice' }, t('notice')), h('p', { className: 'en-muted' }, t('leaseNotice')),
           configured ? h('div', { className: 'en-notice' }, t('budgetMode') + ': ' + t(budgetMode === 'target_tokenizer'
             ? 'budgetTarget' : budgetMode === 'legacy_character_cap' ? 'budgetLegacy' : 'budgetUnknown')) : null,
           h('details', { className: 'en-notice' }, h('summary', null, t('diagnostics')),
@@ -333,7 +416,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
-            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
+            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); refresh(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
               tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { invalidateReads(); setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
                 ...['graph', 'profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
               h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
@@ -343,7 +426,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                   maxLength: key === 'entry' || key === 'session' ? 256 : undefined, value: timelineInput[key], 'aria-label': t(label),
                   onChange: event => setTimelineInput(value => ({ ...value, [key]: event.target.value })) }));
               }) : []),
-              tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
+              tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { refresh(); setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
@@ -353,8 +436,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                 ...(tab === 'network' && networkLayer === 'graph' ? graphCards(data.items) : data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard))) :
               h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t(tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
             h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
-              button(t('previous'), () => setOffsets(value => value.slice(0, -1)), { disabled: loading || offsets.length < 2 }),
-              button(t('next'), () => setOffsets(value => [...value, data.next_offset]), { disabled: loading || data.next_offset == null }))),
+              button(t('previous'), () => { refresh(); setOffsets(value => value.slice(0, -1)); }, { disabled: loading || offsets.length < 2 }),
+              button(t('next'), () => { const next = data.next_offset; refresh(); setOffsets(value => [...value, next]); }, { disabled: loading || data.next_offset == null }))),
           h('p', { className: 'en-muted' }, t('encryption')),
           editing ? h(Modal, { title: t('revise'), close: () => setEditing(null), busy, error },
             h('p', { className: 'en-muted' }, t('reviseHelp')),
@@ -401,13 +484,13 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                   if (alive.current) setRecovery({ ...recovery, result });
                 }
               }), { className: 'en-primary', disabled: busy })) : null) : null,
-          source ? h(Modal, { title: t(source.representation === 'original' ? 'raw' : 'projection'), close: () => setSource(null), busy, error },
+          source ? h(Modal, { title: t(source.representation === 'original' ? 'raw' : 'projection'), close: () => { dropLease('source'); setSource(null); }, busy, error },
             h('div', { className: 'en-meta' }, `${source.source.entry} · ${source.source.session}`, h('span', null, `${t('received')} · ${time(source.received_at)}`)),
             h('pre', null, source.text), source.next_cursor !== null ? button(t('more'), () => openSource(source.message_id, source.next_cursor), { disabled: busy }) : null,
             source.representation === 'original' ? h('div', { className: 'en-actions' },
               button(t('revise'), () => { setEditing({ kind: 'source_correct', message_id: source.message_id, text: '' }); setSource(null); setReview(null); }, { disabled: busy }),
               button(t('suppress'), () => preview({ kind: 'source_suppress', message_id: source.message_id }), { disabled: busy })) : null) : null,
-          history ? h(Modal, { title: t('history'), close: () => setHistory(null), busy, error }, ...history.items.map(item => h('article', { key: item.revision, className: 'en-card' },
+          history ? h(Modal, { title: t('history'), close: () => { dropLease('history'); setHistory(null); }, busy, error }, ...history.items.map(item => h('article', { key: item.revision, className: 'en-card' },
             h('div', { className: 'en-meta' }, `${t('version')} ${item.revision} · ${t(item.state)} · ${time(item.recorded_at)}`), h('pre', null, item.draft.label))),
             history.next_offset !== null ? h('p', { className: 'en-muted' }, t('partial')) : null) : null));
     }
