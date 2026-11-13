@@ -150,6 +150,27 @@ class MemoryManagement:
                     text = item.pop("text")
                     items.append({**item, "excerpt": text[:240], "total": len(text)})
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            if view == "network_facts":
+                # Page by temporal slot, not historical decision: filtering revisions first
+                # could revive a superseded fact when its successor is unavailable.
+                if query or category is not None or session_id is not None:
+                    raise MemoryFailure("invalid_arguments")
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_heads_v1'").fetchone():
+                    return {"items": [], "next_offset": None}
+                from .facts import FactRegistry
+                rows = db.execute("SELECT subject,predicate FROM fact_heads_v1 ORDER BY subject,predicate LIMIT ? OFFSET ?",
+                                  (limit + 1, offset)).fetchall()
+                items = []
+                for row in rows[:limit]:
+                    fact_view = FactRegistry._query_snapshot(db, row[0], row[1])
+                    record = fact_view.fact
+                    if record is None:
+                        continue
+                    items.append({"fact_id": record.fact_id, "subject_id": record.subject_id,
+                                  "predicate": record.predicate, "revision": record.revision,
+                                  "state": fact_view.state, "text": record.text,
+                                  "sources": list(dict.fromkeys(span.message_id for span in record.sources))})
+                return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
             if view == "status":
                 count = db.execute("SELECT count(*) FROM messages").fetchone()[0]
                 return {"messages": count, "preview": True, "daily_admitted": False,
