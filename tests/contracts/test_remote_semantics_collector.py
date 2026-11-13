@@ -85,6 +85,13 @@ class SafeResponseTests(unittest.TestCase):
             self.assertEqual(diagnostic['diagnostic_thinking'], 'disabled')
             self.assertEqual(len(diagnostic['rows'][0]['request_body_sha256']), 64)
             self.assertEqual(diagnostic['rows'][0]['reserved_micro_usd'], 5120)
+            low = collect(root / 'low', expanded, 6000, output_tokens=1024,
+                          diagnostic_thinking='low')
+            self.assertEqual(calls[-1]['reasoning_effort'], 'low')
+            self.assertNotIn('thinking', calls[-1])
+            self.assertEqual(calls[-1]['max_tokens'], 1024)
+            self.assertEqual(low['diagnostic_thinking'], 'low')
+            self.assertEqual(low['rows'][0]['reserved_micro_usd'], 5120)
 
 
 if __name__ == '__main__':

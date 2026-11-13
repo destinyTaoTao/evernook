@@ -60,7 +60,7 @@ def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_t
     cases, digest = load_cases(ROOT / 'eval/zh-reflection-semantics-v1')
     if digest != SUITE_HASH:
         raise ValueError('unexpected_frozen_suite')
-    if diagnostic_thinking not in {'default', 'disabled'}:
+    if diagnostic_thinking not in {'default', 'disabled', 'low'}:
         raise ValueError('invalid_diagnostic_thinking')
     model = RemoteReflectionModel(config)
     secret = os.environ.get(config['api_key_env'], '')
@@ -86,6 +86,8 @@ def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_t
                     body = request['body']
                     if diagnostic_thinking == 'disabled':
                         body['thinking'] = {'type': 'disabled'}
+                    elif diagnostic_thinking == 'low':
+                        body['reasoning_effort'] = 'low'
                     body_bytes = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
                     if secret.encode() in body_bytes:
                         raise ValueError('protected_request')
