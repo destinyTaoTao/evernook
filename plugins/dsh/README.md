@@ -1,5 +1,7 @@
 # EverNook · 忆栖 — dsh 记忆管理预览
 
+preview.39 / Core 0.1.39 可选 `fingerprintBridge: true`，由本机宿主持有一个仅处理页面指纹批次的常驻进程，默认关闭。每次复核仍重新读取身份、校验权限并请求独立服务；管理读取和写入继续使用原路径。桥接限制并发与超时，异常或断线时不返回旧结果；页面 12 秒失效边界不变。此选项仅支持已验证的 Windows 预览环境，不能作为大库、多用户或正式日用验收。
+
 preview.38 / Core 0.1.38 提供默认关闭的 `privateCapture: true`：页面仅请求启动本机原生私密记录窗口，内容直接经加密通道写入已配置保护收件箱，不属于 dsh 聊天或当前会话。须另安装 Core 的 vault 依赖，并以 `--protected-inbox` / `--protected-keys` 启动独立服务；见[私密采集契约](../../docs/contracts/protected-inbox-v1.md)。网页的启动提示不代表窗口已打开或保存成功，应在本机窗口确认。宿主正常卸载会关闭其窗口，异常退出后窗口可能仍在；锁屏/截图/输入法及同账户恶意进程不属于强隔离保障。正式私密会话和本人认证后交付尚未完成。
 
 preview.37 在页面读取失败且没有可显示数据时，只展示错误提示，不再同时显示空记忆和零条分页；恢复后仍可刷新，真实空结果仍显示空态。安全复核和日用门禁不变。
@@ -81,6 +83,7 @@ python -m evernook.service --config 'C:/external/memory/runtime.json' --maintena
     maintenanceAccess: 'C:/external/memory/mcp-access-management.json'
     entry: dsh
     streamMode: durable_text
+    # fingerprintBridge: true  # 可选；须安装 Core 0.1.39 或更新
 ```
 
 ```powershell

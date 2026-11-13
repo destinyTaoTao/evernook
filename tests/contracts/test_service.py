@@ -149,6 +149,38 @@ class ServiceTests(unittest.TestCase):
         self.start()
         self.assertNotEqual(manage('fingerprint')['token'], changed['token'])
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows host-owned worker')
+    def test_fingerprint_worker_only_returns_bounded_authorized_tokens(self) -> None:
+        access_path = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id=self.access.client_id, entry='test', access_path=access_path)
+        request = {'id': 'a' * 32, 'requests': [{'view': 'timeline'}]}
+        invalid = {'id': 'b' * 32, 'requests': [{'view': 'timeline', 'secret': 'synthetic-never-echo'}]}
+        worker = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.fingerprint_worker', '--config', str(self.config),
+            '--access', str(access_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            assert worker.stdin and worker.stdout
+            def ask(value: dict[str, Any]) -> dict[str, Any]:
+                assert worker.stdin and worker.stdout
+                worker.stdin.write(json.dumps(value) + '\n'); worker.stdin.flush()
+                return json.loads(worker.stdout.readline())
+            first = ask(request)
+            self.assertRegex(first['tokens'][0], r'^[a-f0-9]{64}$')
+            self.client.call(self.access, 'remember', {'event': self.event()})
+            self.assertNotEqual(first['tokens'], ask({**request, 'id': 'c' * 32})['tokens'])
+            self.assertEqual(ask(invalid), {'id': 'b' * 32, 'error': 'fingerprint_unavailable'})
+            paired = self.client.call(self.access, 'pair-client', {'client_id': 'capture-only', 'entry': 'other',
+                'scopes': ['capture', 'recall']})
+            original_access = access_path.read_bytes()
+            access_path.write_bytes(Path(paired['access_file']).read_bytes())
+            self.assertEqual(ask({**request, 'id': 'e' * 32}), {'id': 'e' * 32, 'error': 'fingerprint_unavailable'})
+            access_path.write_bytes(original_access)
+            self.processes[0].terminate(); self.processes[0].wait(timeout=15)
+            self.assertEqual(ask({**request, 'id': 'd' * 32}), {'id': 'd' * 32, 'error': 'fingerprint_unavailable'})
+        finally:
+            worker.kill()
+            out, err = worker.communicate(timeout=15)
+            self.assertNotIn('synthetic-never-echo', out + err)
+
     def test_trusted_learning_commands_use_service_and_deny_capture_only_clients(self) -> None:
         def command(name: str, value: dict[str, object]) -> object:
             return self.client.call(self.access, 'cli', {'command': name, 'input': value})

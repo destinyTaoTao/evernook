@@ -8,6 +8,7 @@ import { MemoryClient } from './client.ts';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import { createRecovery } from './dsh-recovery.ts';
 import { PrivateWindow } from './private-window.ts';
+import { FingerprintBridge } from './fingerprint-bridge.ts';
 
 export const name = 'dsh-evernook';
 export const inject = ['connection', 'sessions', 'sessionPersistence', 'systemPrompt', 'llm', 'agents'];
@@ -18,6 +19,7 @@ export interface Config {
   reflection?: boolean;
   reflectionAllowRemote?: boolean;
   privateCapture?: boolean;
+  fingerprintBridge?: boolean;
 }
 export const Config: z<Config> = z.object({
   python: z.string().default(''), config: z.string().default(''), access: z.string().default(''),
@@ -27,6 +29,7 @@ export const Config: z<Config> = z.object({
   reflection: z.boolean().default(false),
   reflectionAllowRemote: z.boolean().default(false),
   privateCapture: z.boolean().default(false),
+  fingerprintBridge: z.boolean().default(false),
 });
 interface Connection {
   fetch: { register(route: { path: string; methods: readonly string[]; requestBody: 'streaming';
@@ -47,6 +50,7 @@ export async function installWeb(ctx: Context, config: Config) {
   const csrf = randomBytes(32).toString('hex');
   const configured = [config.python, config.config, config.access, config.maintenanceAccess].every(Boolean);
   const privateWindow = configured && config.privateCapture ? new PrivateWindow(config) : undefined;
+  const fingerprintBridge = configured && config.fingerprintBridge ? new FingerprintBridge({ ...config, access: config.maintenanceAccess }) : undefined;
   if (!configured && [config.python, config.config, config.access, config.maintenanceAccess].some(Boolean)) {
     throw new Error('evernook:incomplete_web_config');
   }
@@ -55,8 +59,10 @@ export async function installWeb(ctx: Context, config: Config) {
     reflectionAllowRemote: config.reflectionAllowRemote, serviceRequired: true };
   async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' = 'manage') {
     if (running.size >= 4) throw new Error('evernook:management_busy');
-    const promise = runLocalCli(options, config.maintenanceAccess, operation, input,
-      signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal);
+    const requestSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+    const promise = fingerprintBridge && operation === 'manage' && input.action === 'fingerprints' && Object.keys(input).length === 2
+      ? fingerprintBridge.request(input.requests, requestSignal)
+      : runLocalCli(options, config.maintenanceAccess, operation, input, requestSignal);
     running.add(promise);
     try { return await promise; } finally { running.delete(promise); }
   }
@@ -164,10 +170,10 @@ export async function installWeb(ctx: Context, config: Config) {
   try {
     if (!connection?.fetch?.register) throw new Error('evernook:web_connection_unavailable');
     unregister = connection.fetch.register({ path: '/api/evernook/manage', methods: ['POST'], requestBody: 'streaming', fetch: handle });
-  } catch (error) { lifetime.abort(); await recovery?.close(); await memory?.close(); throw error; }
+  } catch (error) { lifetime.abort(); fingerprintBridge?.close(); await recovery?.close(); await memory?.close(); throw error; }
   return { handle, async close() {
     if (closed) return;
-    closed = true; unregister?.(); lifetime.abort(); privateWindow?.close();
+    closed = true; unregister?.(); lifetime.abort(); privateWindow?.close(); fingerprintBridge?.close();
     await recovery?.close();
     await Promise.allSettled([...running]);
     await memory?.close();
