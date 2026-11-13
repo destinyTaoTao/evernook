@@ -87,6 +87,10 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(self.ui.confirm(self.access, preview["proposal_id"], operation)["state"], "suppressed")
 
     def test_permissions_expiry_payload_binding_and_cross_client(self) -> None:
+        status = self.ui.read(self.access, view="status")
+        self.assertEqual(status["configuration_schema_version"], 1)
+        self.assertFalse(status["daily_admitted"])
+        self.assertNotIn("token", json.dumps(status))
         ordinary_path = self.config.parent / "mcp-access-ordinary.json"
         pair_client(self.config, client_id="ordinary", entry="dsh", access_path=ordinary_path, scopes=("capture", "recall"))
         ordinary = self.runtime.access_from_file(ordinary_path)

@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 test('memory links use the confirmed profile page and re-read source on click', async () => {
-  let plugin, page, cursor = 0, sourceAvailable = false;
+  let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true;
   const state = [], effects = [], refs = [], calls = [];
   const React = {
     Fragment: Symbol('fragment'),
@@ -38,6 +38,9 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const fetch = async (_url, options) => {
     const body = JSON.parse(options.body); calls.push(body);
     if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh' });
+    if (body.view === 'status') return statusAvailable
+      ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
+      : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'profiles') return Response.json({ result: { next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
@@ -71,6 +74,13 @@ test('memory links use the confirmed profile page and re-read source on click', 
     for (const child of node.children ?? []) { const found = find(child, predicate); if (found) return found; }
   };
   let tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnostics')));
+  assert.ok(calls.some(call => call.view === 'status'));
+  statusAvailable = false;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.some(child => typeof child === 'string' && child.includes('diagnosticUnavailable'))));
+  statusAvailable = true;
   const network = find(tree, node => node.type === 'button' && node.children.includes('network'));
   assert.ok(network); network.props.onClick();
   tree = render(); await flush(); tree = render();

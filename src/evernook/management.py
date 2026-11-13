@@ -212,7 +212,8 @@ class MemoryManagement:
             if view == "status":
                 count = db.execute("SELECT count(*) FROM messages").fetchone()[0]
                 return {"messages": count, "preview": True, "daily_admitted": False,
-                        "ordinary_memory_encrypted": False, "supported_actions": sorted(_OPERATIONS)}
+                        "ordinary_memory_encrypted": False, "configuration_schema_version": 1,
+                        "supported_actions": sorted(_OPERATIONS)}
         raise MemoryFailure("invalid_management_view")
 
     @staticmethod
