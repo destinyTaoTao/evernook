@@ -11,7 +11,7 @@ import time
 import unittest
 from typing import Any
 
-from evernook import Event, Source, initialize
+from evernook import Access, Event, Source, initialize
 from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient
@@ -88,6 +88,30 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "unknown_service_operation"):
             self.client.call(self.access, "arbitrary-command", {"secret": "synthetic"})
         self.assertEqual(self.client.call(self.access, "status", {})["ledger"]["messages"], 0)
+
+    def test_versioned_management_projection_across_paired_clients_and_restart(self) -> None:
+        def manage(action: str) -> dict[str, Any]:
+            return self.client.call(self.access, 'cli', {'command': 'manage',
+                'input': {'action': action, 'view': 'timeline'}})
+        initial = manage('read-versioned')
+        self.assertEqual(manage('fingerprint'), {'token': initial['token']})
+        self.assertEqual(manage('fingerprint'), {'token': initial['token']})
+        paired = self.client.call(self.access, 'pair-client', {'client_id': 'peer', 'entry': 'peer',
+            'scopes': ['capture', 'recall']})
+        peer = Access(**json.loads(Path(paired['access_file']).read_text(encoding='utf-8')))
+        second = ServiceClient(self.config)
+        event = asdict(Event(Source('peer', 'synthetic', 'main', '1'), 'user', 1,
+                             None, 'complete', '合成：跨客户端记录'))
+        second.call(peer, 'remember', {'event': event})
+        changed = manage('fingerprint')
+        self.assertNotEqual(initial['token'], changed['token'])
+        self.assertNotIn('合成', json.dumps(changed, ensure_ascii=False))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            second.call(peer, 'cli', {'command': 'manage', 'input': {'action': 'fingerprint', 'view': 'timeline'}})
+        self.processes[0].terminate()
+        self.processes[0].wait(timeout=15)
+        self.start()
+        self.assertNotEqual(manage('fingerprint')['token'], changed['token'])
 
     def test_trusted_learning_commands_use_service_and_deny_capture_only_clients(self) -> None:
         def command(name: str, value: dict[str, object]) -> object:

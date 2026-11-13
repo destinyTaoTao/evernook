@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from evernook import Event, EvidenceSpan, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.management import MemoryManagement
@@ -88,6 +89,46 @@ class ManagementTests(unittest.TestCase):
         with self.runtime._connection() as db:
             db.execute("DROP TRIGGER synthetic_failure")
         self.assertEqual(self.ui.confirm(self.access, preview["proposal_id"], operation)["state"], "suppressed")
+
+    def test_projection_token_tracks_visibility_without_exposing_content_or_audit_noise(self) -> None:
+        source_id = self.draft()
+        self.apply({'kind': 'profile_confirm', 'tag_id': 'birding'})
+        arguments = {'view': 'network_graph', 'entry': 'owner', 'session_id': 'synthetic-session'}
+        first = self.ui.read_versioned(self.access, **arguments)
+        self.assertTrue(first['value']['nodes'])
+        self.assertEqual(len(first['token']), 64)
+        for _ in range(2):
+            token = self.ui.fingerprint(self.access, **arguments)
+            self.assertEqual(token, {'token': first['token']})
+            self.assertNotIn('观鸟', json.dumps(token, ensure_ascii=False))
+        other = self.ui.fingerprint(self.access, view='network_graph', entry='other')
+        self.assertNotEqual(other['token'], first['token'])
+        source = self.ui.read_versioned(self.access, view='source', message_id=source_id)
+        self.apply({'kind': 'source_suppress', 'message_id': source_id})
+        self.assertNotEqual(self.ui.fingerprint(self.access, **arguments)['token'], first['token'])
+        with self.assertRaisesRegex(MemoryFailure, 'source_unavailable'):
+            self.ui.fingerprint(self.access, view='source', message_id=source_id)
+        self.assertIn('观鸟', source['value']['text'])
+        self.assertNotEqual(MemoryManagement(MemoryRuntime(self.config)).fingerprint(self.access, **arguments)['token'],
+                            self.ui.fingerprint(self.access, **arguments)['token'])
+        ordinary_path = self.config.parent / 'mcp-access-ordinary.json'
+        pair_client(self.config, client_id='ordinary', entry='ordinary', access_path=ordinary_path, scopes=('capture', 'recall'))
+        ordinary = self.runtime.access_from_file(ordinary_path)
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.ui.fingerprint(ordinary, **arguments)
+
+    def test_projection_token_remains_bound_to_the_snapshot_during_a_racing_change(self) -> None:
+        source_id = self.draft()
+        self.apply({'kind': 'profile_confirm', 'tag_id': 'birding'})
+        original_read = self.ui.read
+        def racing_read(*args: object, **kwargs: object) -> dict[str, object]:
+            value = original_read(*args, **kwargs)
+            self.apply({'kind': 'source_suppress', 'message_id': source_id})
+            return value
+        with patch.object(self.ui, 'read', side_effect=racing_read):
+            snapshot = self.ui.read_versioned(self.access, view='network_graph')
+        self.assertTrue(snapshot['value']['nodes'])
+        self.assertNotEqual(self.ui.fingerprint(self.access, view='network_graph')['token'], snapshot['token'])
 
     def test_permissions_expiry_payload_binding_and_cross_client(self) -> None:
         status = self.ui.read(self.access, view="status")

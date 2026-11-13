@@ -315,6 +315,10 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         action = value.pop("action", None)
         if action == "read":
             return management.read(access, **value)
+        if action == "read-versioned":
+            return management.read_versioned(access, **value)
+        if action == "fingerprint":
+            return management.fingerprint(access, **value)
         if action == "preview":
             return management.preview(access, **value)
         if action == "confirm":

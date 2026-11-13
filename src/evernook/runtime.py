@@ -363,6 +363,8 @@ def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: 
 class MemoryRuntime:
     def __init__(self, config_path: Path, *, service_owner: bool = False):
         self._service_owner = service_owner
+        # A fresh in-memory key makes management-view tokens invalid across restarts.
+        self._management_view_key = secrets.token_bytes(32)
         config_path = external(config_path)
         config = _load(config_path)
         base_keys = {"schema_version", "data_dir", "busy_timeout_ms"}

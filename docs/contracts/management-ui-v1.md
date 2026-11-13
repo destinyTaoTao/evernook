@@ -6,6 +6,8 @@
 
 ## 查询
 
+`manage` 的 `read-versioned` 使用与 `read` 相同的参数和授权，返回同一次已核验投影的 `value` 与不含正文的 `token`；`fingerprint` 使用相同参数重新读取并仅返回 token。令牌是按调用身份、参数和实际投影计算的进程内密钥 HMAC；无关审计写入不改变它，服务重启或投影变化会使其变化。它不是全库修改水位：不影响该页结果的修改可以不改变令牌，每次指纹都要重新执行该页的有界读取。直接启动独立 CLI 时每次都有新进程及新密钥，因此不能用它跨 CLI 调用比较；跨调用使用独立记忆服务。该接口本身不推送通知，也不能撤回已交付的正文；页面轮询、过期清空与断线处理仍由 #134 实现。
+
 `{"action":"read","view":...}` 提供 profiles、drafts、suppressed、history、timeline、source、status。列表最多50项，默认25，按 next_offset 继续；由于来源过滤允许空页带下一游标。source 每页2048 Unicode code points，用 next_cursor 读取余下内容。画像列表不复制证据正文，按来源ID另行分页。timeline 支持 session_id 与最长256字符的字面子串 query，不冒充语义检索；发生时间未知保持 null，记录时间单列。普通管理读取不绕过来源抑制或提供保险库明文。
 
 ## 预览与确认

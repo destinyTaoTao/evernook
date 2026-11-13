@@ -44,6 +44,17 @@ class MemoryManagement:
         if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 50:
             raise MemoryFailure("invalid_page")
 
+    def read_versioned(self, access: Access, **arguments: Any) -> dict[str, Any]:
+        """Bind an authorized bounded projection to an opaque process-local token."""
+        value = self.read(access, **arguments)
+        payload = _json({'client_id': access.client_id, 'arguments': arguments, 'value': value}).encode('utf-8')
+        token = hmac.digest(self.runtime._management_view_key, b'management-projection-v1\0' + payload, hashlib.sha256).hex()
+        return {'value': value, 'token': token}
+
+    def fingerprint(self, access: Access, **arguments: Any) -> dict[str, str]:
+        # Reuse the same authorized read, including source/version checks. No content is returned.
+        return {'token': str(self.read_versioned(access, **arguments)['token'])}
+
     @staticmethod
     def _profile(record: Any) -> dict[str, Any]:
         value: dict[str, Any] = asdict(record)
