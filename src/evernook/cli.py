@@ -213,7 +213,7 @@ def _parser() -> Parser:
             command.add_argument("--budget-seconds", type=float, default=120)
         if name == "refresh-search-checkpoint":
             command.add_argument("--limit", type=int, default=5000)
-        if name in ("recall", "refresh-semantic", "semantic-status") or name.startswith('topic-view-'):
+        if name in ("recall", "refresh-semantic", "semantic-status", "manage") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
             command.add_argument("--extraction-config", type=Path, required=True)
@@ -323,9 +323,17 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         return reflector.reflect(access, **value, cancel=service_cancel)
     if args.command == "manage":
         from .management import MemoryManagement
-        management = MemoryManagement(runtime)
         value = read_input()
         action = value.pop("action", None)
+        graph = value.get('view') == 'network_graph' or (action == 'fingerprints'
+            and isinstance(value.get('requests'), list)
+            and any(isinstance(item, dict) and item.get('view') == 'network_graph' for item in value['requests']))
+        if graph and getattr(args, 'embedding_config', None) is not None:
+            from .topic_views import TopicViews
+            backend = load_embedding(args.embedding_config)
+            management = MemoryManagement(runtime, TopicViews(runtime, SemanticRecall(runtime, backend)))
+        else:
+            management = MemoryManagement(runtime)
         if action == "read":
             return management.read(access, **value)
         if action == "read-versioned":

@@ -227,6 +227,25 @@ class ServiceTests(unittest.TestCase):
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 2)
 
+    def test_graph_topic_node_invalidates_after_second_client_write(self) -> None:
+        def command(name: str, value: dict[str, object]) -> Any:
+            return self.client.call(self.access, 'cli', {'command': name, 'input': value})
+        self.client.call(self.access, 'remember', {'event': self.event()})
+        command('topic-view-define', {'request_id': 'define', 'view_id': 'wetland', 'expected_revision': 0,
+            'definition': {'title': '湿地', 'purpose': '合成专题', 'query': '湿地'}})
+        self.assertEqual(command('topic-view-refresh', {'view_id': 'wetland', 'timeout': 10})['state'], 'valid')
+        page = command('manage', {'action': 'read-versioned', 'view': 'network_graph'})
+        self.assertTrue(any(node['kind'] == 'topic' for node in page['value']['nodes']))
+        paired = self.client.call(self.access, 'pair-client', {'client_id': 'peer-topic', 'entry': 'peer',
+            'scopes': ['capture', 'recall']})
+        peer = Access(**json.loads(Path(paired['access_file']).read_text(encoding='utf-8')))
+        event = Event(Source('peer', 'synthetic', 'main', 'new'), 'user', 1, None, 'complete', '合成：另一个入口新消息。')
+        ServiceClient(self.config).call(peer, 'remember', {'event': asdict(event)})
+        token = command('manage', {'action': 'fingerprint', 'view': 'network_graph'})
+        self.assertNotEqual(page['token'], token['token'])
+        changed = command('manage', {'action': 'read', 'view': 'network_graph'})
+        self.assertFalse(any(node['kind'] == 'topic' for node in changed['nodes']))
+
     def test_second_process_refuses_same_ledger(self) -> None:
         other = subprocess.run([sys.executable, "-B", "-m", "evernook.service",
             "--config", str(self.config)], capture_output=True, timeout=15)

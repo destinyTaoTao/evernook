@@ -230,7 +230,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 raise MemoryFailure("invalid_arguments")
             parser_arguments += ["--message-id", arguments["input"]["message_id"]]
         namespace = _parser().parse_args(parser_arguments)
-        if command == "recall" or command.startswith('topic-view-'):
+        if command in ("recall", "manage") or command.startswith('topic-view-'):
             namespace.embedding_config = embedding_config
         return _execute(namespace, input_value=arguments["input"],
             service_runtime=runtime, service_access=access, service_cancel=cancel)

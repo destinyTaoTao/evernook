@@ -8,7 +8,7 @@ import hmac
 import json
 import sqlite3
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from .candidates import EvidenceSpan
@@ -17,13 +17,19 @@ from .profile import ProfileDecision, ProfileRegistry
 from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _time
 from .safety import credential_signal
 
+if TYPE_CHECKING:
+    from .topic_views import TopicViews
+
 
 class MemoryManagement:
     """The trusted host must establish the actual user click before calling confirm."""
 
-    def __init__(self, runtime: MemoryRuntime):
+    def __init__(self, runtime: MemoryRuntime, topic_views: TopicViews | None = None):
         self.runtime = runtime
         self.profiles = ProfileRegistry(runtime)
+        if topic_views is not None and topic_views.runtime is not runtime:
+            raise MemoryFailure('invalid_topic_view_runtime')
+        self.topic_views = topic_views
 
     def _authorize(self, access: Access) -> Any:
         identity = self.runtime._require_scope(access, "maintain", "memory_management")
@@ -152,6 +158,20 @@ class MemoryManagement:
                 add('observation', observed.observation_id, observation_view.conclusion, observed.revision, observation_view.state, observed.draft.category,
                     [{'source_id': context['message_id'], 'kind': context['stance']} for context in observation_view.source_contexts],
                     observed.draft.inference)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='topic_view_definitions_v1'").fetchone():
+            from .topic_views import TopicViews
+            topics = self.topic_views or TopicViews(self.runtime)
+            for row in rows('topic_view_definitions_v1', """SELECT d.view_id FROM topic_view_definitions_v1 d
+                WHERE NOT EXISTS (SELECT 1 FROM topic_view_definitions_v1 n WHERE n.view_id=d.view_id AND n.revision>d.revision)
+                AND d.state='active' ORDER BY d.view_id LIMIT ? OFFSET ?"""):
+                topic = topics._read(db, row[0])
+                if topic.state not in {'valid', 'conflict'} or topic.data is None or topic.definition is None:
+                    continue
+                edges = [{'source_id': item['message_id'], 'kind': 'evidence'} for item in topic.data['raw_excerpts']]
+                for observed in topic.data['observations']:
+                    for stance in ('support', 'counterevidence'):
+                        edges.extend({'source_id': span['message_id'], 'kind': stance} for span in observed[stance])
+                add('topic', topic.view_id, topic.definition.title, topic.snapshot_revision, topic.state, None, edges, True)
         return {'nodes': nodes, 'next_offset': offset + limit if has_more else None}
 
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,

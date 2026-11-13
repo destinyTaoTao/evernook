@@ -61,6 +61,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
       { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
       { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
       { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence' }] },
+      { kind: 'topic', id: 't', revision: 1, state: 'valid', inference: true, label: '合成主题', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
     ] });
     if (body.view === 'timeline') return timelineAvailable ? respond({ next_offset: null, items: [] })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
@@ -112,6 +113,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
   assert.ok(find(tree, node => node.children?.includes('合成事实')));
   assert.ok(find(tree, node => node.children?.includes('合成观察')));
+  assert.ok(find(tree, node => node.children?.includes('合成主题')));
   assert.ok(calls.some(call => call.view === 'network_graph'));
   delayGraph = true; windowListeners.get('focus')(); tree = render(); await flush();
   assert.ok(resolveGraph);

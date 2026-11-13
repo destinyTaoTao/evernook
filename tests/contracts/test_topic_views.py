@@ -50,6 +50,64 @@ class TopicViewTests(unittest.TestCase):
         self.assertEqual(other.snapshot_revision, refreshed.snapshot_revision)
         self.assertEqual(other.data, refreshed.data)
 
+    def test_management_graph_only_exposes_current_topic_with_authorized_evidence(self) -> None:
+        from evernook.management import MemoryManagement
+        source = self.save('合成：我们在湿地见过白鹭。')
+        self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
+        self.views.refresh(self.access, 'wetland', timeout=10)
+        ui = MemoryManagement(self.runtime, self.views)
+        page = ui.read_versioned(self.access, view='network_graph', entry='owner', session_id='history')
+        topics = [node for node in page['value']['nodes'] if node['kind'] == 'topic']
+        self.assertEqual(len(topics), 1)
+        self.assertEqual(topics[0]['label'], '湿地经历')
+        self.assertEqual(topics[0]['edges'], [{'source_id': source, 'kind': 'evidence'}])
+        self.assertFalse(ui.read(self.access, view='network_graph', entry='other')['nodes'])
+        self.assertFalse(ui.read(self.access, view='network_graph', since='2021-01-01T00:00:00Z')['nodes'])
+        with self.runtime._connection() as db:
+            expiry = db.execute("SELECT expires_at FROM topic_view_snapshots_v1 WHERE view_id='wetland'").fetchone()[0]
+            db.execute("UPDATE topic_view_snapshots_v1 SET expires_at='2000-01-01T00:00:00Z' WHERE view_id='wetland'")
+        self.assertFalse(ui.read(self.access, view='network_graph')['nodes'])
+        with self.runtime._connection() as db:
+            db.execute("UPDATE topic_view_snapshots_v1 SET expires_at=? WHERE view_id='wetland'", (expiry,))
+        processor = self.views.processor
+        self.views._processor_identity = 'changed-processor'
+        self.assertFalse(ui.read(self.access, view='network_graph')['nodes'])
+        self.views._processor_identity = processor
+        confirmation = self.save('合成：停止旧来源。')
+        self.assertFalse(ui.read(self.access, view='network_graph')['nodes'])
+        self.assertNotEqual(ui.fingerprint(self.access, view='network_graph', entry='owner', session_id='history')['token'], page['token'])
+        self.views.refresh(self.access, 'wetland', timeout=10)
+        self.runtime.change(self.access, Change('hide-topic-source', source, 1, 'suppress', confirmation, 'synthetic'))
+        self.assertFalse(ui.read(self.access, view='network_graph')['nodes'])
+        self.views.control(self.access, 'pause-topic', 'wetland', 1, action='pause')
+        self.assertFalse(ui.read(self.access, view='network_graph')['nodes'])
+
+    def test_management_service_graph_uses_service_embedding_identity(self) -> None:
+        from evernook import SemanticRecall
+        from evernook.service import dispatch
+        from tests.contracts.test_semantic import SyntheticEmbedding
+        backend = SyntheticEmbedding()
+        self.views = TopicViews(self.runtime, SemanticRecall(self.runtime, backend))
+        self.save('合成：我们在湿地见过白鹭。')
+        self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
+        self.views.refresh(self.access, 'wetland', timeout=10)
+        request = {'version': 1, 'access': asdict(self.access), 'operation': 'cli',
+            'arguments': {'command': 'manage', 'input': {'action': 'read', 'view': 'network_graph'}}}
+        with patch('evernook.cli.load_embedding', return_value=backend) as load:
+            result = dispatch(self.runtime, request, embedding_config=self.root / 'trusted-embedding.json')
+        load.assert_called_once_with(self.root / 'trusted-embedding.json')
+        assert isinstance(result, dict)
+        self.assertTrue(any(node['kind'] == 'topic' for node in result['nodes']))
+        batch = {'version': 1, 'access': asdict(self.access), 'operation': 'cli',
+            'arguments': {'command': 'manage', 'input': {'action': 'fingerprints', 'requests': [{'view': 'network_graph'}]}}}
+        with patch('evernook.cli.load_embedding', return_value=backend):
+            token = dispatch(self.runtime, batch, embedding_config=self.root / 'trusted-embedding.json')
+        assert isinstance(token, dict)
+        self.assertEqual(len(token['tokens'][0]), 64)
+        without = dispatch(self.runtime, request)
+        assert isinstance(without, dict)
+        self.assertFalse(any(node['kind'] == 'topic' for node in without['nodes']))
+
     def test_new_evidence_and_retraction_are_distinct_clocks_and_old_body_is_never_read(self) -> None:
         source = self.save('合成：湿地见白鹭。')
         self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
