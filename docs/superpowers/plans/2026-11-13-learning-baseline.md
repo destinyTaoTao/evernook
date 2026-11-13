@@ -227,3 +227,18 @@ Final: 正确前缀下tool-data已从空弃答变成3项，严格gold仍3而失�
 - [x] 回归、类型检查、最终diff/独立复核，单次相关提交推送并同步#120/#106，保留无关工作区改动。
 
 Final: 五条件严格6/4/4/6/6，可回答4/2/2/3/3，无条件达到原筛选线。4B refs-schema修复助手历史描述、数量和转述理由三焦点例，但三个多跳全失败；两个4B工作集约2105.4MiB，超过2GiB。不接入生产、不扩跑候选原八例，#120/default-off及日用门禁保留。51项、strict mypy147+9/Node及50条原字节重算通过；详见docs/reports/reflection-structured-2026-11-13.md。最终独立复核与提交信息同步GitHub。
+
+## Task 12 — #120 多跳目标与关系支持：不同训练家族/原生推理
+
+基线6ec6346。已有2B flat三个多跳全过；4B flat的地点目标错、人物关系漏引，refs又扩大到三个漏引，证明去掉引文不是可用修复。本轮保留flat语义协议、原三个演示及全部问题/角色，换训练家族和原生推理，而不追加关系规则、路由器、提示或来源合并。
+
+- [x] 固定作者GGUF：Granite4.0-H-Micro Q3_K_L（dc1dd2585fac18a78001c677d33ef8a7bbb7eb68，1637523104bytes，5dc8e86b93be7fda95ed332cf1b954b0b8a535812dc3f97b5860e21b4793a6b5），贪心/非思考seed12009；Granite4.2-3B Q3_K_M（c40945d71cd90f249a56985e8155551a9188dc30，1835968032bytes，cf620d4d440f544ece5e6257ed86539d7729d75c3585c9e17dd74d2632a34322），作者要求temperature1/top_p.95，其他过滤中性，非思考seed120121、原生思考seed120122各一条件。4.0模型卡列RAG与中文、4.2有原生多步推理训练；这是选择依据，不能代替实际质量。
+- [x] 仅扩展admission候选generation配置可选top_p，兼容旧profile；验证完整原生模板及thinking prefix，实际GGUF/发行包/模板/消息/字节/token/来源身份留存。两者模板均不使用bos_token/eos_token变量，不增加额外语义适配。新增配置RED→GREEN，冻结judge不改。
+- [x] 三条件各完整十例，无constrained/refs、不选seed/逐题调参；统一使用Task11 compact-memory（ubatch32、FA on、K/V q4_0、batch128/context4608），原30s/4096输入/512全部输出/4线程不变。thinking消耗相同输出预算，未闭合/超时保留真实成本。模型卡推荐更长输出不作为扩大本票预算的授权。
+- [x] 沿用>=8/10、positive>=5/6、四负例错误肯定0、完整有效输出、owned private/working-set各<=2GiB，查询失败及250ms观察边界如实保留。仅同时达到质量/资源后才以相同条件独立复验并扩展原八例；再决定可选接入，日用保持独立门禁。不满足则不加入Core profile，不把新格式/安全规则算模型理解。
+- [x] 最终必要回归/类型检查/原字节与资源重算、一次独立只读审查；本票相关增量一提交推送，更新#120/#106及实际限制，不动已有无关文件。
+
+Ruling（新家族完整结果前预定）: 若三个Granite条件均未同时通过质量/资源，仅追加一个2B Q4 flat-schema的evidence-first原生解码次序控制：support→action→value，贪心seed12009、ubatch128，其他与Task11 flat-schema相同 — 现有4B在生成value之后才复制支持原文，须检验“先生成选中的原话再决定答案”是否能改善目标/完整关系，同时保留逐字引用 — 不修改任何messages或演示顺序、不加语义句、规则、额外模型轮次或token；schema的标准语义规范化后与原schema完全一致，只改变本机语法转换器的属性解码次序，允许空/部分引用、自由value及全部既有只读动作。不做“总是引用全部来源”等自动修补，最终仍走原严格judge。通过同样先复验/原八例，失败后本轮不再加条件。
+
+
+Final: 四组各完整十例，Granite4.0为5/10（positive4、冻结动作指标错误肯定1，实际value为无）、4.2非思考0/10含六无效、原生思考十例超时；预定2B引文先行全部选择只读动作（7 search/3 read），无最终判断。全部WS观察值在2GiB内，4.2非思考2次查询失败保留；十次超时的229–261生成ID仅下界，不伪记完整usage或0。54项、strict mypy147+10及Node通过，30完成生成重算+10部分日志核对；原src/eval/协议/评分不改，无候选原八例或生产接入。独立审查与实际提交信息同步GitHub；详见docs/reports/reflection-relations-2026-11-13.md。

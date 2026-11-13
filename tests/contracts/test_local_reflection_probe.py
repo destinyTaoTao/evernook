@@ -14,9 +14,31 @@ import zipfile
 
 from probes.admission.local_reflection import collect, generation_options, model_template, verify_assets
 from probes.admission.semantic_reflection import load_cases
+from probes.admission.evidence_order import collect as collect_evidence_first
 
 
 class LocalReflectionProbeTests(unittest.TestCase):
+    def test_evidence_first_driver_preserves_fixed_conditions_and_tracks_itself(self) -> None:
+        cases, _ = load_cases(Path('eval/zh-reflection-semantics-v1'))
+        from probes.admission.semantic_reflection import packet
+        from probes.admission import local_reflection
+        payload, _ = packet(cases[0])
+        def run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            self.assertEqual(args[1], 'qwen35-2b-q4')
+            self.assertEqual(kwargs, {'mode': 'greedy', 'seed': 12009, 'wire': 'flat', 'constrained': True, 'compact_memory': False})
+            properties = getattr(local_reflection, 'schema')(payload, 'flat')['oneOf'][0]['properties']
+            self.assertEqual(list(properties), ['support', 'action', 'value'])
+            return {'identity': {}, 'collector_unchanged': True, 'scope': 'Synthetic-only.', 'quality_screen': False}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch('probes.admission.evidence_order.native.collect', side_effect=run):
+                result = collect_evidence_first(root, root, root / 'node', root / 'jinja')
+            self.assertIn('evidence_order.py', result['identity'])
+            self.assertTrue(result['collector_unchanged'])
+            self.assertFalse(result['quality_screen'])
+            self.assertEqual(json.loads((root / 'report.json').read_text(encoding='utf-8')), result)
+        self.assertEqual(list(getattr(local_reflection, 'schema')(payload, 'flat')['oneOf'][0]['properties']), ['action', 'value', 'support'])
+
     @unittest.skipUnless(sys.platform == 'win32', 'Windows native diagnostic runner')
     def test_reference_binding_cannot_hide_an_unsupported_affirmation(self) -> None:
         cases, digest = load_cases(Path('eval/zh-reflection-semantics-v1'))
@@ -88,6 +110,20 @@ class LocalReflectionProbeTests(unittest.TestCase):
         for invalid in ({}, {'generation': {'thinking': 'yes'}}):
             with self.subTest(spec=invalid), self.assertRaises(ValueError):
                 generation_options(invalid, 'profile', 120102)
+
+    def test_profile_nucleus_sampling_uses_the_authors_probability(self) -> None:
+        spec = {'generation': {'thinking': False, 'temperature': 1.0, 'top_k': 0, 'repeat_penalty': 1.0, 'top_p': 0.95}}
+        thinking, options = generation_options(spec, 'profile', 120121)
+        self.assertFalse(thinking)
+        self.assertEqual(options[options.index('--top-p') + 1], '0.95')
+        self.assertEqual(options[options.index('--top-k') + 1], '0')
+        for probability in (0, 1.01, float('nan'), True, '0.95'):
+            invalid = {'generation': {**spec['generation'], 'top_p': probability}}
+            with self.subTest(top_p=probability), self.assertRaisesRegex(ValueError, 'invalid_candidate_generation'):
+                generation_options(invalid, 'profile', 120121)
+        old = {'generation': {'thinking': False, 'temperature': 0.1, 'top_k': 50, 'repeat_penalty': 1.05}}
+        _, old_options = generation_options(old, 'profile', 120121)
+        self.assertEqual(old_options[old_options.index('--top-p') + 1], '1')
 
     def test_native_template_is_preserved_and_incomplete_gguf_is_rejected(self) -> None:
         def text(value: str) -> bytes:

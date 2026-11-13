@@ -35,13 +35,16 @@ def generation_options(spec: dict[str, Any], mode: str, seed: int) -> tuple[bool
         raise ValueError('invalid_candidate_seed')
     if mode == 'profile':
         value = spec.get('generation')
-        if (not isinstance(value, dict) or set(value) != {'thinking', 'temperature', 'top_k', 'repeat_penalty'}
-                or type(value['thinking']) is not bool or type(value['top_k']) is not int or not 1 <= value['top_k'] <= 1000
+        fields = {'thinking', 'temperature', 'top_k', 'repeat_penalty'}
+        if (not isinstance(value, dict) or set(value) not in (fields, fields | {'top_p'})
+                or type(value['thinking']) is not bool or type(value['top_k']) is not int or not 0 <= value['top_k'] <= 1000
                 or any(type(value[key]) not in (int, float) or not math.isfinite(value[key]) for key in ('temperature', 'repeat_penalty'))
-                or not 0 <= value['temperature'] <= 2 or not 1 <= value['repeat_penalty'] <= 2):
+                or not 0 <= value['temperature'] <= 2 or not 1 <= value['repeat_penalty'] <= 2
+                or type(value.get('top_p', 1)) not in (int, float) or not math.isfinite(value.get('top_p', 1))
+                or not 0 < value.get('top_p', 1) <= 1):
             raise ValueError('invalid_candidate_generation')
         return value['thinking'], ['--temp', str(value['temperature']), '--seed', str(seed), '--top-k', str(value['top_k']),
-            '--top-p', '1', '--min-p', '0', '--repeat-penalty', str(value['repeat_penalty']), '--repeat-last-n', '64',
+            '--top-p', str(value.get('top_p', 1)), '--min-p', '0', '--repeat-penalty', str(value['repeat_penalty']), '--repeat-last-n', '64',
             '--presence-penalty', '0', '--frequency-penalty', '0']
     if mode not in {'greedy', 'sampling', 'thinking'}:
         raise ValueError('invalid_candidate_mode')

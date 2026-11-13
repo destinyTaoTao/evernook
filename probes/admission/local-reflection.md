@@ -36,6 +36,12 @@ Task11增加三个彼此独立的诊断开关，默认全部关闭：`--wire ref
 
 `--compact-memory`仅调整CPU执行：physical batch32（原128）、flash-attention on、K/V q4_0；logical batch128、context4608、4线程、512全部输出和单例30秒不变。实测输入超过4096会被明确标为预算失败（诊断的后验计量，不是生产预检）。较强权重与此设置的比较包含两个变量，不宣称单变量模型能力结论。新IQ3权重仍为固定第三方量化，清单不构成Core profile或自动下载配置。
 
+Task12新增作者Granite4.0 H-Micro Q3_K_L及Granite4.2-3B Q3_K_M诊断资产。4.0使用greedy；4.2的两个profile分别固定原生非思考/思考，`--mode profile`采用作者temperature1/top_p.95（其他过滤中性）。generation允许可选`top_p`，缺省仍1，旧profile保持原参数；top_k=0关闭该过滤。二者实际内嵌模板与固定作者模板核对一致，均不依赖当前renderer的bos_token/eos_token变量，不能据此默认其他家族也兼容。
+
+独立的`probes/admission/evidence_order.py`只用于预定的Qwen3.5-2B Q4解码次序控制，接受与native collector相同的四个路径参数（assets/output/node/jinja），应同样经monitor运行。它固定greedy/seed12009/flat/constrained/原ubatch128；只将schema的support属性移到action/value之前，messages、演示、问题、角色、schema标准语义及严格judge均不改。原话由模型选择并逐字生成，允许空/部分支持，不自动补关系证据；少引、错目标值或错误决策仍失败。驱动文件另加入身份核验，原始schema/输入/输出留存。这是推理解码实验，不是Core可选后端或生产准入开关。
+
+timeout的`native-partial-stdout.bin`/`native-partial-stderr.log`保留。若部分日志可解析，可另报已观察的prompt/生成ID计数，但生成ID仅为部分下界，不是最终usage；没有完成的最终通道不参与语义成功计分，也不能把缺失usage记为0。
+
 最新完整结果与失败边界见[弃答定位与正确前缀重验](../../docs/reports/reflection-abstention-2026-11-13.md)；[早期记录](../../docs/reports/local-reflection-candidates-2026-11-13.md)保留传输缺陷更正。没有候选通过筛选时，不继续接入或重复宿主/安装验收。
 
 ## 弃答因果诊断

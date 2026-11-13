@@ -9,6 +9,7 @@ from evernook.models import MemoryFailure
 from evernook.reflection_protocol import build_messages
 from probes.admission.semantic_reflection import judge_generated, load_cases, packet
 from probes.admission.structured_reflection import messages, project, schema
+from probes.admission.evidence_order import ordered_schema
 
 
 class StructuredReflectionProbeTests(unittest.TestCase):
@@ -75,3 +76,18 @@ class StructuredReflectionProbeTests(unittest.TestCase):
         self.payload['question'] = '我的密码是 password=synthetic-only-123456'
         with self.assertRaises(MemoryFailure):
             messages(self.payload, 'refs')
+
+    def test_evidence_first_changes_only_schema_property_order(self) -> None:
+        ordinary = schema(self.payload, 'flat')
+        ordered = ordered_schema(self.payload, 'flat')
+        self.assertEqual(json.dumps(ordinary, sort_keys=True), json.dumps(ordered, sort_keys=True))
+        for before, after in zip(ordinary['oneOf'], ordered['oneOf']):
+            fields = list(after['properties'])
+            if 'support' in fields:
+                self.assertEqual(fields[0], 'support')
+                self.assertNotIn('required', after['properties']['support'])
+            else:
+                self.assertEqual(before, after)
+        self.assertEqual(ordered['oneOf'][0]['properties']['value'], {'type': 'string'})
+        with self.assertRaisesRegex(ValueError, 'invalid_candidate_order'):
+            ordered_schema(self.payload, 'refs')
