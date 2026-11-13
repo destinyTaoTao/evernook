@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import unittest
 
-from probes.admission.native_completion import completion_text, token_usage
+from probes.admission.native_completion import binary_input_bytes, completion_text, token_usage
 
 
 class NativeCompletionTests(unittest.TestCase):
+    def test_native_read_must_confirm_all_compiled_bytes(self) -> None:
+        header = b'Read 20 bytes from binary file C:\\synthetic\\prompt.txt\r\n'
+        self.assertEqual(binary_input_bytes(header + b'token piece \xe4\xba', 20), 20)
+        for invalid in (b'', header, header + header):
+            with self.subTest(stderr=invalid), self.assertRaisesRegex(ValueError, 'native_input_transport'):
+                binary_input_bytes(invalid, 21)
+
     def test_binary_token_logging_does_not_invalidate_ascii_metering(self) -> None:
         stderr = (b'0.00.010.001 I token piece: \xe4\xba\n'
             b'0.00.010.002 I llama_completion: number of tokens in prompt = 618\r\n'

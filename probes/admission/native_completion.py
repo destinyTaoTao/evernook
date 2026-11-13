@@ -4,6 +4,13 @@ from __future__ import annotations
 import re
 
 
+def binary_input_bytes(stderr: bytes, expected: int) -> int:
+    counts = re.findall(rb'^Read (\d+) bytes from binary file [^\r\n]+\r?$', stderr, re.MULTILINE)
+    if type(expected) is not int or not 1 <= expected <= 262144 or len(counts) != 1 or int(counts[0]) != expected:
+        raise ValueError('native_input_transport_mismatch')
+    return int(counts[0])
+
+
 def token_usage(stderr: bytes, cap: int) -> tuple[int, int]:
     # Verbose native token-piece logs can contain incomplete UTF-8 sequences.
     # Read only the actual logger's ASCII counters, never decode the whole log.

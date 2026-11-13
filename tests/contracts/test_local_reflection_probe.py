@@ -4,15 +4,63 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from typing import Any
 import zipfile
 
-from probes.admission.local_reflection import model_template, verify_assets
+from probes.admission.local_reflection import collect, generation_options, model_template, verify_assets
+from probes.admission.semantic_reflection import load_cases
 
 
 class LocalReflectionProbeTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows native diagnostic runner')
+    def test_native_runner_preserves_the_complete_generation_prefix(self) -> None:
+        cases, digest = load_cases(Path('eval/zh-reflection-semantics-v1'))
+        commands: list[list[str]] = []
+        def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            commands.append(command)
+            if command[1].endswith('native_chat.mjs'):
+                return subprocess.CompletedProcess(command, 0, b'synthetic native prefix\n', b'')
+            header = b''
+            if '--binary-file' in command:
+                size = len(Path(command[command.index('--binary-file') + 1]).read_bytes())
+                header = ('Read ' + str(size) + ' bytes from binary file synthetic\n').encode()
+            return subprocess.CompletedProcess(command, 0, b'{"action":"abstain","support":{}} [end of text]\n', header +
+                b'0.00.010.001 I llama_completion: number of tokens in prompt = 20\n0.00.010.002 D n_remain: 511\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch('probes.admission.local_reflection.verify_assets', return_value=({'file': 'synthetic.gguf'}, root, {})), \
+                    patch('probes.admission.local_reflection.digest', return_value='synthetic'), \
+                    patch('probes.admission.local_reflection.model_template', return_value='synthetic'), \
+                    patch('probes.admission.local_reflection.load_cases', return_value=(cases[:1], digest)), \
+                    patch('probes.admission.local_reflection.subprocess.run', side_effect=run):
+                collect(root, 'synthetic', root / 'output', root / 'node.exe', root / 'jinja')
+                failed_thinking = collect(root, 'synthetic', root / 'thinking-output', root / 'node.exe', root / 'jinja', mode='thinking')
+            native = commands[-1]
+            self.assertIn('--binary-file', native)
+            self.assertNotIn('-f', native)
+            self.assertEqual(Path(native[native.index('--binary-file') + 1]).read_bytes(), b'synthetic native prefix\n')
+            row = failed_thinking['rows'][0]
+            self.assertEqual(row['raw_judgment']['reason'], 'native_incomplete_thinking')
+            self.assertEqual((row['input_tokens'], row['output_tokens']), (20, 1))
+            self.assertEqual(row['finish'], 'eog')
+
+    def test_profile_decoding_does_not_reuse_another_models_parameters(self) -> None:
+        spec = {'generation': {'thinking': True, 'temperature': 0.05, 'top_k': 50, 'repeat_penalty': 1.05}}
+        thinking, options = generation_options(spec, 'profile', 120102)
+        self.assertTrue(thinking)
+        self.assertEqual(options[options.index('--temp') + 1], '0.05')
+        self.assertEqual(options[options.index('--top-k') + 1], '50')
+        self.assertEqual(options[options.index('--repeat-penalty') + 1], '1.05')
+        self.assertFalse(generation_options({}, 'greedy', 12009)[0])
+        for invalid in ({}, {'generation': {'thinking': 'yes'}}):
+            with self.subTest(spec=invalid), self.assertRaises(ValueError):
+                generation_options(invalid, 'profile', 120102)
+
     def test_native_template_is_preserved_and_incomplete_gguf_is_rejected(self) -> None:
         def text(value: str) -> bytes:
             data = value.encode(); return struct.pack('<Q', len(data)) + data

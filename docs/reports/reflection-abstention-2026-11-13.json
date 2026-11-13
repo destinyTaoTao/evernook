@@ -1,0 +1,791 @@
+{
+  "schema_version": 1,
+  "scope": "Corrected binary-file native transport. Full frozen conditions and separate counterfactual diagnostics; not blind admission or new model generations when replayed.",
+  "cases_sha256": "eaff98c68c7b1144cb7bb7d869c75a097289d78c491a090730496f5933e463b0",
+  "conditions": [
+    {
+      "condition": "qwen35",
+      "directory": "evernook-120-prefix-qwen35-frozen-v2",
+      "report_sha256": "be9a5f4f73d3ba0e456e97bf840c453e0f0d9ae692c41adca26cfa0c057da779",
+      "raw_totals": {
+        "passed": 6,
+        "failed": 4,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "answerable_passed": 4,
+      "observed_unsupported_answers": 0,
+      "private_peak": 570658816,
+      "working_set_peak": 1522810880,
+      "samples": 190,
+      "query_failures": 0,
+      "max_output_tokens": 40,
+      "rows": [
+        {
+          "case_id": "link-location",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "展馆二层",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 618,
+          "output_tokens": 40,
+          "finish": "eog",
+          "input_read_bytes": 2704,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-object",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "望远镜",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 622,
+          "output_tokens": 35,
+          "finish": "eog",
+          "input_read_bytes": 2719,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-person",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "沈遥",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 617,
+          "output_tokens": 39,
+          "finish": "eog",
+          "input_read_bytes": 2704,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-permission",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 599,
+          "output_tokens": 30,
+          "finish": "eog",
+          "input_read_bytes": 2651,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-data",
+          "judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "3项",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 588,
+          "output_tokens": 29,
+          "finish": "eog",
+          "input_read_bytes": 2581,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-permission-history",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 595,
+          "output_tokens": 28,
+          "finish": "eog",
+          "input_read_bytes": 2642,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-guess",
+          "judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 589,
+          "output_tokens": 23,
+          "finish": "eog",
+          "input_read_bytes": 2602,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-confirmed",
+          "judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 583,
+          "output_tokens": 26,
+          "finish": "eog",
+          "input_read_bytes": 2567,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "reported-guess",
+          "judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "input_tokens": 592,
+          "output_tokens": 12,
+          "finish": "eog",
+          "input_read_bytes": 2609,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-log-data",
+          "judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "input_tokens": 585,
+          "output_tokens": 12,
+          "finish": "eog",
+          "input_read_bytes": 2584,
+          "reasoning_chars": null
+        }
+      ]
+    },
+    {
+      "condition": "lfm-instruct",
+      "directory": "evernook-120-prefix-lfm-instruct-frozen-v2",
+      "report_sha256": "3f686299b5efb8e1d8728647fe6b8543f14ac731408b84e4342442434074feea",
+      "raw_totals": {
+        "passed": 0,
+        "failed": 1,
+        "invalid": 9,
+        "unobserved": 0
+      },
+      "answerable_passed": 0,
+      "observed_unsupported_answers": 0,
+      "private_peak": 184324096,
+      "working_set_peak": 1414918144,
+      "samples": 219,
+      "query_failures": 0,
+      "max_output_tokens": 24,
+      "rows": [
+        {
+          "case_id": "link-location",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 811,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2685,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-object",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 816,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2700,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-person",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 805,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2685,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-permission",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 785,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2632,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-data",
+          "judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "input_tokens": 766,
+          "output_tokens": 24,
+          "finish": "eog",
+          "input_read_bytes": 2562,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-permission-history",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 784,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2623,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-guess",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 774,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2583,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-confirmed",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 760,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2548,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "reported-guess",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 775,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2590,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-log-data",
+          "judgment": {
+            "state": "invalid",
+            "reason": "invalid_support",
+            "decision": "refuse",
+            "unsupported_answer": false
+          },
+          "input_tokens": 767,
+          "output_tokens": 11,
+          "finish": "eog",
+          "input_read_bytes": 2565,
+          "reasoning_chars": null
+        }
+      ]
+    },
+    {
+      "condition": "lfm-thinking",
+      "directory": "evernook-120-prefix-lfm-thinking-frozen-v2",
+      "report_sha256": "09b99db510bfc74d534dc9d3b564baaf14ee5ce61ab077ed5d437228f0d82534",
+      "raw_totals": {
+        "passed": 0,
+        "failed": 0,
+        "invalid": 10,
+        "unobserved": 0
+      },
+      "answerable_passed": 0,
+      "observed_unsupported_answers": 0,
+      "private_peak": 184811520,
+      "working_set_peak": 1415004160,
+      "samples": 694,
+      "query_failures": 2,
+      "max_output_tokens": 512,
+      "rows": [
+        {
+          "case_id": "link-location",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 811,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2685,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-object",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 816,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2700,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "link-person",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 805,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2685,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-permission",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 785,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2632,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "tool-data",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 766,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2562,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-permission-history",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 784,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2623,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-guess",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 774,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2583,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "user-confirmed",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 760,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2548,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "reported-guess",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 775,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2590,
+          "reasoning_chars": null
+        },
+        {
+          "case_id": "assistant-log-data",
+          "judgment": {
+            "state": "invalid",
+            "reason": "native_incomplete_thinking",
+            "unsupported_answer": null
+          },
+          "input_tokens": 767,
+          "output_tokens": 512,
+          "finish": "without_eog",
+          "input_read_bytes": 2565,
+          "reasoning_chars": null
+        }
+      ]
+    }
+  ],
+  "diagnostics": [
+    {
+      "variant": "baseline",
+      "directory": "evernook-120-abstention-exact-prefix-baseline-v3",
+      "report_sha256": "a8ae7533ae2ad994cbeda7776bebbef82272f46435c837827b4798a173df69ae",
+      "rows": [
+        {
+          "case_id": "tool-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "3项",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "assistant-log-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "role_user",
+      "directory": "evernook-120-abstention-exact-prefix-role_user-v3",
+      "report_sha256": "ba87fc1c1a8759a9ee772e36897203610fb5ec1d109d7a36ae046bc4bd1bf4fb",
+      "rows": [
+        {
+          "case_id": "tool-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          }
+        },
+        {
+          "case_id": "assistant-log-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "descriptive_question",
+      "directory": "evernook-120-abstention-exact-prefix-descriptive_question-v3",
+      "report_sha256": "4fe3b585f8609bb99b0cb3f85e2012ad5fb8c26629ba7ff408398a9efd0f261e",
+      "rows": [
+        {
+          "case_id": "tool-data",
+          "result": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "3",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "assistant-log-data",
+          "result": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        }
+      ]
+    },
+    {
+      "variant": "remove_empty_example",
+      "directory": "evernook-120-abstention-exact-prefix-remove_empty_example-v3",
+      "report_sha256": "bdfbd09ba748528a43f5e3c1e85f98ef8ca50ab9ca915cac53f3f4aab98d1529",
+      "rows": [
+        {
+          "case_id": "tool-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "3项",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "assistant-log-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "remove_source_trust_sentence",
+      "directory": "evernook-120-abstention-exact-prefix-remove_source_trust_sentence-v3",
+      "report_sha256": "51585f9b35a05d6f05ce1106677d598bd26f83ecf28ce29a26ba1419f924f6e9",
+      "rows": [
+        {
+          "case_id": "tool-permission",
+          "result": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "tool-data",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "3项",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "user-permission-history",
+          "result": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "assistant-guess",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "reported-guess",
+          "result": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        },
+        {
+          "case_id": "assistant-log-data",
+          "result": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          }
+        }
+      ]
+    }
+  ],
+  "input_token_control": {
+    "directory": "evernook-120-lfm-format-control-v2",
+    "text_file_prompt_tokens": 24,
+    "native_chat_prompt_tokens": 25,
+    "binary_file_prompt_tokens": 25,
+    "binary_and_native_ids_equal": true
+  },
+  "admission": "pending; no candidate passed"
+}

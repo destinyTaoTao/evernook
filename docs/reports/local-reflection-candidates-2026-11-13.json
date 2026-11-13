@@ -151,5 +151,10 @@
     "samples": 186,
     "query_failures": 0
   },
-  "admission": "pending"
+  "admission": "pending",
+  "known_input_transport_defect": {
+    "parameter": "--file",
+    "effect": "b12360 removes the final newline from the compiled prompt, changing the native generation prefix",
+    "interpretation": "Affected records retained; not valid for model capability ranking or admission. Re-evaluate via --binary-file; see reflection-abstention-2026-11-13.md."
+  }
 }

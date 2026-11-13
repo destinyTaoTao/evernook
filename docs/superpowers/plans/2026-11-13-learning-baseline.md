@@ -198,3 +198,20 @@ Ruling: 首批三模型及两个推理设置均未达筛选线，追加且仅追
 Ruling: 4B低位宽已出现原话改写/引用缺失，补最后一个同模型精度控制：Qwen3.5-2B Q6_K（同f6d5376be1edb4d416d56da11e5397a961aca8ae，1574961408字节，fc90339420b4298887aafb307a4291c55440b730133bbffe6ba9630503dcb548），不增加模型品种，仍用贪心/原native模板 — 要区分Q4量化损失与2B能力上限，文件规模仍可能满足原资源目标 — 与Q4比较只认完整集，不再追加量化、seed或提示条件；不满足筛选线则只交付评测结果。
 
 Final: Qwen3.5-2B Q4/Q6均6/10、可回答4/6，资源下降但未满足用途筛选；原生thinking为空通道且其采样有1次query failure。其他条件均保留失败，未接入产品。详见docs/reports/local-reflection-candidates-2026-11-13.md及机器摘要；#120和日用继续开放。
+
+## Task 10 — #120 错误弃答定位与定向候选
+
+基线d80ee37。按systematic-debugging先追踪输入→原始生成→解析/严格评分，不用最终fallback猜模型原因。按writing-plans内联执行，用户已明确常规实现不确认。
+
+- [x] 复现两焦点例并发现--file吞掉native前缀换行，RED→GREEN修复为--binary-file并核对实际读取字节；原生Jinja与新路径25个token ID相同。旧native统计更正为受影响，修复后重做五种单变量诊断，均明确非准入，不改角色充当修复。
+- [x] 固定LFM2.5 Instruct/Thinking两个作者Q8权重和参数，正确前缀完整十例及2B基线重验，原预算/评分/资源目标不变；Thinking十例用尽512未闭合，失败也保留真实计量，不伪记0。
+- [ ] 合格profile接入仍待后续：正确前缀Qwen3.5-2B严格6/10、positive4/6，两个LFM不合格。本轮未扩跑候选原八例或种子选择，不改生产路径或日用门禁。
+- [x] 相关45项、mypy146文件及probe/测试8文件、Node检查通过；独立10项及30+14原字节/资源/输入复核通过。67个Core/worker与既有安装一致，不重复安装/宿主验收；诊断修复和更正记录提交推送，#120/#106按实际结果同步，无关改动保留。
+
+Ruling: 两重点例基线均原始空弃答，role改user仍失败；等义描述问法两例均严格答对；删除空弃答字面例只使tool-data答3项（严格值仍失败），删除来源确认句后tool-data答3项、assistant-log答陶艺，四负控均非肯定 — 输入/解析不是丢失事实，暴露措辞与安全条件下“描述来源内容/采纳用户事实”语义混淆；不能据此宣称唯一原因 — 所有变体仅诊断，不算原冻结成绩，不修改生产提示或把source角色升级。
+
+Ruling: 本轮仅评估LiquidAI/LFM2.5-1.2B-Instruct Q8_0（8ed288026e23958ad9dfa92d53ed773a8eee7125，1246253888字节，f6b981dcb86917fa463f78a362320bd5e2dc45445df147287eedb85e5a30d26a）与Thinking Q8_0（b71945805f7d4d87dabd73e26098d44bcad6c35f，1246257792字节，e346f3d63c9e44258019a044b7993d74a0952bc31873c8954f3b86a5caa97e46） — 换训练家族及真实reasoning权重，避免再把2B空通道当思考；Q8减少低位宽引用损失混杂 — 原冻结消息/评分不变，先用官方本地参数temperature0.1/0.05、top_k50、repeat_penalty1.05，其他过滤中性；固定seed120101/120102，完整十例，不逐题选seed，不加新模板。来源为作者GGUF、LFM1.0许可单列，不发布或自动下载权重。
+
+Ruling/更正: 在LFM技术对照发现native --file会删除编译prompt末尾换行（b12360 common/arg.cpp原有行为）。同一两消息输入，旧路径24个prompt token，原生Jinja25个；改--binary-file后25个且ID逐项相同 — 这是确定的输入传输缺陷，先前保存prompt不等于真实消费token，前述反事实诊断和Task9 native结果均须标受影响，不能据此归因模型能力上限 — RED回归固定完整生成前缀；修复后复跑2B基线与两个LFM完整集，再重做诊断，原gold/评分和源码Node模型路径不改。
+
+Final: 正确前缀下tool-data已从空弃答变成3项，严格gold仍3而失败；assistant-log仍空弃答，等义描述问法/删除来源确认句可改变结果，只作因果证据不作为生产改写。修复失败通道丢usage，实际单例816输入/512输出/without_eog留存。无模型达到事前筛选线，生产不接入；见docs/reports/reflection-abstention-2026-11-13.md。
