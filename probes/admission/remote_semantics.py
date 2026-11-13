@@ -15,7 +15,10 @@ from evernook.models import MemoryFailure
 from evernook.paths import external
 from evernook.reflection import _REMOTE_EGRESS
 from evernook.reflection_remote import RemoteReflectionModel
-from semantic_reflection import judge, judge_generated, load_cases, packet
+if __package__:
+    from .semantic_reflection import judge, judge_generated, load_cases, packet
+else:
+    from semantic_reflection import judge, judge_generated, load_cases, packet
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITE_HASH = 'eaff98c68c7b1144cb7bb7d869c75a097289d78c491a090730496f5933e463b0'

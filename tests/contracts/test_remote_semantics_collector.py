@@ -9,7 +9,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from remote_semantics import collect, safe_response, SUITE_HASH
+from probes.admission import remote_semantics
+from probes.admission.remote_semantics import collect, safe_response, SUITE_HASH
 
 
 class SafeResponseTests(unittest.TestCase):
@@ -58,7 +59,7 @@ class SafeResponseTests(unittest.TestCase):
             'pricing': {'input_micro_usd_per_million': 1000000, 'output_micro_usd_per_million': 1000000,
                         'request_micro_usd': 0}, 'max_cost_micro_usd': 5000}
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'EVERNOOK_TEST_COLLECTOR_KEY': 'synthetic-secret-key'}), \
-                patch('remote_semantics.load_cases', return_value=([case], SUITE_HASH)):
+                patch.object(remote_semantics, 'load_cases', return_value=([case], SUITE_HASH)):
             root = Path(tmp)
             with self.assertRaisesRegex(ValueError, 'screen_cost_budget'):
                 collect(root / 'blocked', config, 1)
