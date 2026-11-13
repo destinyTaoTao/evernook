@@ -55,10 +55,13 @@ def safe_response(raw: bytes, secret: str) -> str | None:
         return None
 
 
-def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_tokens: int = 512) -> dict[str, Any]:
+def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_tokens: int = 512,
+            diagnostic_thinking: str = 'default') -> dict[str, Any]:
     cases, digest = load_cases(ROOT / 'eval/zh-reflection-semantics-v1')
     if digest != SUITE_HASH:
         raise ValueError('unexpected_frozen_suite')
+    if diagnostic_thinking not in {'default', 'disabled'}:
+        raise ValueError('invalid_diagnostic_thinking')
     model = RemoteReflectionModel(config)
     secret = os.environ.get(config['api_key_env'], '')
     if len(secret) < 8:
@@ -75,8 +78,19 @@ def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_t
         payload, aliases = packet(case)
         payload['_remote_egress'] = _REMOTE_EGRESS
         captured: list[str] = []
+        request_hashes: list[str] = []
         class TraceProcess(subprocess.Popen[bytes]):
             def communicate(self, input: bytes | None = None, timeout: float | None = None) -> tuple[bytes, bytes]:
+                if input is not None:
+                    request = json.loads(input)
+                    body = request['body']
+                    if diagnostic_thinking == 'disabled':
+                        body['thinking'] = {'type': 'disabled'}
+                    body_bytes = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+                    if secret.encode() in body_bytes:
+                        raise ValueError('protected_request')
+                    request_hashes.append(hashlib.sha256(body_bytes).hexdigest())
+                    input = json.dumps(request, ensure_ascii=False, separators=(',', ':')).encode()
                 value, error = super().communicate(input=input, timeout=timeout)
                 if value:
                     safe = safe_response(value, secret)
@@ -96,6 +110,7 @@ def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_t
                 'judgment': {'state': 'unobserved'}, 'usage': 'unknown'}
         row['elapsed_ms'] = round((time.monotonic() - start) * 1000)
         row['reserved_micro_usd'] = reservation
+        row['request_body_sha256'] = request_hashes[0] if request_hashes else None
         row['raw_judgment'] = {'state': 'unobserved'}
         if captured:
             body = captured[0]
@@ -114,6 +129,7 @@ def collect(output: Path, config: dict[str, Any], total_budget: int, *, output_t
                     row['raw_judgment'] = judge_generated(case['expected'], message.get('content'), payload, aliases)
         rows.append(row)
         result = {'suite_sha256': digest, 'processor': model.processor_version, 'model_requested': config['model'],
+            'diagnostic_thinking': diagnostic_thinking,
             'budget': {'seconds': 30, 'input_tokens': 4096, 'output_tokens': output_tokens,
                 'total_reserved_micro_usd': reservation * len(rows), 'total_cap_micro_usd': total_budget},
             'rows': rows, 'admission': 'pending'}

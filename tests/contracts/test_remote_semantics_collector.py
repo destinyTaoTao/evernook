@@ -64,6 +64,8 @@ class SafeResponseTests(unittest.TestCase):
                 collect(root / 'blocked', config, 1)
             with self.assertRaisesRegex(ValueError, 'screen_output_budget'):
                 collect(root / 'too-large', config, 100000, output_tokens=1024)
+            with self.assertRaisesRegex(ValueError, 'invalid_diagnostic_thinking'):
+                collect(root / 'bad-mode', config, 5000, diagnostic_thinking='other')
             self.assertEqual(calls, [])
             report = collect(root / 'run', config, 5000)
             raw = (root / 'run' / 'one.response.json').read_bytes()
@@ -76,6 +78,13 @@ class SafeResponseTests(unittest.TestCase):
             self.assertEqual(calls[-1]['max_tokens'], 1024)
             self.assertEqual(result['rows'][0]['reserved_micro_usd'], 5120)
             self.assertEqual(result['budget']['output_tokens'], 1024)
+            diagnostic = collect(root / 'disabled', expanded, 6000, output_tokens=1024,
+                                 diagnostic_thinking='disabled')
+            self.assertEqual(calls[-1]['thinking'], {'type': 'disabled'})
+            self.assertEqual(calls[-1]['max_tokens'], 1024)
+            self.assertEqual(diagnostic['diagnostic_thinking'], 'disabled')
+            self.assertEqual(len(diagnostic['rows'][0]['request_body_sha256']), 64)
+            self.assertEqual(diagnostic['rows'][0]['reserved_micro_usd'], 5120)
 
 
 if __name__ == '__main__':
