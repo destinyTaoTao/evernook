@@ -12,6 +12,7 @@ its sources and confirmation are checked. An unavailable successor therefore
 does not resurrect a previous value. A disputed slot retains its disputed state;
 the returned current assertion must not be displayed as an uncontested fact.
 The page is over slots, so withheld entries can produce an empty page with a
-non-null next offset. Query, category and session filters are rejected rather
-than silently applied incorrectly. This endpoint is not a complete network UI;
+non-null next offset. Query and category are matched against the selected fact;
+entry, session and half-open occurrence time must all match the same validated
+source. This endpoint is not a complete network UI;
 other layers, filters, live invalidation and daily-use admission remain open.

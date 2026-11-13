@@ -55,6 +55,9 @@ class FactTests(unittest.TestCase):
         page = ui.read(self.access, view="network_facts")
         self.assertEqual([item["text"] for item in page["items"]], [current.text])
         self.assertEqual(page["items"][0]["sources"], [current.sources[0].message_id])
+        self.assertEqual(len(ui.read(self.access, view="network_facts", entry="synthetic", session_id="session",
+                                     since="2025-01-01T00:00:00Z")["items"]), 1)
+        self.assertEqual(ui.read(self.access, view="network_facts", entry="other")["items"], [])
         self.decide("graph-dispute", "合成：住所存在争议", 2, "disputed")
         self.assertEqual(ui.read(self.access, view="network_facts")["items"][0]["state"], "disputed")
         _, confirmation = self.candidate("合成：隐藏当前来源")
@@ -65,7 +68,7 @@ class FactTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
             ui.read(self.runtime.access_from_file(access_path), view="network_facts")
 
-    def test_management_fact_network_pages_slots_and_rejects_unsupported_filters(self) -> None:
+    def test_management_fact_network_pages_slots_and_filters_text(self) -> None:
         from evernook.management import MemoryManagement
 
         ui = MemoryManagement(self.runtime)
@@ -87,8 +90,7 @@ class FactTests(unittest.TestCase):
         last = ui.read(self.access, view="network_facts", limit=1, offset=1)
         self.assertEqual(last["items"][0]["fact_id"], second.fact_id)
         self.assertIsNone(last["next_offset"])
-        with self.assertRaisesRegex(MemoryFailure, "invalid_arguments"):
-            ui.read(self.access, view="network_facts", query="甲")
+        self.assertEqual(ui.read(self.access, view="network_facts", query="甲")["items"][0]["fact_id"], first.fact_id)
 
     def test_correction_rewrites_claim_not_real_world_time_and_knowledge_cutoff_retains_prior_belief(self) -> None:
         old = self.decide("synthetic-old", "合成：小林住杭州", 0)

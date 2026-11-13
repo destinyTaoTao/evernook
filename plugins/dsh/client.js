@@ -192,11 +192,11 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             .then(status => { if (!controller.signal.aborted) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
             .catch(() => { if (!controller.signal.aborted) setDiagnostic({ available: false }); });
           if (host === 'sidebar' && tab === 'timeline' && !sessionId) throw new Error('invalid_session');
-          const result = await call({ action: 'read', view: tab === 'network' ? (networkLayer === 'profiles' ? 'profiles' : 'network_' + networkLayer) : tab,
+          const result = await call({ action: 'read', view: tab === 'network' ? 'network_' + networkLayer : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
             category: category || null,
-            session_id: tab === 'timeline' ? (host === 'sidebar' ? sessionId ?? null : timelineFilter.session || null) : null,
-            ...(tab === 'timeline' ? { entry: timelineFilter.entry || null,
+            session_id: tab === 'timeline' || tab === 'network' ? (host === 'sidebar' && tab === 'timeline' ? sessionId ?? null : timelineFilter.session || null) : null,
+            ...(tab === 'timeline' || tab === 'network' ? { entry: timelineFilter.entry || null,
               since: timelineFilter.since ? new Date(timelineFilter.since + 'T00:00:00').toISOString() : null,
               until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal);
           if (!controller.signal.aborted) setData(result);
@@ -311,11 +311,11 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
-            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline') setTimelineFilter(timelineInput); setOffsets([0]); } },
+            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
               tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
                 ...['profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
-              tab !== 'network' || networkLayer === 'profiles' ? h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }) : null,
-              ...(tab === 'timeline' ? ['entry', ...(host === 'sidebar' ? [] : ['session']), 'since', 'until'].map(key => {
+              h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
+              ...(tab === 'timeline' || tab === 'network' ? ['entry', ...(host === 'sidebar' && tab === 'timeline' ? [] : ['session']), 'since', 'until'].map(key => {
                 const label = 'filter' + key[0].toUpperCase() + key.slice(1);
                 return h('label', { key }, t(label), h('input', { type: key === 'since' || key === 'until' ? 'date' : 'text',
                   maxLength: key === 'entry' || key === 'session' ? 256 : undefined, value: timelineInput[key], 'aria-label': t(label),
@@ -323,10 +323,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               }) : []),
               tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
-              tab !== 'network' || networkLayer === 'profiles' ? h('button', { type: 'submit', disabled: loading }, t('searchGo')) : null, button(t('refresh'), refresh, { disabled: loading || busy })),
+              h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
-            tab === 'timeline' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
-            tab === 'network' && networkLayer !== 'profiles' ? h('p', { className: 'en-muted' }, t('networkFilterUnavailable')) : null,
+            tab === 'timeline' || tab === 'network' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
                 ...data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard)) :

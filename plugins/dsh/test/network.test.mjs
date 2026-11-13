@@ -41,7 +41,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
-    if (body.view === 'profiles') return Response.json({ result: { next_offset: body.offset === 0 ? 24 : null, items: [{
+    if (body.view === 'profiles' || body.view === 'network_profiles') return Response.json({ result: { next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
     }] } });
@@ -86,7 +86,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
   assert.ok(find(tree, node => node.children?.includes('合成画像')));
-  assert.ok(calls.some(call => call.action === 'read' && call.view === 'profiles'));
+  assert.ok(calls.some(call => call.action === 'read' && call.view === 'network_profiles'));
   const source = find(tree, node => node.type === 'button' && node.children.includes('networkSource 1'));
   assert.ok(source); source.props.onClick(); await new Promise(resolve => setTimeout(resolve, 10));
   assert.ok(calls.some(call => call.action === 'read' && call.view === 'source' && call.message_id === 'source-1'));
@@ -102,7 +102,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const next = find(tree, node => node.type === 'button' && node.children.includes('next'));
   assert.ok(next); assert.equal(next.props.disabled, false); next.props.onClick();
   tree = render(); await flush(); tree = render();
-  assert.ok(calls.some(call => call.view === 'profiles' && call.offset === 24));
+  assert.ok(calls.some(call => call.view === 'network_profiles' && call.offset === 24));
   assert.ok(find(tree, node => node.children?.includes('第二页画像')));
   const layer = find(tree, node => node.type === 'select' && node.props?.['aria-label'] === 'networkLayer');
   assert.ok(layer); layer.props.onChange({ target: { value: 'facts' } });
@@ -110,6 +110,11 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('合成事实')));
   assert.ok(find(tree, node => node.children?.includes('disputed')));
   assert.ok(calls.some(call => call.view === 'network_facts'));
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterEntry').props.onChange({ target: { value: 'dsh' } });
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSession').props.onChange({ target: { value: 'evidence-session' } });
+  tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.view === 'network_facts' && call.entry === 'dsh' && call.session_id === 'evidence-session'));
   layer.props.onChange({ target: { value: 'observations' } });
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('合成观察')));

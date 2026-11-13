@@ -42,6 +42,9 @@ class ManagementTests(unittest.TestCase):
         source_id = self.draft()
         self.assertEqual(len(self.ui.read(self.access, view="drafts")["items"]), 1)
         self.apply({"kind": "profile_confirm", "tag_id": "birding"})
+        self.assertEqual(len(self.ui.read(self.access, view="network_profiles", entry="owner", session_id="synthetic-session")["items"]), 1)
+        self.assertEqual(self.ui.read(self.access, view="network_profiles", entry="other")["items"], [])
+        self.assertEqual(self.ui.read(self.access, view="network_profiles", since="2020-01-01T00:00:00Z")["items"], [])
         items = self.ui.read(self.access, view="profiles")["items"]
         self.assertEqual(items[0]["state"], "confirmed")
         self.assertNotIn("expected_text", items[0]["draft"]["sources"][0])

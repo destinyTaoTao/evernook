@@ -65,6 +65,20 @@ class MemoryManagement:
                 "received_at": message.receipt.received_at, "completion": message.event.completion,
                 "representation": message.receipt.representation, "text": message.event.text}
 
+    @staticmethod
+    def _matches_sources(db: sqlite3.Connection, ids: list[str], entry: str | None,
+                         session_id: str | None, start: float | None, end: float | None) -> bool:
+        if entry is None and session_id is None and start is None and end is None:
+            return True
+        for message_id in dict.fromkeys(ids):
+            if db.execute(f"""SELECT 1 FROM messages WHERE id=? AND {_RECALLABLE}
+                AND (? IS NULL OR json_extract(event,'$.source.entry')=?)
+                AND (? IS NULL OR json_extract(event,'$.source.session')=?)
+                AND (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?)""",
+                (message_id, entry, entry, session_id, session_id, start, start, end, end)).fetchone():
+                return True
+        return False
+
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,
              session_id: str | None = None, query: str = "", message_id: str | None = None,
              tag_id: str | None = None, cursor: int = 0, category: str | None = None,
@@ -77,7 +91,7 @@ class MemoryManagement:
             _identifier(category)
         if entry is not None:
             _identifier(entry)
-        if view != "timeline" and any(value is not None for value in (entry, since, until)):
+        if view not in {"timeline", "network_profiles", "network_facts", "network_observations"} and any(value is not None for value in (entry, since, until)):
             raise MemoryFailure("invalid_arguments")
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
@@ -118,10 +132,10 @@ class MemoryManagement:
                         continue
                     items.append(self._profile(record))
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
-            if view in {"profiles", "interests", "drafts", "suppressed", "rejected"}:
+            if view in {"profiles", "network_profiles", "interests", "drafts", "suppressed", "rejected"}:
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
                     return {"items": [], "next_offset": None}
-                state = {"profiles": "confirmed", "interests": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
+                state = {"profiles": "confirmed", "network_profiles": "confirmed", "interests": "confirmed", "drafts": "draft", "suppressed": "suppressed", "rejected": "rejected"}[view]
                 rows = db.execute("""SELECT e.tag_id FROM profile_events_v1 e JOIN
                     (SELECT tag_id,max(revision) revision FROM profile_events_v1 GROUP BY tag_id) h
                     ON e.tag_id=h.tag_id AND e.revision=h.revision
@@ -135,6 +149,9 @@ class MemoryManagement:
                 for row in rows[:limit]:
                     profile_view = self.profiles._view(db, row[0])
                     if profile_view.record is not None and not profile_view.error_code:
+                        if view == "network_profiles" and not self._matches_sources(db,
+                                [span.message_id for span in profile_view.record.draft.sources], entry, session_id, start, end):
+                            continue
                         if state == 'draft' and self.profiles._rejection(db, profile_view.record.draft) is not None:
                             continue
                         if state == 'rejected':
@@ -163,8 +180,6 @@ class MemoryManagement:
             if view == "network_facts":
                 # Page by temporal slot, not historical decision: filtering revisions first
                 # could revive a superseded fact when its successor is unavailable.
-                if query or category is not None or session_id is not None:
-                    raise MemoryFailure("invalid_arguments")
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='fact_heads_v1'").fetchone():
                     return {"items": [], "next_offset": None}
                 from .facts import FactRegistry
@@ -176,14 +191,15 @@ class MemoryManagement:
                     record = fact_view.fact
                     if record is None:
                         continue
+                    if ((query and query not in record.text) or (category is not None and category != record.category)
+                            or not self._matches_sources(db, [span.message_id for span in record.sources], entry, session_id, start, end)):
+                        continue
                     items.append({"fact_id": record.fact_id, "subject_id": record.subject_id,
                                   "predicate": record.predicate, "revision": record.revision,
                                   "state": fact_view.state, "text": record.text,
                                   "sources": list(dict.fromkeys(span.message_id for span in record.sources))})
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
             if view == "network_observations":
-                if query or category is not None or session_id is not None:
-                    raise MemoryFailure("invalid_arguments")
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_events_v1'").fetchone():
                     return {"items": [], "next_offset": None}
                 from .observations import ObservationRegistry
@@ -203,6 +219,9 @@ class MemoryManagement:
                     if observation.conclusion is None:
                         continue
                     contexts = observation.source_contexts
+                    if ((query and query not in observation.conclusion) or (category is not None and category != record.draft.category)
+                            or not self._matches_sources(db, [c['message_id'] for c in contexts], entry, session_id, start, end)):
+                        continue
                     items.append({"observation_id": record.observation_id, "revision": record.revision,
                                   "state": observation.state, "conclusion": observation.conclusion,
                                   "inference": record.draft.inference,

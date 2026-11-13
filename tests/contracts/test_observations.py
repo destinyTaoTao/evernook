@@ -28,10 +28,10 @@ class ObservationTests(unittest.TestCase):
         self.registry = ObservationRegistry(self.runtime)
         self.sequence = 0
 
-    def source(self, text: str, *, role: str = 'user') -> EvidenceSpan:
+    def source(self, text: str, *, role: str = 'user', occurred: str = '2020-01-01T00:00:00Z') -> EvidenceSpan:
         self.sequence += 1
         receipt = self.runtime.submit(self.access, Event(Source('owner', 'session-' + str(self.sequence), 'main', '1'),
-            role, 1, '2020-01-01T00:00:00Z', 'complete', text))
+            role, 1, occurred, 'complete', text))
         return EvidenceSpan(receipt.message_id, 1, 'original', 1, 0, len(text), text)
 
     def draft(self, support: tuple[EvidenceSpan, ...], counters: tuple[EvidenceSpan, ...] = ()) -> ObservationDraft:
@@ -44,7 +44,7 @@ class ObservationTests(unittest.TestCase):
 
         ui = MemoryManagement(self.runtime)
         support = self.source('合成：第一次观察。')
-        counter = self.source('合成：另一种说法。')
+        counter = self.source('合成：另一种说法。', occurred='2021-01-01T00:00:00Z')
         candidate = self.registry.propose(self.access, 'network-candidate', self.draft((support,), (counter,)))
         self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
         confirmation = self.source('合成：确认发布观察。')
@@ -54,6 +54,11 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(item['support'], [support.message_id])
         self.assertEqual(item['counterevidence'], [counter.message_id])
         self.assertTrue(item['inference'])
+        self.assertEqual(len(ui.read(self.access, view='network_observations', entry='owner', session_id='session-1',
+                                     since='2019-01-01T00:00:00Z')['items']), 1)
+        self.assertEqual(ui.read(self.access, view='network_observations', entry='other', session_id='session-1')['items'], [])
+        self.assertEqual(ui.read(self.access, view='network_observations', session_id='session-1',
+                                 since='2021-01-01T00:00:00Z')['items'], [])
         self.assertNotIn('expected_text', json.dumps(item, ensure_ascii=False))
         self.runtime.change(self.access, Change('network-hide', counter.message_id, 1, 'suppress', confirmation.message_id, 'synthetic'))
         self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
@@ -62,7 +67,7 @@ class ObservationTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             ui.read(self.runtime.access_from_file(path), view='network_observations')
 
-    def test_management_network_omits_expired_and_rejects_unimplemented_filters(self) -> None:
+    def test_management_network_omits_expired_even_with_filters(self) -> None:
         from evernook.management import MemoryManagement
 
         support = self.source('合成：已经过期的观察。')
@@ -73,8 +78,7 @@ class ObservationTests(unittest.TestCase):
                              action='publish', confirmation_id=confirmation.message_id)
         ui = MemoryManagement(self.runtime)
         self.assertEqual(ui.read(self.access, view='network_observations')['items'], [])
-        with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
-            ui.read(self.access, view='network_observations', session_id='session-1')
+        self.assertEqual(ui.read(self.access, view='network_observations', session_id='session-1')['items'], [])
 
     def test_provenance_deduplicates_raw_events_and_requires_explicit_publication(self) -> None:
         first = self.source('合成：我们在湿地见过白鹭。')
