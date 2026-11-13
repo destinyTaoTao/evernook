@@ -166,33 +166,36 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [busy, setBusy] = useState(false);
       const alive = useRef(true);
       const controllers = useRef(new Set());
-      const refresh = () => { setRevision(value => value + 1); setSource(null); setHistory(null); setReview(null); setEditing(null); };
+      const readEpoch = useRef(0);
+      const invalidateReads = () => { readEpoch.current += 1; setSource(null); setHistory(null); };
+      const refresh = () => { invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); };
       useEffect(() => {
         alive.current = true;
         const listener = () => refresh();
-        const dispose = () => { setEnabled(false); setData({ items: [] }); setSource(null); setReview(null); setHistory(null);
+        const dispose = () => { invalidateReads(); setEnabled(false); setData({ items: [] }); setReview(null);
           for (const controller of controllers.current) controller.abort(); };
         updates.addEventListener('changed', listener);
         updates.addEventListener('disposed', dispose);
         window.addEventListener('focus', listener);
-        return () => { alive.current = false; updates.removeEventListener('changed', listener); updates.removeEventListener('disposed', dispose); window.removeEventListener('focus', listener);
+        return () => { alive.current = false; readEpoch.current += 1; updates.removeEventListener('changed', listener); updates.removeEventListener('disposed', dispose); window.removeEventListener('focus', listener);
           for (const controller of controllers.current) controller.abort(); };
       }, []);
       useEffect(() => {
         if (!enabled) return;
         const controller = new AbortController();
+        const epoch = readEpoch.current;
         setLoading(true); setError(''); setData({ items: [] }); setSessionStatus(null); setContextMode(null); setDiagnostic(null);
         (async () => {
           const boot = await call({ action: 'bootstrap' }, controller.signal);
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || epoch !== readEpoch.current) return;
           setConfigured(boot.configured);
           setContextMode(boot.context_mode);
           setStreamMode(boot.stream_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
           call({ action: 'read', view: 'status' }, controller.signal)
-            .then(status => { if (!controller.signal.aborted) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
-            .catch(() => { if (!controller.signal.aborted) setDiagnostic({ available: false }); });
+            .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
+            .catch(() => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: false }); });
           if (host === 'sidebar' && tab === 'timeline' && !sessionId) throw new Error('invalid_session');
           const result = await call({ action: 'read', view: tab === 'network' ? 'network_' + networkLayer : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
@@ -201,13 +204,13 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             ...(tab === 'timeline' || tab === 'network' ? { entry: timelineFilter.entry || null,
               since: timelineFilter.since ? new Date(timelineFilter.since + 'T00:00:00').toISOString() : null,
               until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal);
-          if (!controller.signal.aborted) setData(tab === 'network' && networkLayer === 'graph' ? { ...result, items: result.nodes } : result);
+          if (!controller.signal.aborted && epoch === readEpoch.current) setData(tab === 'network' && networkLayer === 'graph' ? { ...result, items: result.nodes } : result);
           if (sessionId) {
             const status = await call({ action: 'session', session_id: sessionId }, controller.signal);
-            if (!controller.signal.aborted) setSessionStatus(status);
+            if (!controller.signal.aborted && epoch === readEpoch.current) setSessionStatus(status);
           }
-        })().catch(cause => { if (!controller.signal.aborted) setError(errorText(cause.message)); })
-          .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+        })().catch(cause => { if (!controller.signal.aborted && epoch === readEpoch.current) setError(errorText(cause.message)); })
+          .finally(() => { if (!controller.signal.aborted && epoch === readEpoch.current) setLoading(false); });
         return () => controller.abort();
       }, [tab, networkLayer, category, filter, timelineFilter.entry, timelineFilter.session, timelineFilter.since, timelineFilter.until, offsets.join(','), revision, sessionId, host, enabled]);
       async function perform(action) {
@@ -227,12 +230,14 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         if (alive.current) setReview(null);
       }); }
       function openSource(messageId, cursor = 0) { return perform(async signal => {
+        const epoch = readEpoch.current;
         const result = await call({ action: 'read', view: 'source', message_id: messageId, cursor }, signal);
-        if (alive.current) setSource(previous => cursor && previous?.message_id === messageId ? { ...result, text: previous.text + result.text } : result);
+        if (alive.current && !signal.aborted && epoch === readEpoch.current) setSource(previous => cursor && previous?.message_id === messageId ? { ...result, text: previous.text + result.text } : result);
       }); }
       function openHistory(tagId) { return perform(async signal => {
+        const epoch = readEpoch.current;
         const result = await call({ action: 'read', view: 'history', tag_id: tagId, limit: 50 }, signal);
-        if (alive.current) setHistory(result);
+        if (alive.current && !signal.aborted && epoch === readEpoch.current) setHistory(result);
       }); }
       function openRecovery(id) { return perform(async signal => {
         const result = await call({ action: 'recovery_read', session_id: id }, signal);
@@ -242,7 +247,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         if (recovery.proposal_id && !recovery.result) await call({ action: 'recovery_cancel', proposal_id: recovery.proposal_id }, signal);
         if (alive.current) setRecovery(null);
       }); }
-      const changeTab = name => { setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setTimelineInput({ entry: '', session: '', since: '', until: '' }); setTimelineFilter({ entry: '', session: '', since: '', until: '' }); setOffsets([0]); setNotice(''); };
+      const changeTab = name => { invalidateReads(); setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setTimelineInput({ entry: '', session: '', since: '', until: '' }); setTimelineFilter({ entry: '', session: '', since: '', until: '' }); setOffsets([0]); setNotice(''); };
       const sourceButtons = record => h('div', { className: 'en-actions' }, ...record.draft.sources.map((item, index) =>
         button(`${t('source')} ${index + 1}`, () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy })));
       const profileCard = record => h('article', { className: 'en-card', key: record.tag_id },
@@ -329,7 +334,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
             h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
-              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
+              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { invalidateReads(); setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
                 ...['graph', 'profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
               h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
               ...(tab === 'timeline' || tab === 'network' ? ['entry', ...(host === 'sidebar' && tab === 'timeline' ? [] : ['session']), 'since', 'until'].map(key => {
