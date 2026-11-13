@@ -52,6 +52,11 @@ test('memory links use the confirmed profile page and re-read source on click', 
       observation_id: 'obs-1', revision: 2, state: 'published', inference: true,
       conclusion: '合成观察', support: ['source-1'], counterevidence: ['source-2'],
     }] } });
+    if (body.view === 'network_graph') return Response.json({ result: { next_offset: null, nodes: [
+      { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
+      { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
+      { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence' }] },
+    ] } });
     if (body.view === 'timeline') return Response.json({ result: { next_offset: null, items: [] } });
     if (body.view === 'source' && !sourceAvailable) return Response.json({ error: 'source_unavailable' }, { status: 400 });
     if (body.view === 'source') return Response.json({ result: { message_id: 'source-1', source: { entry: 'dsh', session: 's' },
@@ -83,6 +88,13 @@ test('memory links use the confirmed profile page and re-read source on click', 
   statusAvailable = true;
   const network = find(tree, node => node.type === 'button' && node.children.includes('network'));
   assert.ok(network); network.props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
+  assert.ok(find(tree, node => node.children?.includes('合成事实')));
+  assert.ok(find(tree, node => node.children?.includes('合成观察')));
+  assert.ok(calls.some(call => call.view === 'network_graph'));
+  const graphLayer = find(tree, node => node.type === 'select' && node.props?.['aria-label'] === 'networkLayer');
+  graphLayer.props.onChange({ target: { value: 'profiles' } });
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
   assert.ok(find(tree, node => node.children?.includes('合成画像')));

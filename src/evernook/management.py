@@ -79,6 +79,61 @@ class MemoryManagement:
                 return True
         return False
 
+    def _network_graph(self, db: sqlite3.Connection, offset: int, limit: int, query: str,
+                       category: str | None, entry: str | None, session_id: str | None,
+                       start: float | None, end: float | None) -> dict[str, Any]:
+        """Bounded pages from each layer, evaluated in one authorized read snapshot."""
+        from .facts import FactRegistry
+        from .observations import ObservationRegistry
+
+        nodes: list[dict[str, Any]] = []
+        has_more = False
+        def rows(table: str, sql: str) -> list[Any]:
+            nonlocal has_more
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                return []
+            found = db.execute(sql, (limit + 1, offset)).fetchall()
+            has_more = has_more or len(found) > limit
+            return found[:limit]
+
+        def add(kind: str, identifier: str, label: str, revision: int, state: str,
+                node_category: str | None, edges: list[dict[str, str]], inference: bool = False) -> None:
+            ids = [edge['source_id'] for edge in edges]
+            if ((query and query not in label) or (category is not None and category != node_category)
+                    or not self._matches_sources(db, ids, entry, session_id, start, end)):
+                return
+            nodes.append({'kind': kind, 'id': identifier, 'label': label, 'revision': revision,
+                          'state': state, 'inference': inference, 'edges': edges})
+
+        for row in rows('profile_events_v1', """SELECT e.tag_id FROM profile_events_v1 e
+            WHERE e.revision=(SELECT max(n.revision) FROM profile_events_v1 n WHERE n.tag_id=e.tag_id)
+            AND json_extract(e.record,'$.state')='confirmed' ORDER BY e.tag_id LIMIT ? OFFSET ?"""):
+            profile_view = self.profiles._view(db, row[0])
+            if profile_view.record is not None and not profile_view.error_code:
+                profile = profile_view.record
+                add('profile', profile.tag_id, profile.draft.label, profile.revision, profile.state, profile.draft.category,
+                    [{'source_id': span.message_id, 'kind': 'evidence'} for span in profile.draft.sources])
+        for row in rows('fact_heads_v1', 'SELECT subject,predicate FROM fact_heads_v1 ORDER BY subject,predicate LIMIT ? OFFSET ?'):
+            fact_view = FactRegistry._query_snapshot(db, row[0], row[1])
+            fact = fact_view.fact
+            if fact is not None:
+                add('fact', fact.fact_id, fact.text, fact.revision, fact_view.state, fact.category,
+                    [{'source_id': span.message_id, 'kind': 'evidence'} for span in fact.sources])
+        now = datetime.now(timezone.utc).timestamp()
+        for row in rows('observation_events_v1', """SELECT e.record FROM observation_events_v1 e
+            WHERE NOT EXISTS (SELECT 1 FROM observation_events_v1 n WHERE n.observation_id=e.observation_id AND n.revision>e.revision)
+            AND e.state IN ('published','conflicted') ORDER BY e.observation_id LIMIT ? OFFSET ?"""):
+            observed = ObservationRegistry._record(row[0])
+            if ((observed.draft.valid_from is not None and _time(observed.draft.valid_from) > now)
+                    or (observed.draft.valid_until is not None and _time(observed.draft.valid_until) <= now)):
+                continue
+            observation_view = ObservationRegistry._view(db, observed)
+            if observation_view.conclusion is not None:
+                add('observation', observed.observation_id, observation_view.conclusion, observed.revision, observation_view.state, observed.draft.category,
+                    [{'source_id': context['message_id'], 'kind': context['stance']} for context in observation_view.source_contexts],
+                    observed.draft.inference)
+        return {'nodes': nodes, 'next_offset': offset + limit if has_more else None}
+
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,
              session_id: str | None = None, query: str = "", message_id: str | None = None,
              tag_id: str | None = None, cursor: int = 0, category: str | None = None,
@@ -91,7 +146,7 @@ class MemoryManagement:
             _identifier(category)
         if entry is not None:
             _identifier(entry)
-        if view not in {"timeline", "network_profiles", "network_facts", "network_observations"} and any(value is not None for value in (entry, since, until)):
+        if view not in {"timeline", "network_profiles", "network_facts", "network_observations", "network_graph"} and any(value is not None for value in (entry, since, until)):
             raise MemoryFailure("invalid_arguments")
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
@@ -100,6 +155,8 @@ class MemoryManagement:
             raise MemoryFailure("invalid_query")
         with self.runtime._connection() as db:
             db.execute("BEGIN")
+            if view == "network_graph":
+                return self._network_graph(db, offset, limit, query, category, entry, session_id, start, end)
             if view == "source":
                 if message_id is None or type(cursor) is not int or cursor < 0:
                     raise MemoryFailure("invalid_arguments")
@@ -188,16 +245,16 @@ class MemoryManagement:
                 items = []
                 for row in rows[:limit]:
                     fact_view = FactRegistry._query_snapshot(db, row[0], row[1])
-                    record = fact_view.fact
-                    if record is None:
+                    fact = fact_view.fact
+                    if fact is None:
                         continue
-                    if ((query and query not in record.text) or (category is not None and category != record.category)
-                            or not self._matches_sources(db, [span.message_id for span in record.sources], entry, session_id, start, end)):
+                    if ((query and query not in fact.text) or (category is not None and category != fact.category)
+                            or not self._matches_sources(db, [span.message_id for span in fact.sources], entry, session_id, start, end)):
                         continue
-                    items.append({"fact_id": record.fact_id, "subject_id": record.subject_id,
-                                  "predicate": record.predicate, "revision": record.revision,
-                                  "state": fact_view.state, "text": record.text,
-                                  "sources": list(dict.fromkeys(span.message_id for span in record.sources))})
+                    items.append({"fact_id": fact.fact_id, "subject_id": fact.subject_id,
+                                  "predicate": fact.predicate, "revision": fact.revision,
+                                  "state": fact_view.state, "text": fact.text,
+                                  "sources": list(dict.fromkeys(span.message_id for span in fact.sources))})
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
             if view == "network_observations":
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_events_v1'").fetchone():
@@ -211,20 +268,20 @@ class MemoryManagement:
                 items = []
                 now = datetime.now(timezone.utc).timestamp()
                 for row in rows[:limit]:
-                    record = ObservationRegistry._record(row[0])
-                    if ((record.draft.valid_from is not None and _time(record.draft.valid_from) > now)
-                            or (record.draft.valid_until is not None and _time(record.draft.valid_until) <= now)):
+                    observed = ObservationRegistry._record(row[0])
+                    if ((observed.draft.valid_from is not None and _time(observed.draft.valid_from) > now)
+                            or (observed.draft.valid_until is not None and _time(observed.draft.valid_until) <= now)):
                         continue
-                    observation = ObservationRegistry._view(db, record)
+                    observation = ObservationRegistry._view(db, observed)
                     if observation.conclusion is None:
                         continue
                     contexts = observation.source_contexts
-                    if ((query and query not in observation.conclusion) or (category is not None and category != record.draft.category)
+                    if ((query and query not in observation.conclusion) or (category is not None and category != observed.draft.category)
                             or not self._matches_sources(db, [c['message_id'] for c in contexts], entry, session_id, start, end)):
                         continue
-                    items.append({"observation_id": record.observation_id, "revision": record.revision,
+                    items.append({"observation_id": observed.observation_id, "revision": observed.revision,
                                   "state": observation.state, "conclusion": observation.conclusion,
-                                  "inference": record.draft.inference,
+                                  "inference": observed.draft.inference,
                                   "support": list(dict.fromkeys(c['message_id'] for c in contexts if c['stance'] == 'support')),
                                   "counterevidence": list(dict.fromkeys(c['message_id'] for c in contexts if c['stance'] == 'counterevidence'))})
                 return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}

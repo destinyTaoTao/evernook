@@ -162,6 +162,51 @@ class ManagementTests(unittest.TestCase):
         self.apply({"kind": "source_suppress", "message_id": first})
         self.assertEqual(ids(since="2022-01-01T00:00:00Z", until="2023-01-01T00:00:00Z"), set())
 
+    def test_graph_links_shared_source_and_withholds_all_dependents_when_suppressed(self) -> None:
+        from evernook import CandidateDraft, CandidateWorkflow
+        from evernook.facts import FactDecision, FactRegistry
+        from evernook.observations import ObservationDraft, ObservationRegistry
+
+        span = self.source("合成：我喜欢观鸟。")
+        self.profiles.decide(self.access, ProfileDecision("graph-profile", "graph-tag", 0, "propose",
+            ProfileDraft("interest", "喜欢观鸟", 0.8, (span,))))
+        self.apply({"kind": "profile_confirm", "tag_id": "graph-tag"})
+        workflow = CandidateWorkflow(self.runtime)
+        lease = workflow.begin(self.access, (span.message_id,), processor_version="graph-test-v1")
+        assert lease.token is not None
+        workflow.complete(self.access, lease.status.run_id, lease.token,
+                          (CandidateDraft(span.expected_text, "user_statement", (span,)),))
+        candidate = workflow.candidates(self.access, lease.status.run_id)[0]
+        FactRegistry(self.runtime).decide(self.access, FactDecision("graph-fact", "person", "interest", candidate.candidate_id,
+            span.message_id, 0, "assert", "2020-01-01T00:00:00Z"))
+        registry = ObservationRegistry(self.runtime)
+        observation = registry.propose(self.access, "graph-observation", ObservationDraft("person:interest",
+            "合成：观察到观鸟偏好。", (span,), (), "experience", None, None, "graph-test-v1", "graph-test-v1"))
+        registry.decide(self.access, "graph-publish", observation.observation_id, observation.revision,
+                        action="publish", confirmation_id=span.message_id)
+        result = self.ui.read(self.access, view="network_graph", entry="owner", session_id="synthetic-session")
+        self.assertEqual({node["kind"] for node in result["nodes"]}, {"profile", "fact", "observation"})
+        self.assertTrue(all(span.message_id in {edge["source_id"] for edge in node["edges"]} for node in result["nodes"]))
+        self.assertNotIn("expected_text", json.dumps(result, ensure_ascii=False))
+        self.assertEqual(self.ui.read(self.access, view="network_graph", entry="other")["nodes"], [])
+        ordinary_path = self.config.parent / "mcp-access-graph-ordinary.json"
+        pair_client(self.config, client_id="graph-ordinary", entry="graph-ordinary", access_path=ordinary_path, scopes=("capture", "recall"))
+        with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            self.ui.read(self.runtime.access_from_file(ordinary_path), view="network_graph")
+        self.apply({"kind": "source_suppress", "message_id": span.message_id})
+        self.assertEqual(self.ui.read(self.access, view="network_graph")["nodes"], [])
+
+    def test_graph_pagination_retains_sparse_pages(self) -> None:
+        for tag in ("alpha", "beta"):
+            self.draft(tag)
+            self.apply({"kind": "profile_confirm", "tag_id": tag})
+        first = self.ui.read(self.access, view="network_graph", limit=1, query="missing")
+        self.assertEqual(first["nodes"], [])
+        self.assertEqual(first["next_offset"], 1)
+        second = self.ui.read(self.access, view="network_graph", limit=1, offset=first["next_offset"])
+        self.assertEqual([node["id"] for node in second["nodes"]], ["beta"])
+        self.assertIsNone(second["next_offset"])
+
     def test_canceled_preview_stays_canceled_after_restart_and_cannot_confirm(self) -> None:
         source_id = self.source().message_id
         operation = {'kind': 'source_suppress', 'message_id': source_id}

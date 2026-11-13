@@ -6,7 +6,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const zh = {
     title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
-    networkHelp: '按层查看当前页记忆与证据。点击来源会重新检查可见性；翻页可查看更多。', networkSource: '来源',
+    networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
+    graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察',
     networkLayer: '记忆层', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
     inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
@@ -43,7 +44,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const en = {
     title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
-    networkHelp: 'Browse this page of memories and evidence by layer. Opening a source checks visibility again; use pagination to see more.', networkSource: 'Source',
+    networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
+    graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation',
     networkLayer: 'Memory layer', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
     inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
@@ -137,7 +139,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     function MemoryPage({ sessionId, host }) {
       const [enabled, setEnabled] = useState(active);
       const [tab, setTab] = useState(host === 'sidebar' ? 'timeline' : 'profiles');
-      const [networkLayer, setNetworkLayer] = useState('profiles');
+      const [networkLayer, setNetworkLayer] = useState('graph');
       const [category, setCategory] = useState('');
       const [query, setQuery] = useState('');
       const [filter, setFilter] = useState('');
@@ -199,7 +201,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             ...(tab === 'timeline' || tab === 'network' ? { entry: timelineFilter.entry || null,
               since: timelineFilter.since ? new Date(timelineFilter.since + 'T00:00:00').toISOString() : null,
               until: timelineFilter.until ? new Date(timelineFilter.until + 'T00:00:00').toISOString() : null } : {}) }, controller.signal);
-          if (!controller.signal.aborted) setData(result);
+          if (!controller.signal.aborted) setData(tab === 'network' && networkLayer === 'graph' ? { ...result, items: result.nodes } : result);
           if (sessionId) {
             const status = await call({ action: 'session', session_id: sessionId }, controller.signal);
             if (!controller.signal.aborted) setSessionStatus(status);
@@ -272,6 +274,21 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         h('div', { className: 'en-network-edges', 'aria-label': t('sources') },
           ...record.draft.sources.map((item, index) => button(t('networkSource') + ' ' + (index + 1),
             () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy }))));
+      const graphCards = records => {
+        const sources = new Map();
+        for (const record of records) for (const edge of record.edges) {
+          if (!sources.has(edge.source_id)) sources.set(edge.source_id, []);
+          sources.get(edge.source_id).push({ record, stance: edge.kind });
+        }
+        return [...sources].map(([id, linked], index) => h('article', { className: 'en-network-cluster', key: id },
+          button(t('networkSource') + ' ' + (index + 1), () => openSource(id), { disabled: busy }),
+          h('div', { className: 'en-network-edges', 'aria-label': t('sources') }, ...linked.map(({ record, stance }, n) =>
+            h('div', { className: 'en-network-node', key: record.kind + ':' + record.id + ':' + n },
+              h('span', { className: 'en-pill' }, t(record.kind)),
+              h('span', { className: 'en-muted' }, ' · ' + t('version') + ' ' + record.revision + ' · ' + t(record.state) + ' · ' + t(stance === 'evidence' ? 'graphEvidence' : stance)),
+              record.inference ? h('span', { className: 'en-pill' }, t('inference')) : null,
+              h('p', null, record.label))))));
+      };
       const timelineCard = item => h('article', { className: 'en-card', key: item.message_id },
         h('header', null, h('span', { className: 'en-pill' }, t(item.role)), h('span', { className: 'en-muted' }, item.source.entry)),
         h('p', { className: 'en-label' }, item.excerpt),
@@ -312,8 +329,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
             h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
-              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
-                ...['profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
+              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
+                ...['graph', 'profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
               h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
               ...(tab === 'timeline' || tab === 'network' ? ['entry', ...(host === 'sidebar' && tab === 'timeline' ? [] : ['session']), 'since', 'until'].map(key => {
                 const label = 'filter' + key[0].toUpperCase() + key.slice(1);
@@ -328,7 +345,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             tab === 'timeline' || tab === 'network' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
-                ...data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard)) :
+                ...(tab === 'network' && networkLayer === 'graph' ? graphCards(data.items) : data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard))) :
               h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t(tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
             h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
               button(t('previous'), () => setOffsets(value => value.slice(0, -1)), { disabled: loading || offsets.length < 2 }),
