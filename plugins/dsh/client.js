@@ -5,7 +5,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const ns = 'evernook';
   const zh = {
     title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。',
-    profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
+    profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
+    networkHelp: '当前页已确认画像及其来源。点击来源会重新检查可见性；翻页可查看更多。', networkSource: '来源',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
     empty: '这里还没有记忆', emptyHelp: '已有原话不等于已经形成画像。可以先查看时间线，或到待审草案确认有来源的内容。',
@@ -37,7 +38,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   };
   const en = {
     title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.',
-    profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
+    profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
+    networkHelp: 'Confirmed profile entries and their sources on this page. Opening a source checks visibility again; use pagination to see more.', networkSource: 'Source',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
     empty: 'No memories here yet', emptyHelp: 'Saved words do not automatically become profile facts. Browse the timeline or review source-backed drafts.',
@@ -79,6 +81,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     .en-mem button:focus-visible,.en-mem input:focus-visible,.en-mem textarea:focus-visible,.en-mem select:focus-visible{outline:2px solid var(--en-accent);outline-offset:3px}
     .en-toolbar{display:flex;gap:8px;margin-bottom:20px;align-items:center;flex-wrap:wrap}.en-mem input,.en-mem select,.en-mem textarea{background:var(--en-soft);border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:7px;padding:8px 11px;min-width:0;font-size:13px}.en-mem input{flex:1;min-width:130px}
     .en-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:12px}.en-card{border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:12px;padding:17px;background:color-mix(in srgb,currentColor 1%,transparent);overflow-wrap:anywhere}.en-card header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.en-label{font-size:16px;font-weight:550;margin:8px 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}.en-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+    .en-network{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px}.en-network-cluster{position:relative;overflow:hidden;border:1px solid color-mix(in srgb,#7c92f8 35%,transparent);border-radius:18px;padding:18px;background:radial-gradient(circle at 90% 0%,color-mix(in srgb,#7c92f8 18%,transparent),transparent 55%),var(--en-soft)}.en-network-node{position:relative;z-index:1;border-radius:14px;padding:14px;background:color-mix(in srgb,#7c92f8 18%,transparent);overflow-wrap:anywhere}.en-network-node p{margin:8px 0 0;white-space:pre-wrap}.en-network-edges{position:relative;margin:16px 0 0 18px;padding:0 0 0 20px;border-left:1px solid color-mix(in srgb,#7c92f8 70%,transparent);display:flex;flex-wrap:wrap;gap:8px}.en-network-edges:before{content:'';position:absolute;left:-1px;top:-16px;height:16px;border-left:1px solid color-mix(in srgb,#7c92f8 70%,transparent)}.en-network-edges button{position:relative;border-radius:999px}.en-network-edges button:before{content:'';position:absolute;left:-21px;top:50%;width:20px;border-top:1px solid color-mix(in srgb,#7c92f8 70%,transparent)}
     .en-empty{padding:55px 20px;text-align:center;border:1px dashed color-mix(in srgb,currentColor 20%,transparent);border-radius:12px}.en-empty p{max-width:440px;margin:12px auto;font-size:13px;opacity:.65}.en-page{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin:18px 0}.en-meta{font-size:11px;opacity:.6;display:flex;gap:10px;flex-wrap:wrap}
     .en-error{padding:12px;border:1px solid #c66c62;border-radius:8px;margin:10px 0;font-size:13px}.en-success{padding:12px;background:color-mix(in srgb,var(--en-accent) 12%,transparent);border-radius:8px;margin-bottom:12px;font-size:13px}.en-rows{display:grid;gap:10px}
     .en-mem dialog{color:inherit;background:var(--color-background,#fff);border:1px solid #8885;border-radius:14px;width:min(720px,92vw);max-height:86vh;padding:24px;box-shadow:0 20px 70px #0003;overflow:auto}.dark .en-mem dialog{background:var(--color-background,#1e2021)}.en-mem dialog::backdrop{background:#0006}.en-mem dialog header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:10px}
@@ -171,7 +174,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setContextMode(boot.context_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           if (!boot.configured) return;
-          const result = await call({ action: 'read', view: tab,
+          const result = await call({ action: 'read', view: tab === 'network' ? 'profiles' : tab,
             offset: offsets[offsets.length - 1], limit: 24, query: filter,
             category: category || null,
             session_id: host === 'sidebar' && tab === 'timeline' ? sessionId ?? null : null }, controller.signal);
@@ -231,6 +234,14 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             button(t('accept'), () => preview({ kind: 'profile_confirm', tag_id: record.tag_id }), { className: 'en-primary', disabled: busy }),
             button(t('reject'), () => preview({ kind: 'profile_reject', tag_id: record.tag_id }), { disabled: busy })) : null,
           record.state === 'rejected' ? button(t('reopen'), () => preview({ kind: 'profile_reopen', tag_id: record.tag_id }), { disabled: busy }) : null));
+      const networkCard = record => h('article', { className: 'en-network-cluster', key: record.tag_id },
+        h('div', { className: 'en-network-node' },
+          h('span', { className: 'en-pill' }, t(record.draft.category)),
+          h('span', { className: 'en-muted' }, ' · ' + t('version') + ' ' + record.revision),
+          h('p', null, record.draft.label)),
+        h('div', { className: 'en-network-edges', 'aria-label': t('sources') },
+          ...record.draft.sources.map((item, index) => button(t('networkSource') + ' ' + (index + 1),
+            () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy }))));
       const timelineCard = item => h('article', { className: 'en-card', key: item.message_id },
         h('header', null, h('span', { className: 'en-pill' }, t(item.role)), h('span', { className: 'en-muted' }, item.source.entry)),
         h('p', { className: 'en-label' }, item.excerpt),
@@ -256,7 +267,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               : sessionStatus.stream_mode === 'durable_tools' ? 'durableTools'
               : sessionStatus.tool_publication === 'saved_before_publish' ? 'bufferedTools' : 'buffered')),
             h('p', null, t('gaps') + ': ' + (sessionStatus.capture_gaps?.join(', ') || t('noGaps')))) : null,
-          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'drafts', 'suppressed', 'rejected'].map(name =>
+          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'network', 'drafts', 'suppressed', 'rejected'].map(name =>
             button(t(name), () => changeTab(name), { key: name, role: 'tab', 'aria-selected': name === tab }))),
           notice ? h('div', { className: 'en-success', role: 'status' }, notice) : null,
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
@@ -267,8 +278,10 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               tab !== 'timeline' && tab !== 'interests' ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
+            tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
-              h('div', { className: tab === 'timeline' ? 'en-rows' : 'en-grid' }, ...data.items.map(tab === 'timeline' ? timelineCard : profileCard)) :
+              h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
+                ...data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard)) :
               h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t('emptyHelp'))),
             h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
               button(t('previous'), () => setOffsets(value => value.slice(0, -1)), { disabled: loading || offsets.length < 2 }),
