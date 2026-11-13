@@ -2,7 +2,7 @@
 
 首个实现对应 #107，总 spec #106。Windows 本机 NTFS，沿用现有 owner-only 目录与逐调用端 Access 权限。
 
-使用独立终端运行 `python -m evernook.service --config <仓库外 runtime.json>`。进程固定服务一个账本，监听 127.0.0.1 随机端口。运行目录中的 memory-service.json 包含版本、端口及随机传输认证材料，只在 ACL 检查通过后加载。双方通过独立 nonce 的 HMAC-SHA256 挑战认证，客户端验证服务后才发送 Access 和正文。传输认证仅允许连接，操作还须通过原调用端身份与权限检查。传输仅支持本机，既有同账户恶意程序边界仍适用。
+首次启用独立服务须按下方切换章节使用管理员材料显式激活；已经激活的账本可在独立终端运行 `python -m evernook.service --config <仓库外 runtime.json>` 重启。未激活而直接启动返回 `service_activation_required`，不发布服务发现文件。进程固定服务一个账本，监听 127.0.0.1 随机端口。运行目录中的 memory-service.json 包含版本、端口及随机传输认证材料，只在 ACL 检查通过后加载。双方通过独立 nonce 的 HMAC-SHA256 挑战认证，客户端验证服务后才发送 Access 和正文。传输认证仅允许连接，操作还须通过原调用端身份与权限检查。传输仅支持本机，既有同账户恶意程序边界仍适用。
 
 JSON 使用四字节大端长度和 UTF-8，帧最多8MiB，拒绝重复字段和非有限 JSON 常量。握手及接收请求合计5秒，响应发送5秒；最多8个在途连接。操作本身沿用 Core 的协作时限，该首票尚无远程取消。任意客户端不可以请求修改绑定账本、运行程序或读取指定文件。异常只返回固定错误码，不输出请求或 traceback。
 
@@ -45,3 +45,7 @@ python -m evernook.service --config '<external runtime.json>' --activate-owner '
 服务模式支持前述可信CLI，加上remember/search/recall/read/state。新增service-pair以现有admin身份配对，默认只授capture/recall；service-pair-unlock提供管理员解锁。模型工具不开放配对或解锁。其他尚未服务化的本地管理命令明确拒绝，后续按对应功能票扩充接口；不能把普通客户端标成service_owner绕过服务。
 
 普通切换暂不迁移保险库。发现已关联受保护原件时，激活返回protected_cutover_requires_migration且保留原配置、原件与授权查看能力。独立收件箱的pending对象无法仅凭普通账本发现，切换清单还须盘点仓库外收件箱和恢复材料；相应迁移在#115验收。不得因普通备份通过就宣称受保护资产已可迁移。
+
+旧版开发／测试若有意保留双写路径，可在未激活账本上显式传入 `--allow-legacy-shared`；服务向 stderr 提示 `legacy_shared_mode_not_single_writer`，服务状态的 `service.single_writer` 为 false。该模式不会切换账本，不提供单写入者保证，不应用于日常数据。已存在受保护关联的账本拒绝以此模式启动；独立 pending 收件箱无法自动发现，不能据此认定切换安全。管理员激活和此标志不能同时使用。已激活账本的服务状态 `service.single_writer` 为 true，表示持久模式已设置且当前版本的入口受栅栏约束；此前已运行的旧二进制仍须按切换步骤停止，也不防同账户恶意代码。正常重启无需重复传入管理员材料。
+
+Core 0.1.33（#151）在新建合成账本上复现旧无参数启动允许服务与旧运行时同时写入，随后增加默认拒绝。新增进程回归在旧代码失败；修复后服务契约9项、切换及桥接13项、后台维护及MCP28项通过。非 editable wheel 的切换6项及新增兼容／冲突2项通过，service 与切换测试 strict mypy 通过。首次切换测试因隔离测试环境缺少可选 PyNaCl 失败，安装项目固定版本后通过。未对现有用户账本做激活或迁移；#115 的私密输入、外部 pending 清点与迁移、#150 的完整处理仍未完成。

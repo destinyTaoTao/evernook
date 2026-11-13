@@ -40,7 +40,7 @@ class ServiceTests(unittest.TestCase):
         endpoint = self.config.parent / "memory-service.json"
         previous = endpoint.read_bytes() if endpoint.exists() else None
         process = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
-            "--config", str(self.config)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            "--config", str(self.config), "--allow-legacy-shared"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         self.processes.append(process)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -59,6 +59,7 @@ class ServiceTests(unittest.TestCase):
             None, "complete", "合成：我喜欢在湿地观察白鹭。"))
 
     def test_two_clients_receipts_conflict_and_restart(self) -> None:
+        self.assertFalse(self.client.call(self.access, 'status', {})['service']['single_writer'])
         event = self.event()
         receipt = self.client.call(self.access, "remember", {"event": event})
         second = ServiceClient(self.config)

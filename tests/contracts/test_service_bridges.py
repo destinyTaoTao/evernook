@@ -38,7 +38,7 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
         pair_client(self.config, client_id="ordinary", entry="test", access_path=self.ordinary_path,
             scopes=("recall", "capture"))
         self.service = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
-            "--config", str(self.config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            "--config", str(self.config), "--allow-legacy-shared"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(self.stop)
         deadline = time.monotonic() + 20
         while not (self.config.parent / "memory-service.json").exists():

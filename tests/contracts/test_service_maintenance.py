@@ -41,7 +41,7 @@ class ServiceMaintenanceTests(unittest.TestCase):
         endpoint = self.config.parent / "memory-service.json"
         old = endpoint.read_bytes() if endpoint.exists() else None
         self.process = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
-            "--config", str(self.config), "--maintenance-access", str(self.access_path),
+            "--config", str(self.config), "--allow-legacy-shared", "--maintenance-access", str(self.access_path),
             "--maintenance-interval", "0.2", "--navigation-policy", self.policy_id],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         deadline = time.monotonic() + 15

@@ -58,6 +58,9 @@ dsh plugin --profile evernook add '<absolute path to tgz>'
 preview.23要求Core0.1.16的独立服务。先在独立后台进程启动，再配置或启动dsh。服务退出时请求明确失败；dsh退出仅关闭自己的客户端。长输入完整交给Core选择有边界的检索意图，缺少显式意图时会显示query_coverage_limited；已配置embedding和维护身份的服务可在宿主外继续小批量向量化。可选安装Core的vector extra（sqlite-vec0.1.9）加速现有向量的全历史精确候选，不改变原始库及向量格式；未安装时使用Python完整扫描。真实模型与规模门槛仍需单独通过。
 
 ```powershell
+# 首次切换前先清点受保护资产，并按 service-v1 契约排空旧进程。
+python -m evernook.service --config 'C:/external/memory/runtime.json' --activate-owner 'C:/external/memory/mcp-access-owner.json' --maintenance-access 'C:/external/memory/mcp-access-background.json'
+# 切换完成后的后续重启不再需要 --activate-owner。
 python -m evernook.service --config 'C:/external/memory/runtime.json' --maintenance-access 'C:/external/memory/mcp-access-background.json'
 ```
 

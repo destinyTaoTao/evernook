@@ -236,6 +236,7 @@ class _Server(socketserver.ThreadingTCPServer):
                  context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None):
         self.runtime = runtime
         self.key = key
+        self.single_writer = False
         self.context_config = context_config
         self.embedding_config = embedding_config
         self.reflector: ReflectionEngine | None = None
@@ -311,7 +312,8 @@ class _Handler(socketserver.BaseRequestHandler):
             is_status = request.get("operation") == "status" or (
                 request.get("operation") == "mcp" and request.get("arguments", {}).get("name") == "evernook_v1_status")
             if is_status and isinstance(result, dict):
-                result["service"] = {"independent": True, "maintenance": server.maintenance_status()}
+                result["service"] = {"independent": True, "single_writer": server.single_writer,
+                    "maintenance": server.maintenance_status()}
                 if isinstance(result.get("processing"), dict):
                     result["processing"]["consumer_running"] = server.maintenance is not None
             from .serialization import result_value
@@ -331,7 +333,10 @@ class _Handler(socketserver.BaseRequestHandler):
 
 def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
-          navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None) -> None:
+          navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
+          allow_legacy_shared: bool = False) -> None:
+    if type(allow_legacy_shared) is not bool or (activate_owner is not None and allow_legacy_shared):
+        raise MemoryFailure('invalid_service_mode')
     runtime = MemoryRuntime(config, service_owner=True)
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
@@ -362,6 +367,17 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         value = _load(config)
                         _atomic_json(config, {**value, "service_mode": True})
                         db.execute("COMMIT")
+                with runtime._connection(ownership_exclusive=True) as db:
+                    activated = _load(config).get('service_mode') is True
+                    if not activated:
+                        if not allow_legacy_shared:
+                            raise MemoryFailure('service_activation_required')
+                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
+                                and db.execute('SELECT 1 FROM protected_links_v1 LIMIT 1').fetchone()):
+                            raise MemoryFailure('protected_cutover_requires_migration')
+                    server.single_writer = activated
+                if not activated:
+                    sys.stderr.write('evernook:legacy_shared_mode_not_single_writer\n')
                 _atomic_json(runtime.root / ENDPOINT,
                     {"version": 1, "port": server.server_address[1], "key": key.hex()})
                 if server.maintenance:
@@ -387,11 +403,13 @@ def main() -> None:
     parser.add_argument("--maintenance-interval", type=float, default=5)
     parser.add_argument("--navigation-policy", action="append", default=[])
     parser.add_argument("--activate-owner", type=Path)
+    parser.add_argument("--allow-legacy-shared", action="store_true")
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
-            navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner)
+            navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
+            allow_legacy_shared=args.allow_legacy_shared)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:

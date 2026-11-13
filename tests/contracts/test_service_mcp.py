@@ -12,7 +12,7 @@ class ServiceMCPTests(test_mcp.MCPTests):
     def setUp(self) -> None:
         super().setUp()
         process = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
-            "--config", str(self.config)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            "--config", str(self.config), "--allow-legacy-shared"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         def stop() -> None:
             if process.poll() is None:
                 process.terminate()
