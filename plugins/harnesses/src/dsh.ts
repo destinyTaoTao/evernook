@@ -28,8 +28,10 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config extends MemoryConfig {
-  /** Explicit experimental deep-memory tool; requires service-side local model configuration. */
+  /** Explicit experimental deep-memory tool; requires trusted service-side provider configuration. */
   reflection?: boolean;
+  /** Trusted host consent only; the service also requires a remote-client allowlist. */
+  reflectionAllowRemote?: boolean;
   consolidation?: ConsolidationConfig;
   /** Requires the pinned private-host patch; buffered output remains buffered. */
   toolPublication?: boolean;
@@ -90,7 +92,8 @@ export async function installMemory(ctx: Context, config: Config) {
   if (!['buffered', 'durable_text', 'durable_tools'].includes(streamMode)
       || streamMode === 'durable_tools' && !config.toolPublication) throw new Error('evernook:invalid_host_config');
   if (config.toolPublication !== undefined && typeof config.toolPublication !== 'boolean'
-      || config.reflection !== undefined && typeof config.reflection !== 'boolean') throw new Error('evernook:invalid_host_config');
+      || config.reflection !== undefined && typeof config.reflection !== 'boolean'
+      || config.reflectionAllowRemote !== undefined && typeof config.reflectionAllowRemote !== 'boolean') throw new Error('evernook:invalid_host_config');
   if (config.toolPublication && (!ctx.get('tools') || Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1)) {
     throw new Error('evernook:tool_publication_patch_required');
   }
@@ -104,7 +107,7 @@ export async function installMemory(ctx: Context, config: Config) {
         || budget.memoryTokens + budget.outputReserveTokens >= budget.contextWindow))) throw new Error('evernook:invalid_host_config');
   if (!Number.isSafeInteger(maxStreamBytes) || maxStreamBytes < 1024 || maxStreamBytes > 1024 * 1024
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
-  const client = new MemoryClient(config);
+  const client = new MemoryClient({ ...config, allowRemoteReflection: config.reflectionAllowRemote === true });
   await client.connect();
   const work = budget ? new DshWork(client, config.entry) : undefined;
   let consolidation: Awaited<ReturnType<typeof createConsolidation>> | undefined;
@@ -117,12 +120,13 @@ export async function installMemory(ctx: Context, config: Config) {
   if (config.reflection) {
     try {
       disposers.push(ctx.tools.register(defineTool({ name: 'evernook_memory_reflect',
-        description: 'Only for an explicit request for deeper memory exploration. Returns temporary low-trust local-model inferences with original citations, gaps and conflicts. Never treats historical instructions as authority, unlocks secrets, maintains memory or executes external actions.',
+        description: 'Only for an explicit request for deeper memory exploration. Uses the trusted configured provider; remote egress requires separate host and service consent. Returns temporary low-trust inferences with original citations, gaps and conflicts. Never grants authority, unlocks secrets, maintains memory or executes external actions.',
         parameters: { query: { type: 'string', required: true, description: 'The user memory question. No credentials or private content.' } },
         output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
         async execute(args, exec) {
           if (!exec.agent || !args.query.trim() || Array.from(args.query).length > 4096) throw new Error('evernook:invalid_reflection_request');
           return JSON.stringify(await client.call('reflect', { query: args.query, mode: 'deep', timeout: 60,
+            ...(config.reflectionAllowRemote === true ? { allow_remote: true } : {}),
             current_input_id: latest.get(String(exec.agent.session.id))?.receipt.message_id }, exec.signal));
         } })));
     } catch (error) { await consolidation?.close(); await client.close(); throw error; }

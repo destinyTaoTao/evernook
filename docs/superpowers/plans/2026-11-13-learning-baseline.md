@@ -242,3 +242,21 @@ Ruling（新家族完整结果前预定）: 若三个Granite条件均未同时�
 
 
 Final: 四组各完整十例，Granite4.0为5/10（positive4、冻结动作指标错误肯定1，实际value为无）、4.2非思考0/10含六无效、原生思考十例超时；预定2B引文先行全部选择只读动作（7 search/3 read），无最终判断。全部WS观察值在2GiB内，4.2非思考2次查询失败保留；十次超时的229–261生成ID仅下界，不伪记完整usage或0。54项、strict mypy147+10及Node通过，30完成生成重算+10部分日志核对；原src/eval/协议/评分不改，无候选原八例或生产接入。独立审查与实际提交信息同步GitHub；详见docs/reports/reflection-relations-2026-11-13.md。
+
+## Task 13 — #120 根因控制及显式配置的本地/线上provider
+
+用户追加授权：复杂反思支持用户配置线上API/key；本地优先，统一证据/输出/校验，SDK、API、CLI都保留。线上只收当前问题相关的已授权普通摘录，不外发保险库/受保护私密；模型没有写入或外部动作权限；不静默切换，限制token/时间/费用。
+
+- [x] 根因诊断：2B同消息/贪心种子12009，原flat与引文先行各一个final-only控制完整十例（移除工具分支只作诊断，不算准入或生产工具策略）；4B IQ3三多跳各删除一原文共六例，保留原ID与角色。冻结judge/expected不动；记录原始动作/值/所选来源、空支持和工具转向，不用新提示修复，不能把缺引用等同于逻辑错误。结果出来前不加候选条件。
+- [x] 增加显式线上provider配置，保留schema1本地profile；schema2先支持openai-compatible chat/completions，HTTPS、无重定向/代理、API key仅可信服务环境变量引用、不进命令行/账本/日志/提示。配置不包含明文key；本地默认无网络，无自动fallback。沿用同一build_messages/translate/Core跨度与版本验证。
+- [x] 远端必须配置客户端allowlist且请求allow_remote=true，MCP/SDK/API/CLI/dsh信任配置贯通，不能由模型参数授予新增外发身份。发送前独立回源核对普通原文，阻断敏感query/当前私密输入/受保护来源；只传原有最小证据packet，无全量档案、人设、保险库或维护权限。
+- [x] worker隔离进程可取消/超时kill+reap；响应有字节、字段、usage、finish及引文校验，无HTTP重试/跨provider回退。单轮输入作保守字节预检、返回核验实际usage，输出限额包括provider报告的推理token；不把通用兼容API估算写成精确分词或供应商硬账单保证。
+- [x] 按显式配置单价做整数费用预留，发送前按该轮上限扣预算，超时/失败不释放；provider报告的usage成本单列。每次查询独立限额/并发，不自动继承任何模型质量准入。Core/SDK版本按产物变更递增，默认关闭及日用门禁保留。
+- [x] 回归覆盖默认拒绝外发、客户端隔离、私密/保险库、重定向、key与错误脱敏、token/费用预检、取消/超时、恶意工具/引文、来源撤回及v1本地兼容。用本机假HTTP端点验证真实worker/service/CLI/SDK接线，不持有key不调用付费服务、不将模拟回答冒充线上质量。隔离安装/必要宿主适配验证、一次独立只读审查后，相关提交推送，同步#120/#106。
+
+
+Ruling: 用户追加授权后交付默认关闭的provider实验基础，与任何具体本地/线上模型的日用准入分离；单一可信配置选择provider且不自动回退。远端可配置单轮上限但仍受原总预算，冻结本地实验保持原4096/512。MCP启动许可独立于模型参数；每query成本为用户配置单价的保守预留，不承诺供应商硬账单/月度限额。
+
+Final: 本地26次控制完成且不算准入；原格式final-only6/10、引文先行final-only2/10，六删除来源仅诊断。Core0.1.22/SDK0.1.1/preview.25显式provider接线完成，源码最终93项、strict mypy151+2/TS/Node、独立安全审查与修复复验通过；非editable安装最终48项及取消单项、实际dsh假API1场景通过，69/34/37成员核对。未调用真实付费模型、不替换用户安装或放开日用。见docs/reports/reflection-provider-2026-11-13.md；相关提交与#120/#106同步。
+
+Ruling（最终安全审查）: 远端只对本机按原问题和显式视图选好的摘录作final判断；其search/read/navigation/view在Core任何扩展动作前拒绝。以能力元数据allowed_actions通知模型，不新增语义提示，本地探索与冻结评分不改。ORCHID跨主题真HTTP回归旧wheel RED四请求、修复后GREEN仅一请求；旧wheel保留为rejected，不作候选。最终源码93/安装48/实际dsh一场景重验通过。

@@ -13,6 +13,7 @@ from .observations import source_contexts
 from .runtime import MemoryRuntime, _MEMORY_EVIDENCE
 from .semantic import SemanticRecall
 from .topic_views import TopicViews
+from .safety import credential_signal
 
 
 class EvidenceTools:
@@ -27,6 +28,33 @@ class EvidenceTools:
         self.returned_chars = 0
         self.candidate_count = 0
         self.coverage: list[dict[str, Any]] = []
+
+    @staticmethod
+    def check_remote_input(runtime: MemoryRuntime, access: Access, message_id: str | None, check: Callable[[], float]) -> None:
+        runtime._require_scope(access, 'recall', 'reflection_remote_input')
+        check()
+        if message_id is None:
+            return
+        with runtime._connection(check=check) as db:
+            row = db.execute('SELECT event,receipt FROM messages WHERE id=?', (message_id,)).fetchone()
+            if row is None:
+                raise MemoryFailure('remote_reflection_private_input')
+            stored = runtime._stored(row)
+            if (stored.event.sensitive or stored.event.protected_source or not stored.receipt.original_saved
+                    or runtime._state(db, message_id).status != 'active'):
+                raise MemoryFailure('remote_reflection_private_input')
+
+    def authorize_remote(self) -> None:
+        self.check_remote_input(self.runtime, self.access, self.current_input_id, self.check)
+        with self.runtime._connection(check=self.check) as db:
+            db.execute('BEGIN')
+            for item in self.evidence:
+                self.check()
+                span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'],
+                    item['start'], item['end'], item['quote'])
+                source_contexts(db, (span,), 'reflection_remote')
+                if credential_signal(item['quote']):
+                    raise MemoryFailure('protected_query')
 
     def admit(self, message_id: str, start: int = 0, length: int = 512) -> None:
         self.check()

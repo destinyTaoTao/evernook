@@ -22,3 +22,5 @@ npm test
 ```
 
 Tests run real local harness services and a deterministic synthetic provider. No model API or user profile is needed. The Python environment must have this checkout installed with `.[mcp]`. Runtime data and credentials must remain outside the checkout. The package is private; no npm publication or desktop installation is claimed.
+
+Reflection SDK: MemoryClient.reflect accepts the existing question/options plus explicit allow_remote. Remote requires trusted MemoryConfig.allowRemoteReflection at MCP startup and service allowlist; dsh uses reflectionAllowRemote (default false). Keys/endpoints belong only to the service. See [provider contract](../../docs/contracts/reflection-providers-v1.md). No automatic cloud fallback or daily model admission.

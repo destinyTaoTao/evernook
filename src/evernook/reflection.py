@@ -8,7 +8,7 @@ import hashlib
 import math
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from .models import Access, MemoryFailure
 from .query_plan import plan_query
@@ -17,6 +17,8 @@ from .runtime import MemoryRuntime, _identifier, _json
 from .safety import credential_signal
 from .semantic import SemanticRecall
 from .topic_views import TopicViews
+
+_REMOTE_EGRESS = object()
 
 
 @dataclass(frozen=True)
@@ -46,12 +48,23 @@ class ModelTurn:
     action: dict[str, Any]
     input_tokens: int
     output_tokens: int
+    cost_micro_usd: int = 0
+    error: str | None = None
 
 
 class ReflectionModel(Protocol):
     processor_version: str
     def turn(self, payload: dict[str, Any], *, input_tokens: int, output_tokens: int,
              timeout: float, cancel: threading.Event | None) -> ModelTurn: ...
+
+
+@runtime_checkable
+class RemoteModel(ReflectionModel, Protocol):
+    allowed_clients: frozenset[str]
+    max_cost_micro_usd: int
+    turn_input_tokens: int
+    turn_output_tokens: int
+    def reserve_cost(self, input_tokens: int, output_tokens: int) -> int: ...
 
 
 class ReflectionEngine:
@@ -84,6 +97,7 @@ class ReflectionEngine:
             TopicViews._schema(db)
             db.execute('COMMIT')
         return {'enabled': True, 'processor': self.identity, 'model_configured': self.model is not None,
+            'provider': 'remote' if isinstance(self.model, RemoteModel) else 'local',
             'policy': asdict(self.policy), 'model_admission': 'experimental', 'publication': 'temporary_only'}
 
     def clock(self, check: Any) -> dict[str, Any]:
@@ -163,11 +177,12 @@ class ReflectionEngine:
             'clarification_required': action['clarification_required'] or bool(action['conflicts']), 'assessment': assessment}
 
     def reflect(self, access: Access, query: str, *, mode: str = 'deep', topic_view_ids: tuple[str, ...] = (),
-                timeout: float | None = None, cancel: threading.Event | None = None, current_input_id: str | None = None) -> dict[str, Any]:
+                timeout: float | None = None, cancel: threading.Event | None = None, current_input_id: str | None = None,
+                allow_remote: bool = False) -> dict[str, Any]:
         self.runtime._require_scope(access, 'recall', 'reflection')
         if not isinstance(mode, str) or mode not in {'normal', 'deep'} or not isinstance(query, str) or not 1 <= len(query) <= 1048576:
             raise MemoryFailure('invalid_reflection_request')
-        if not isinstance(topic_view_ids, tuple) or len(topic_view_ids) > 8:
+        if not isinstance(topic_view_ids, tuple) or len(topic_view_ids) > 8 or type(allow_remote) is not bool:
             raise MemoryFailure('invalid_reflection_request')
         for view_id in topic_view_ids:
             _identifier(view_id)
@@ -179,14 +194,19 @@ class ReflectionEngine:
         started = time.monotonic()
         total = min(selected.seconds, timeout) if timeout is not None else selected.seconds
         deadline = started + total
-        usage: dict[str, Any] = {'search_rounds': 0, 'model_rounds': 0, 'tool_calls': 0, 'input_tokens': 0, 'output_tokens': 0}
+        remote = self.model if isinstance(self.model, RemoteModel) else None
+        usage: dict[str, Any] = {'search_rounds': 0, 'model_rounds': 0, 'tool_calls': 0, 'input_tokens': 0, 'output_tokens': 0,
+            'cost_reserved_micro_usd': 0, 'cost_reported_micro_usd': 0}
         result: dict[str, Any] = {'kind': 'untrusted_memory_reflection', 'state': 'partial', 'mode': mode, 'processor': self.identity,
             'model_admission': 'experimental', 'conclusions': [], 'conflicts': [], 'unknown': ['Memory coverage and semantic support are not established.'],
             'clarification_required': True, 'assessment': None, 'evidence': [], 'coverage': [], 'degraded': [], 'usage': usage,
             'budget': asdict(selected), 'cached': False, 'publication': 'temporary_only'}
+        result['provider'] = 'remote' if remote is not None else 'local'
         if credential_signal(query):
             result.update(state='protected_route_required', stop_reason='protected_route_required')
             return result
+        if remote is not None and (not allow_remote or access.client_id not in remote.allowed_clients):
+            raise MemoryFailure('remote_reflection_not_permitted')
         plan = plan_query(query)
         if plan.limited:
             result['degraded'].append('query_coverage_limited')
@@ -199,6 +219,8 @@ class ReflectionEngine:
             return left
         # Precancellation must not touch indexes or start a model worker.
         check()
+        if remote is not None:
+            EvidenceTools.check_remote_input(self.runtime, access, current_input_id, check)
         if not self.slots.acquire(blocking=False):
             result.update(state='busy', stop_reason='reflection_busy')
             return result
@@ -242,23 +264,36 @@ class ReflectionEngine:
                 left_output = selected.output_tokens - usage['output_tokens']
                 if left_input <= 0 or left_output <= 0:
                     raise MemoryFailure('reflection_token_budget')
+                input_cap = min(left_input, remote.turn_input_tokens if remote is not None else 4096)
+                output_cap = min(left_output, remote.turn_output_tokens if remote is not None else 512)
                 payload = {'question': query, 'query_plan': asdict(plan), 'evidence': copy.deepcopy(tools.evidence),
                     'coverage': copy.deepcopy(tools.coverage), 'round': usage['model_rounds'] + 1,
                     'allowed_view_ids': list(topic_view_ids)}
                 if usage.get('rejected_turns'):
                     payload['format_feedback'] = usage['rejected_turns'][-1]
+                if remote is not None:
+                    tools.authorize_remote()
+                    payload['_remote_egress'] = _REMOTE_EGRESS
+                    reserve = remote.reserve_cost(input_cap, output_cap)
+                    if type(reserve) is not int or reserve < 0 or usage['cost_reserved_micro_usd'] + reserve > remote.max_cost_micro_usd:
+                        raise MemoryFailure('reflection_cost_budget')
+                    usage['cost_reserved_micro_usd'] += reserve
                 usage['model_rounds'] += 1
                 usage['metering_incomplete'] = True
-                turn = self.model.turn(payload, input_tokens=min(left_input, 4096), output_tokens=min(left_output, 512), timeout=check(), cancel=cancel)
+                turn = self.model.turn(payload, input_tokens=input_cap, output_tokens=output_cap, timeout=check(), cancel=cancel)
                 if (not isinstance(turn, ModelTurn) or any(type(value) is not int or value < 0 for value in (turn.input_tokens, turn.output_tokens))
-                        or turn.input_tokens > min(left_input, 4096) or turn.output_tokens > min(left_output, 512)):
+                        or turn.input_tokens > input_cap or turn.output_tokens > output_cap
+                        or type(turn.cost_micro_usd) is not int or turn.cost_micro_usd < 0):
                     raise MemoryFailure('reflection_token_budget')
                 usage['input_tokens'] += turn.input_tokens
                 usage['output_tokens'] += turn.output_tokens
+                usage['cost_reported_micro_usd'] += turn.cost_micro_usd
                 usage['metering_incomplete'] = False
                 check()
                 if self.clock(check) != clock:
                     raise MemoryFailure('memory_changed_during_reflection')
+                if turn.error is not None:
+                    raise MemoryFailure('reflection_remote_invalid_output')
                 action = turn.action
                 if not isinstance(action, dict) or not isinstance(action.get('action'), str):
                     raise MemoryFailure('reflection_invalid_action')
@@ -270,6 +305,8 @@ class ReflectionEngine:
                     result.update(self._done(action, tools))
                     completed = True
                     break
+                if remote is not None:
+                    raise MemoryFailure('reflection_remote_evidence_scope')
                 if usage['tool_calls'] >= selected.tool_calls:
                     raise MemoryFailure('reflection_tool_budget')
                 usage['tool_calls'] += 1
@@ -300,6 +337,8 @@ class ReflectionEngine:
         finally:
             self.slots.release()
         try:
+            if remote is not None:
+                EvidenceTools.check_remote_input(self.runtime, access, current_input_id, lambda: check(final=True))
             if not tools.verify(lambda: check(final=True)) or clock is not None and self.clock(lambda: check(final=True)) != clock:
                 result['degraded'].append('memory_changed_during_reflection')
                 result.update(state='partial', stop_reason='memory_changed_during_reflection', conclusions=[], conflicts=[], assessment=None,

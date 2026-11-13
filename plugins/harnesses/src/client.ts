@@ -11,6 +11,17 @@ export interface MemoryConfig {
   contextConfig?: string;
   cwd?: string;
   serviceRequired?: boolean;
+  allowRemoteReflection?: boolean;
+}
+
+/** Provider credentials and endpoint selection belong to the trusted service, never this request. */
+export interface ReflectionRequest {
+  query: string;
+  mode?: 'normal' | 'deep';
+  timeout?: number;
+  topic_view_ids?: string[];
+  current_input_id?: string;
+  allow_remote?: boolean;
 }
 
 export interface Source { entry: string; session: string; branch: string; event: string }
@@ -101,6 +112,7 @@ export class MemoryClient {
         || !config.entry || config.entry.length > 256) throw new Error('evernook:invalid_host_config');
     const args = ['-m', 'evernook.mcp_server', '--config', config.config, '--access', config.access, '--profile', 'trusted-host'];
     if (config.serviceRequired) args.push('--require-service');
+    if (config.allowRemoteReflection === true) args.push('--allow-remote-reflection');
     if (config.embeddingConfig) args.push('--embedding-config', config.embeddingConfig);
     if (config.contextConfig) args.push('--context-config', config.contextConfig);
     this.client = new Client({ name: 'evernook-trusted-native', version: '1.0.0' });
@@ -126,6 +138,11 @@ export class MemoryClient {
       if (error instanceof Error && /^evernook:[a-z_]+$/.test(error.message)) throw error;
       throw new Error('evernook:transport_failed');
     }
+  }
+
+  async reflect(request: ReflectionRequest, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const { allow_remote, ...input } = request;
+    return this.call('reflect', { ...input, ...(allow_remote === true ? { allow_remote: true } : {}) }, signal);
   }
   remember(event: Event) { return this.call<Receipt>('remember', { event }); }
   stream(event: Event, frames: object[]) { return this.call<CaptureReceipt>('capture_stream', { event, frames }); }

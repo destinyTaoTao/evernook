@@ -1,5 +1,7 @@
 # Experimental reflection v1
 
+Core0.1.22 adds [explicit provider configuration](reflection-providers-v1.md): local remains the default; optional online API requires trusted configuration, a client allowlist and explicit egress consent. It shares this evidence/output/validation contract and never silently replaces the local model. Local-only statements below describe the original compatible schema1 profile; this addition grants no model/daily admission.
+
 #120 provides explicit temporary memory exploration inside the independent service. Normal context/recall does not invoke a chat model. Local Qwen3-0.6B is experimental for this purpose; protocol/function tests do not admit its reasoning quality.
 
 Trusted startup `evernook.service --config ... --reflection-config ...` selects one local profile. A trusted `reflect-configure` CLI/service call requires maintain+accept and installs the existing optional topic evidence/control/derived clocks atomically. Reflection queries require recall only; they cannot install schema, change policy or select paths. Omit the startup flag to disable the tool. No cloud provider or model downloader is used.

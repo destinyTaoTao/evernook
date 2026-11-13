@@ -15,6 +15,7 @@ export interface Config {
   streamMode: 'buffered' | 'durable_text' | 'durable_tools';
   toolPublication?: boolean;
   reflection?: boolean;
+  reflectionAllowRemote?: boolean;
 }
 export const Config: z<Config> = z.object({
   python: z.string().default(''), config: z.string().default(''), access: z.string().default(''),
@@ -22,6 +23,7 @@ export const Config: z<Config> = z.object({
   streamMode: z.union(['durable_text', 'buffered', 'durable_tools']).default('durable_text'),
   toolPublication: z.boolean().default(false),
   reflection: z.boolean().default(false),
+  reflectionAllowRemote: z.boolean().default(false),
 });
 interface Connection {
   fetch: { register(route: { path: string; methods: readonly string[]; requestBody: 'streaming';
@@ -45,7 +47,8 @@ export async function installWeb(ctx: Context, config: Config) {
     throw new Error('evernook:incomplete_web_config');
   }
   const options: MemoryOptions = { python: config.python, config: config.config, access: config.access,
-    entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication, reflection: config.reflection, serviceRequired: true };
+    entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication, reflection: config.reflection,
+    reflectionAllowRemote: config.reflectionAllowRemote, serviceRequired: true };
   async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' = 'manage') {
     if (running.size >= 4) throw new Error('evernook:management_busy');
     const promise = runLocalCli(options, config.maintenanceAccess, operation, input,

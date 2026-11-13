@@ -1,4 +1,4 @@
-"""Pinned experimental local reflection model; no downloader or remote provider."""
+"""Pinned local reflection and explicit trusted provider configuration; no downloader."""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -13,7 +13,7 @@ from typing import Any
 from .extraction import LocalQwen, _FILES
 from .models import MemoryFailure
 from .paths import external
-from .reflection import ModelTurn, ReflectionBudget, ReflectionEngine, ReflectionPolicy
+from .reflection import ModelTurn, ReflectionBudget, ReflectionEngine, ReflectionPolicy, ReflectionModel
 from .runtime import MemoryRuntime, _json, _load, _unique_object
 from .semantic import SemanticRecall
 from .reflection_protocol import build_messages, translate
@@ -103,6 +103,24 @@ class LocalReflectionModel:
 
 def from_file(runtime: MemoryRuntime, recall: SemanticRecall, path: Path) -> ReflectionEngine:
     value = _load(external(path))
+    model: ReflectionModel
+    if type(value.get('schema_version')) is int and value['schema_version'] == 2:
+        if value.get('provider') == 'local' and set(value) == {'schema_version', 'provider', 'local', 'policy'} and isinstance(value['local'], dict):
+            if set(value['local']) != {'profile', 'node', 'transformers_dir', 'model_dir'}:
+                raise MemoryFailure('invalid_reflection_config')
+            value = {'schema_version': 1, **value['local'], 'policy': value['policy']}
+        elif (value.get('provider') == 'openai-compatible' and set(value) == {'schema_version', 'provider', 'remote', 'policy'}
+                and isinstance(value['remote'], dict) and isinstance(value['policy'], dict)):
+            from .reflection_remote import RemoteReflectionModel
+            model = RemoteReflectionModel(value['remote'])
+            try:
+                policy = {**asdict(ReflectionPolicy()), **value['policy']}
+                policy['normal'], policy['deep'] = ReflectionBudget(**policy['normal']), ReflectionBudget(**policy['deep'])
+                return ReflectionEngine(runtime, recall, model, ReflectionPolicy(**policy))
+            except (TypeError, ValueError):
+                raise MemoryFailure('invalid_reflection_config') from None
+        else:
+            raise MemoryFailure('invalid_reflection_config')
     fields = {'schema_version', 'profile', 'node', 'transformers_dir', 'model_dir', 'policy'}
     if (set(value) != fields or type(value['schema_version']) is not int or value['schema_version'] != 1
             or value['profile'] != 'qwen3-0.6b-experimental-reflection-v1' or not isinstance(value['policy'], dict)

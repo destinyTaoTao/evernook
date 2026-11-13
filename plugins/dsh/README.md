@@ -1,5 +1,7 @@
 # EverNook · 忆栖 — dsh 记忆管理预览
 
+preview.25/Core0.1.22增加显式本地/线上反思provider。默认仍关闭；线上另需可信reflectionAllowRemote选项、服务端客户端allowlist及MCP启动门，key只在服务环境配置。SDK/API/CLI共用同一证据/权限/预算。没有自动云回退或真实线上模型准入，配置与费用边界见[provider契约](../../docs/contracts/reflection-providers-v1.md)。
+
 一级记忆页面与会话右侧栏，复用同一 Python/SQLite 证据账本。提供画像/兴趣/时间线、来源分页、版本历史、更正、移出画像、来源抑制与草案接纳/拒绝/重审。页面变更先预览，用户确认后保存，模型无管理凭证。
 
 **预览目标：Node 24、dsh 0.2.1-rc.5、Windows本机。** 未声明其他版本兼容或正式日用准入；文本可靠流模式拒绝工具/reasoning/多文本块，buffered 模式整段保存后显示。原生工具屏障需显式启用下述独立宿主组合；#94/#81/#82继续适用。
@@ -19,7 +21,7 @@ npm pack --ignore-scripts
 
 构建只复用 `../harnesses` 编译产物与本仓库许可证，不复制上游插件源码。当前推荐使用[固定补丁宿主安装步骤](host/README.md)：独立宿主锁定修复依赖，安装和启动均通过完整路径启动器。以下直接调用全局 dsh 的命令仅说明上游 profile 操作，不代表该宿主已经清除依赖告警。
 
-将生成的 `dsh-evernook-0.1.0-preview.24.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
+将生成的 `dsh-evernook-0.1.0-preview.25.tgz` 安装到独立 profile，设置仓库外的 DSH_HOME：
 
 ```powershell
 $env:DSH_HOME = '<external synthetic preview directory>'

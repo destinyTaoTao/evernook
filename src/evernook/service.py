@@ -48,6 +48,18 @@ def client_access(config: Path, access_path: Path) -> Access:
 
 
 class ServiceClient:
+    def reflect(self, access: Access, query: str, *, mode: str = 'deep', timeout: float = 60,
+                topic_view_ids: tuple[str, ...] = (), current_input_id: str | None = None,
+                allow_remote: bool = False, cancel: threading.Event | None = None) -> dict[str, Any]:
+        if type(allow_remote) is not bool:
+            raise MemoryFailure('invalid_reflection_request')
+        value = self.call(access, 'cli', {'command': 'reflect', 'input': {'query': query, 'mode': mode,
+            'timeout': timeout, 'topic_view_ids': list(topic_view_ids), 'current_input_id': current_input_id,
+            **({'allow_remote': True} if allow_remote else {})}}, timeout=130, cancel=cancel)
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
     def __init__(self, config: Path):
         self.config = external(config)
 
