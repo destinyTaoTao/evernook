@@ -10,7 +10,7 @@ from typing import Any
 
 from .maintenance import MaintenanceBudget, NavigationMaintenance
 from .models import Access, MemoryFailure
-from .embedding import LocalMiniLM
+from .embedding import load_embedding
 from .semantic import SemanticRecall
 from .runtime import MemoryRuntime
 from .scheduler import ConsolidationScheduler
@@ -30,7 +30,7 @@ class ServiceMaintenance:
         for scope in ("recall", "maintain", "accept"):
             runtime._require_scope(access, scope, "service_maintenance")
         self.interval, self.policies, self.stopping = interval, navigation_policies, stopping
-        self.semantic = SemanticRecall(runtime, LocalMiniLM.from_file(embedding_config)) if embedding_config is not None else None
+        self.semantic = SemanticRecall(runtime, load_embedding(embedding_config)) if embedding_config is not None else None
         self.lock = threading.Lock()
         self.state: dict[str, Any] = {"enabled": True, "ticks": 0, "error": None, "skipped": None}
         self.thread = threading.Thread(target=self.run, name="evernook-service-maintenance")

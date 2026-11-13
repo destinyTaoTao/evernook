@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from .models import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryFailure, Source
 from .cli import Parser
 from .runtime import MemoryRuntime
-from .embedding import EmbeddingBackend, LocalMiniLM
+from .embedding import EmbeddingBackend, load_embedding
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
 from .facts import FactRegistry
@@ -391,7 +391,7 @@ async def serve(config_path: Path, access_path: Path, profile: str = "recall", e
     else:
         runtime = MemoryRuntime(config_path)
         access = runtime.access_from_file(access_path)
-        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
+        backend = load_embedding(embedding_config) if embedding_config is not None else None
     server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
         service_config=config_path if use_service else None, allow_remote_reflection=allow_remote_reflection)
     try:

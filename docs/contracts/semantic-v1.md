@@ -52,6 +52,8 @@
 {"schema_version":1,"node":"E:\\node\\node.exe","transformers_dir":"E:\\evernook-deps\\node_modules\\@huggingface\\transformers","model_dir":"E:\\evernook-models\\embedding"}
 ```
 
+也可将 `schema_version` 设为 `2` 并添加 `"provider":"local-minilm"`，其余字段相同；两种配置选择同一个固定模型空间。服务、维护、MCP 和 CLI 共用内置 provider 选择器，未知 provider 会被拒绝，配置不能指定可执行模块或转发到云端。目前只有这一种实际 embedding provider；其他模型须分别实现并完成质量和资源验收，见 #124。
+
 三个路径必须为绝对路径，模型和配置留在 checkout 外；`transformers_dir` 指向可信的固定版本安装目录，其中代码会由 Node 执行，完整性属于本地依赖安装边界。当前验证复用了 R0 [固定依赖与准备说明](../../probes/core-compare/README.md)，不在请求期间执行安装、下载或 npm 脚本。
 
 ```text

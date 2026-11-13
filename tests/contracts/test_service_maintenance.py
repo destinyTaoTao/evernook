@@ -178,7 +178,7 @@ class ServiceMaintenanceTests(unittest.TestCase):
         self.runtime.submit(self.access, Event(Source("test", "semantic-idle", "main", "1"),
             "user", 1, None, "complete", "合成：辛辣"))
         backend = SyntheticEmbedding()
-        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+        with patch("evernook.service_maintenance.load_embedding", return_value=backend):
             maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
                 embedding_config=self.config.parent / "synthetic-embedding.json")
         result = maintenance.tick()
@@ -190,7 +190,7 @@ class ServiceMaintenanceTests(unittest.TestCase):
             "user", 1, None, "complete", "合成：辛辣"))
         backend = SyntheticEmbedding()
         backend.hook = lambda: self.scheduler.foreground(self.access, session="incoming", active=True, ttl_seconds=30)
-        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+        with patch("evernook.service_maintenance.load_embedding", return_value=backend):
             maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
                 embedding_config=self.config.parent / "synthetic-embedding.json")
         self.assertEqual(maintenance.tick()["skipped"], "foreground")
@@ -201,7 +201,7 @@ class ServiceMaintenanceTests(unittest.TestCase):
             "user", 1, None, "complete", "合成：辛辣"))
         backend = SyntheticEmbedding()
         backend.error = "embedding_timeout"
-        with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+        with patch("evernook.service_maintenance.load_embedding", return_value=backend):
             maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
                 embedding_config=self.config.parent / "synthetic-embedding.json")
         result = maintenance.tick()

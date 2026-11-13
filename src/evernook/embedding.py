@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from .models import MemoryFailure
 from .paths import external
@@ -51,6 +51,20 @@ def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
     return tuple(value / norm for value in values)
 
 
+def load_embedding(path: Path) -> EmbeddingBackend:
+    """Select a trusted built-in local backend; never import a caller-specified module."""
+    config = _load(external(path))
+    if type(config.get('schema_version')) is not int:
+        raise MemoryFailure('invalid_embedding_config')
+    if config['schema_version'] == 1:
+        return LocalMiniLM._from_config(config)
+    if config['schema_version'] == 2 and config.get('provider') == 'local-minilm':
+        normalized = {key: value for key, value in config.items() if key != 'provider'}
+        normalized['schema_version'] = 1
+        return LocalMiniLM._from_config(normalized)
+    raise MemoryFailure('invalid_embedding_config')
+
+
 # Hashes from the already prepared, pinned R0 candidate. No weights are distributed.
 _FILES = {
     "config.json": "05b570bff786faa5c4604152aa16f19f77ed6dfc31e47dd0f3dd987078693ac7",
@@ -76,7 +90,10 @@ class LocalMiniLM:
 
     @classmethod
     def from_file(cls, path: Path) -> LocalMiniLM:
-        config = _load(external(path))
+        return cls._from_config(_load(external(path)))
+
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> LocalMiniLM:
         if (set(config) != {"schema_version", "node", "transformers_dir", "model_dir"}
                 or type(config["schema_version"]) is not int or config["schema_version"] != 1
                 or any(not isinstance(config[key], str) for key in ("node", "transformers_dir", "model_dir"))):

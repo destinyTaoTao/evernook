@@ -52,7 +52,7 @@ class QueryPlanTests(unittest.TestCase):
             backend = SyntheticEmbedding()
             SemanticRecall(runtime, backend).refresh(access)
             arguments = {"query": "无关背景。" * 100, "query_intent": "饮食偏好"}
-            with patch("evernook.embedding.LocalMiniLM.from_file", return_value=backend):
+            with patch("evernook.embedding.load_embedding", return_value=backend):
                 for operation, args in (("recall", arguments), ("mcp", {"name": "evernook_v1_recall", "profile": "recall", "arguments": arguments})):
                     request = {"version": 1, "access": asdict(access), "operation": operation, "arguments": args}
                     result = dispatch(runtime, request, embedding_config=Path(temporary) / "synthetic-config.json")

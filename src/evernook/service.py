@@ -146,11 +146,11 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         return {}
     if operation in ("mcp", "mcp-list"):
         from .mcp_server import build_operations
-        from .embedding import LocalMiniLM
+        from .embedding import load_embedding
         expected = {"profile"} if operation == "mcp-list" else {"name", "arguments", "profile"}
         if set(arguments) != expected:
             raise MemoryFailure("invalid_arguments")
-        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
+        backend = load_embedding(embedding_config) if embedding_config is not None else None
         operations, context, restricted = build_operations(runtime, access, profile=arguments["profile"],
             backend=backend, context_config=context_config, reflector=reflector)
         if operation == "mcp-list":
@@ -219,8 +219,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     if operation == "search":
         return runtime.search(access, **arguments)
     if operation == "recall":
-        from .embedding import LocalMiniLM
-        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
+        from .embedding import load_embedding
+        backend = load_embedding(embedding_config) if embedding_config is not None else None
         return SemanticRecall(runtime, backend).recall(access, **arguments, cancel=cancel)
     if operation == "status" and not arguments:
         return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
@@ -240,10 +240,10 @@ class _Server(socketserver.ThreadingTCPServer):
         self.embedding_config = embedding_config
         self.reflector: ReflectionEngine | None = None
         if reflection_config is not None:
-            from .embedding import LocalMiniLM
+            from .embedding import load_embedding
             from .reflection_model import from_file
             self.reflector = from_file(runtime, SemanticRecall(runtime,
-                LocalMiniLM.from_file(embedding_config) if embedding_config else None), reflection_config)
+                load_embedding(embedding_config) if embedding_config else None), reflection_config)
         self.slots = threading.BoundedSemaphore(8)
         self.stopping = threading.Event()
         from .service_maintenance import ServiceMaintenance
