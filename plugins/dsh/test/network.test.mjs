@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 test('memory links use the confirmed profile page and re-read source on click', async () => {
-  let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
+  let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
   const windowListeners = new Map();
   const React = {
@@ -61,7 +61,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
       { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence' }] },
       { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence' }] },
     ] });
-    if (body.view === 'timeline') return respond({ next_offset: null, items: [] });
+    if (body.view === 'timeline') return timelineAvailable ? respond({ next_offset: null, items: [] })
+      : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'history') return new Promise(resolve => { resolveHistory = resolve; });
     if (body.view === 'source' && !sourceAvailable) return Response.json({ error: 'source_unavailable' }, { status: 400 });
     if (body.view === 'source' && delaySource) return new Promise(resolve => { resolveSource = resolve; });
@@ -176,6 +177,19 @@ test('memory links use the confirmed profile page and re-read source on click', 
   tree = render(); await flush();
   assert.ok(calls.some(call => call.view === 'timeline' && call.entry === 'dsh' && call.session_id === 's1'
     && call.since === new Date('2022-01-01T00:00:00').toISOString()));
+  tree = render();
+  assert.ok(find(tree, node => node.type === 'h2' && node.children.includes('empty')));
+  timelineAvailable = false;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.props?.role === 'alert'));
+  assert.equal(find(tree, node => node.type === 'h2' && node.children.includes('empty')), undefined);
+  assert.equal(find(tree, node => node.props?.className === 'en-page'), undefined);
+  timelineAvailable = true;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.type === 'h2' && node.children.includes('empty')));
+  assert.ok(find(tree, node => node.props?.className === 'en-page'));
   cursor = 0; const scoped = page({ host: 'sidebar', sessionId: 'sidebar-session' }); scoped.type(scoped.props); await flush();
   assert.ok(calls.some(call => call.view === 'timeline' && call.session_id === 'sidebar-session'));
   const before = calls.length;
