@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "scope": "Seven overlapping ten-case development diagnostics, not seventy independent cases or admission. Saved native bytes independently rescored; originals remain external.",
+  "cases_sha256": "eaff98c68c7b1144cb7bb7d869c75a097289d78c491a090730496f5933e463b0",
+  "conditions": [
+    {
+      "condition": "qwen35-2b",
+      "source": "evernook-120-llama-qwen35-2b-v2",
+      "sha256": "ceb45ef91d8c29acedd5021ac1e843c462b2542967381008c96797bc076fd0ab",
+      "raw_totals": {
+        "passed": 6,
+        "failed": 4,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 4,
+      "private_peak": 569090048,
+      "working_set_peak": 1521074176,
+      "samples": 174,
+      "query_failures": 0,
+      "median_ms": 4189.092250002432,
+      "max_ms": 4661.500700007309
+    },
+    {
+      "condition": "qwen25-15b",
+      "source": "evernook-120-llama-qwen25-15b-v2",
+      "sha256": "b208d81a759558e031a3c8dbf382d7e95d214b3248e2de79714f24480d26e112",
+      "raw_totals": {
+        "passed": 2,
+        "failed": 6,
+        "invalid": 2,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 0,
+      "private_peak": 371896320,
+      "working_set_peak": 1263104000,
+      "samples": 155,
+      "query_failures": 0,
+      "median_ms": 3495.8737500055577,
+      "max_ms": 5336.639999994077
+    },
+    {
+      "condition": "qwen3-17b",
+      "source": "evernook-120-llama-qwen3-17b-v2",
+      "sha256": "c1b993fd288a08fc1a0affaf6c4d3484e258caae6699df0d287fa0d1a337dff5",
+      "raw_totals": {
+        "passed": 4,
+        "failed": 6,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 2,
+      "private_peak": 764534784,
+      "working_set_peak": 1775046656,
+      "samples": 171,
+      "query_failures": 0,
+      "median_ms": 4069.265350000933,
+      "max_ms": 4568.881400002283
+    },
+    {
+      "condition": "qwen35-sampling",
+      "source": "evernook-120-llama-qwen35-sampling-v4",
+      "sha256": "7bf9662abc809c508f240be1b907f3c52364a56aed4780f1af79b870527fc2bb",
+      "raw_totals": {
+        "passed": 2,
+        "failed": 6,
+        "invalid": 2,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 0,
+      "private_peak": 569298944,
+      "working_set_peak": 1521844224,
+      "samples": 174,
+      "query_failures": 0,
+      "median_ms": 4231.1150500027,
+      "max_ms": 4688.0634000117425
+    },
+    {
+      "condition": "qwen35-thinking",
+      "source": "evernook-120-llama-qwen35-thinking-v4",
+      "sha256": "8c2c3d0234e0dd591cff01d0730028a5d9abdac841b8dc1acae76e1f2e7a3291",
+      "raw_totals": {
+        "passed": 5,
+        "failed": 3,
+        "invalid": 2,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 3,
+      "private_peak": 569614336,
+      "working_set_peak": 1521545216,
+      "samples": 178,
+      "query_failures": 1,
+      "median_ms": 4288.596750004217,
+      "max_ms": 4743.135400000028
+    },
+    {
+      "condition": "qwen35-4b",
+      "source": "evernook-120-llama-qwen35-4b-v5",
+      "sha256": "22ed71a4fe9948ac949a94ae0010583bce35594d29a0e55c0d88bd438ebdc415",
+      "raw_totals": {
+        "passed": 4,
+        "failed": 5,
+        "invalid": 1,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 4,
+      "private_peak": 775360512,
+      "working_set_peak": 2134405120,
+      "samples": 393,
+      "query_failures": 0,
+      "median_ms": 9526.935600006254,
+      "max_ms": 10660.408099996857
+    },
+    {
+      "condition": "qwen35-2b-q6",
+      "source": "evernook-120-llama-qwen35-2b-q6-v6",
+      "sha256": "b404898dd14d5faab280dbd1f6cbc3a963964dd99e40837091d24750c93bd782",
+      "raw_totals": {
+        "passed": 6,
+        "failed": 4,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "unsupported_answers": 0,
+      "answerable_passed": 4,
+      "private_peak": 570118144,
+      "working_set_peak": 1815998464,
+      "samples": 198,
+      "query_failures": 0,
+      "median_ms": 4718.40649999649,
+      "max_ms": 5612.356500001624
+    }
+  ],
+  "final_collector": {
+    "directory": "evernook-120-local-collector-qwen35-final",
+    "report_sha256": "ea77335edbdda977ac2a14494e77aee42ee902220ead929d48bafb754884407b",
+    "passed": 6,
+    "failed": 4,
+    "answerable_passed": 4,
+    "unsupported_answers": 0,
+    "collector_unchanged": true,
+    "quality_screen": false,
+    "private_peak": 569356288,
+    "working_set_peak": 1522229248,
+    "samples": 186,
+    "query_failures": 0
+  },
+  "admission": "pending"
+}

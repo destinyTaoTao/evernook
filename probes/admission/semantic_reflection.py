@@ -77,9 +77,14 @@ def judge_raw(expected: dict[str, Any], wire: list[dict[str, Any]], payload: dic
     if (not isinstance(envelope, dict) or envelope.get('status') != 'ok'
             or type(envelope.get('network_attempts')) is not int or envelope['network_attempts'] != 0):
         return {'state': 'invalid', 'reason': 'invalid_worker_envelope', 'unsupported_answer': None}
+    return judge_generated(expected, envelope.get('action_json'), payload, aliases)
+
+
+def judge_generated(expected: dict[str, Any], text: object, payload: dict[str, Any], aliases: dict[str, str]) -> dict[str, Any]:
+    """Same strict semantic score for a different runner; does not certify its network policy."""
     try:
-        action = LocalQwen.parse_selection(envelope['action_json'])
-    except (MemoryFailure, KeyError):
+        action = LocalQwen.parse_selection(text)
+    except MemoryFailure:
         return {'state': 'invalid', 'reason': 'invalid_json', 'unsupported_answer': None}
     if not isinstance(action, dict):
         return {'state': 'invalid', 'reason': 'invalid_action', 'unsupported_answer': None}
