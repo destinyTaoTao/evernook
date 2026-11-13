@@ -128,7 +128,8 @@ export async function installWeb(ctx: Context, config: Config) {
       if (input.action === 'bootstrap' && Object.keys(input).length === 1) {
         return json({ csrf, configured, preview: true, daily_admitted: false, stream_mode: config.streamMode,
           context_mode: !configured ? 'unconfigured' : options.memoryBudget ? 'target_tokenizer' : 'legacy_character_cap',
-          entry: config.entry, recovery_supported: Boolean(recovery), private_capture: Boolean(privateWindow) });
+          entry: config.entry, recovery_supported: Boolean(recovery), private_capture: Boolean(privateWindow),
+          fingerprint_bridge: Boolean(fingerprintBridge) });
       }
       const supplied = request.headers.get('x-evernook-csrf') ?? '';
       if (!/^[a-f0-9]{64}$/.test(supplied) || !timingSafeEqual(Buffer.from(supplied), Buffer.from(csrf))) {

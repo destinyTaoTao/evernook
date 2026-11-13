@@ -39,7 +39,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const fetch = async (_url, options) => {
     const body = JSON.parse(options.body); calls.push(body);
     const respond = value => Response.json({ result: body.action === 'read-versioned' ? { value, token: 'a'.repeat(64) } : value });
-    if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh', private_capture: true });
+    if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh', private_capture: true, fingerprint_bridge: true });
     if (body.action === 'private_open') return Response.json({ result: { requested: true } });
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
@@ -92,6 +92,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_open' })));
   assert.ok(find(tree, node => node.children?.includes('privateRequested')));
   assert.ok(find(tree, node => node.children?.includes('diagnostics')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticPrivate: diagnosticConfigured')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));
   assert.ok(calls.some(call => call.view === 'status'));
   statusAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();

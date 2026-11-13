@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
     diagnostics: '连接与配置诊断', diagnosticScope: '宿主配置与本次可信管理读取；不代表模型或日用能力已通过验收。', diagnosticSchema: 'Core 配置格式版本', diagnosticService: '管理服务', diagnosticOnline: '读取成功', diagnosticLoading: '检查中', diagnosticUnavailable: '读取失败或不可用', diagnosticStream: '宿主流模式', diagnosticRecovery: '只读续接', diagnosticEnabled: '可用', diagnosticDisabled: '未启用或不支持',
+    diagnosticPrivate: '本机私密记录入口', diagnosticFingerprint: '指纹复核桥接', diagnosticConfigured: '已配置（未检查健康状态）', diagnosticNotConfigured: '未配置',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
     empty: '这里还没有记忆', emptyHelp: '已有原话不等于已经形成画像。可以先查看时间线，或到待审草案确认有来源的内容。',
@@ -52,6 +53,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
     diagnostics: 'Connection and configuration', diagnosticScope: 'Host configuration and this trusted management read; not model or daily-use admission.', diagnosticSchema: 'Core configuration schema', diagnosticService: 'Management service', diagnosticOnline: 'Read succeeded', diagnosticLoading: 'Checking', diagnosticUnavailable: 'Read failed or unavailable', diagnosticStream: 'Host stream mode', diagnosticRecovery: 'Read-only continuation', diagnosticEnabled: 'Available', diagnosticDisabled: 'Disabled or unsupported',
+    diagnosticPrivate: 'Local private record entry', diagnosticFingerprint: 'Fingerprint revalidation bridge', diagnosticConfigured: 'Configured (health not checked)', diagnosticNotConfigured: 'Not configured',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
     empty: 'No memories here yet', emptyHelp: 'Saved words do not automatically become profile facts. Browse the timeline or review source-backed drafts.',
@@ -160,7 +162,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [sessionStatus, setSessionStatus] = useState(null);
       const [recovery, setRecovery] = useState(null);
       const [recoverySupported, setRecoverySupported] = useState(false);
-      const [privateCapture, setPrivateCapture] = useState(false);
+      const [privateCapture, setPrivateCapture] = useState(null);
+      const [fingerprintBridge, setFingerprintBridge] = useState(null);
       const [currentEntry, setCurrentEntry] = useState('dsh');
       const [review, setReview] = useState(null);
       const [editing, setEditing] = useState(null);
@@ -279,6 +282,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setStreamMode(boot.stream_mode);
           setRecoverySupported(boot.recovery_supported === true); setCurrentEntry(boot.entry);
           setPrivateCapture(boot.private_capture === true);
+          setFingerprintBridge(boot.fingerprint_bridge === true);
           if (!boot.configured) return;
           call({ action: 'read', view: 'status' }, controller.signal)
             .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version }); })
@@ -411,6 +415,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             h('p', null, t('diagnosticService') + ': ' + t(!configured ? 'config' : !diagnostic ? 'diagnosticLoading' : diagnostic.available ? 'diagnosticOnline' : 'diagnosticUnavailable')),
             h('p', null, t('diagnosticSchema') + ': ' + (diagnostic?.schema ?? t('unknown'))),
             h('p', null, t('diagnosticRecovery') + ': ' + t(recoverySupported ? 'diagnosticEnabled' : 'diagnosticDisabled')),
+            h('p', null, t('diagnosticPrivate') + ': ' + t(privateCapture === null ? 'diagnosticLoading' : privateCapture ? 'diagnosticConfigured' : 'diagnosticNotConfigured')),
+            h('p', null, t('diagnosticFingerprint') + ': ' + t(fingerprintBridge === null ? 'diagnosticLoading' : fingerprintBridge ? 'diagnosticConfigured' : 'diagnosticNotConfigured')),
             h('p', null, t('notice')), h('p', null, t('encryption'))),
           h('div', { className: 'en-values' }, ...['local', 'evidence', 'control'].map(key => h('span', { key }, '✓ ' + t(key)))),
           host === 'sidebar' ? h('p', { className: 'en-muted' }, t('sessionHelp')) : null,
