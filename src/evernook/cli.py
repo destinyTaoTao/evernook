@@ -103,6 +103,7 @@ def _parser() -> Parser:
         ("service-pair", "Pair a client through the service using an existing administrator"),
         ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
         ('service-protected-receive', 'Trusted local private Event from stdin; service configuration required'),
+        ('service-private-window', 'Enter one private note in a dedicated local window'),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
@@ -203,6 +204,10 @@ def _parser() -> Parser:
             command.add_argument("--client-id", required=True)
             command.add_argument("--entry", required=True)
             command.add_argument("--scopes")
+        if name == 'service-private-window':
+            command.add_argument('--entry', required=True)
+            command.add_argument('--session-id')
+            command.add_argument('--event-id')
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
@@ -696,7 +701,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -708,6 +713,15 @@ def main() -> None:
         elif args.command == 'service-protected-receive':
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).call(access, 'protected-receive', {'event': _input()})
+        elif args.command == 'service-private-window':
+            try:
+                from .private_capture_local import LocalPrivateCapture, show_private_capture
+            except ImportError:
+                raise MemoryFailure('private_capture_unavailable') from None
+            access = client_access(args.config, args.access)
+            request = LocalPrivateCapture(ServiceClient(args.config), access, args.entry,
+                                          session_id=args.session_id, event_id=args.event_id)
+            result = show_private_capture(request)
         elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
             access = client_access(args.config, args.access)
             value = {} if args.command == "status" else (

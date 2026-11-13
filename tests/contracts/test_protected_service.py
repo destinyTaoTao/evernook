@@ -157,6 +157,19 @@ class ProtectedServiceTests(unittest.TestCase):
         with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM objects').fetchone()[0], 0)
 
+    def test_local_capture_state_machine_uses_encrypted_service(self) -> None:
+        from evernook.private_capture_local import LocalPrivateCapture
+        client = self.start(configured=True)
+        capture = LocalPrivateCapture(client, self.owner, 'owner')
+        capture.submit('synthetic-private-window-note-156')
+        summary = capture.close()
+        self.assertEqual(summary['state'], 'saved')
+        self.assertNotIn('synthetic-private-window-note-156', json.dumps(summary))
+        self.assertEqual(client.call(self.owner, 'search', {'query': 'synthetic-private-window-note-156'})['hits'], [])
+        self.stop()
+        contents = b''.join(path.read_bytes() for path in self.root.rglob('*') if path.is_file())
+        self.assertNotIn(b'synthetic-private-window-note-156', contents)
+
     def test_plaintext_protected_request_is_rejected_before_persistence(self) -> None:
         client = self.start(configured=True)
         endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
