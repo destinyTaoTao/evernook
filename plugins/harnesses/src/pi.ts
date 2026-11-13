@@ -321,7 +321,7 @@ export async function installPiMemory(pi: ExtensionAPI, config: PiConfig) {
       if (!captured.receipt.original_saved) throw new Error('evernook:protected_input_not_saved');
       const message = captured.latest.message;
       if (message.role !== 'user') throw new Error('evernook:authentic_input_unavailable');
-      const query = Array.from(textOf(message.content)).slice(0, 256).join('');
+      const query = textOf(message.content);
       const nativeMessages = budget ? event.messages.filter(message => message.role !== 'compactionSummary' && message.role !== 'branchSummary') : event.messages;
       const safe = safeHistory(nativeMessages, textOf(message.content), captured.state.protectedTexts);
       if (budget) {

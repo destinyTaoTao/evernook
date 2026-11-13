@@ -4,7 +4,7 @@ import type { MemoryConfig } from './client.ts';
 type RecordValue = Record<string, unknown>;
 export type MaintenanceOperation = 'status' | 'mark-important' | 'change' | 'purge-preview' | 'purge' | 'profile-read' | 'profile-decide'
   | 'candidate-list' | 'fact-query' | 'fact-decide';
-export type LocalOperation = MaintenanceOperation | 'scheduler-trigger' | 'scheduler-status' | 'scheduler-session-end';
+export type LocalOperation = MaintenanceOperation | 'scheduler-trigger' | 'scheduler-status' | 'scheduler-session-end' | 'manage' | 'host-recovery';
 function object(value: unknown): value is RecordValue { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
 /** Fixed local CLI operations. Evidence goes through stdin, never a shell or process arguments. */
@@ -14,7 +14,7 @@ export function runLocalCli(config: MemoryConfig, access: string, operation: Loc
   return new Promise((resolve, reject) => {
     const worker = label === 'consolidation';
     const child = spawn(config.python, ['-m', worker ? 'evernook.worker' : 'evernook.cli', operation,
-      '--config', config.config, '--access', access],
+      '--config', config.config, '--access', access, ...(config.serviceRequired ? ['--require-service'] : [])],
       { cwd: config.cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
         env: worker ? { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } : process.env });
     const chunks: Buffer[] = [];

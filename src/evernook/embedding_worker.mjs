@@ -31,10 +31,33 @@ try {
   env.allowLocalModels = true;
   env.useBrowserCache = false;
   env.useFSCache = false;
-  const extractor = await pipeline('feature-extraction', input.model_dir, {
-    local_files_only: true, dtype: 'q8', device: 'cpu',
-    session_options: { intraOpNumThreads: 2, interOpNumThreads: 1 },
-  });
+  // Python has verified every pinned asset for this call. In Transformers 4.2,
+  // FileResponse eagerly streams even an ONNX file requested only by path.
+  // Resolve just this graph through the read-only cache; ORT still reads it.
+  const graph = 'onnx/model_quantized.onnx';
+  const aliases = new Set([
+    input.model_dir.replace(/\/$/, '') + '/' + graph,
+    env.remoteHost.replace(/\/$/, '') + '/' + env.remotePathTemplate
+      .replaceAll('{model}', input.model_dir).replaceAll('{revision}', 'main')
+      .replace(/^\//, '').replace(/\/$/, '') + '/' + graph,
+  ]);
+  const oldEnabled = env.useCustomCache;
+  const oldCache = env.customCache;
+  let extractor;
+  try {
+    env.useCustomCache = true;
+    env.customCache = {
+      async match(request) { return aliases.has(request) ? join(input.model_dir, graph) : undefined; },
+      async put() { throw new Error('read_only_model_path'); },
+    };
+    extractor = await pipeline('feature-extraction', input.model_dir, {
+      local_files_only: true, dtype: 'q8', device: 'cpu',
+      session_options: { intraOpNumThreads: 2, interOpNumThreads: 1 },
+    });
+  } finally {
+    env.useCustomCache = oldEnabled;
+    env.customCache = oldCache;
+  }
   try {
     // The upstream pipeline truncates by default; reject rather than silently omit evidence.
     // Per-item token overflow yields a null vector so one oversize piece cannot wedge a batch.

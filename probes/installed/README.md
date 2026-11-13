@@ -34,6 +34,13 @@ restore fix; reconcile its per-file hashes with the final merged source before d
 
 ## Public installed Core checks
 
+`path_race.py --output EXTERNAL\fresh-path-race --iterations 100` exercises actual Runtime
+startup alongside an owned SQLite writer that repeatedly commits and closes connections.
+Run it with the intended installed Python from outside the checkout. It records the installed
+version/import path, actual writes and startup failures; it checks writer liveness and stops
+within its bounded run. This targets the Core 0.1.2 Windows optional-journal/path/ACL fix;
+it does not replace the frozen installed-profile stability window.
+
 Clear `PYTHONPATH` and use the installed interpreter from an external working directory:
 
 ```powershell

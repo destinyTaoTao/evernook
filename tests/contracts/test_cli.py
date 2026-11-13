@@ -14,6 +14,43 @@ from contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_checkpoint_requires_explicit_id_index_and_is_reversible_via_cli(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_checkpoint"])
+        _, refused = self.invoke("prepare-search-checkpoint")
+        self.assertEqual(refused["error"]["code"], "lexical_checkpoint_requires_id_acceleration")
+        self.invoke("prepare-lexical-id-acceleration")
+        _, enabled = self.invoke("prepare-search-checkpoint")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, refreshed = self.invoke("refresh-search-checkpoint", extra=("--limit", "1"))
+        self.assertEqual(refreshed["result"], {"processed": 0, "enabled": True})
+        _, disabled = self.invoke("remove-search-checkpoint")
+        self.assertEqual(disabled["result"], {"enabled": False})
+        _, status = self.invoke("status")
+        self.assertFalse(status["result"]["lexical_checkpoint"])
+        self.assertTrue(status["result"]["lexical_id_acceleration"])
+
+    def test_optional_fts_id_acceleration_requires_explicit_cli_and_is_reversible(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_id_acceleration"])
+        _, enabled = self.invoke("prepare-lexical-id-acceleration")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, status = self.invoke("status")
+        self.assertTrue(status["result"]["lexical_id_acceleration"])
+        self.assertFalse(status["result"]["lexical_acceleration"])
+        _, disabled = self.invoke("remove-lexical-id-acceleration")
+        self.assertEqual(disabled["result"], {"enabled": False})
+
+    def test_optional_search_acceleration_is_explicit_and_reversible(self) -> None:
+        _, before = self.invoke("status")
+        self.assertFalse(before["result"]["lexical_acceleration"])
+        _, enabled = self.invoke("prepare-search-acceleration")
+        self.assertEqual(enabled["result"], {"enabled": True})
+        _, status = self.invoke("status")
+        self.assertTrue(status["result"]["lexical_acceleration"])
+        _, disabled = self.invoke("remove-search-acceleration")
+        self.assertEqual(disabled["result"], {"enabled": False})
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-cli-")
         self.addCleanup(temporary.cleanup)
@@ -154,6 +191,24 @@ class CLITests(unittest.TestCase):
         self.assertEqual(first.stdout, second.stdout)
         self.assertEqual(peer_path.read_bytes(), before)
         self.assertNotIn(runtime.access_from_file(peer_path).token.encode(), first.stdout + second.stdout)
+
+
+    def test_trusted_lexical_window_flags_preserve_originals_and_validate_budget(self) -> None:
+        runtime = MemoryRuntime(self.config)
+        event = Event(Source("test", "window-cli", "main", "first"), "user", 1, None, "complete", "合成：CLI窗口🙂，保留\r\n换行。")
+        first = runtime.submit(self.access, event)
+        second = runtime.submit(self.access, replace(event, source=replace(event.source, event="second"), sequence=2))
+        _, one = self.invoke("refresh-index-window", extra=("--limit", "1", "--budget-seconds", "10"))
+        self.assertEqual((one["result"]["indexed_messages"], one["result"]["pending_messages"]), (1, 1))
+        _, done = self.invoke("refresh-index-window")
+        self.assertEqual((done["result"]["state"], done["result"]["indexed_messages"]), ("ready", 2))
+        _, invalid = self.invoke("refresh-index-window", extra=("--budget-seconds", "0"))
+        self.assertEqual(invalid["error"]["code"], "invalid_maintenance_budget")
+        self.assertFalse(runtime.lexical_acceleration_enabled(self.access))
+        for receipt in (first, second):
+            stored = runtime.read(self.access, receipt.message_id)
+            assert stored is not None
+            self.assertEqual(stored.event.text, event.text)
 
 
 if __name__ == "__main__":

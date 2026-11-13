@@ -116,6 +116,8 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
                     if current_important != archived_important:
                         raise MemoryFailure("archive_evidence_incomplete")
                     # Do not silently discard newer durable decisions or maintenance state.
+                    from .observations import OBSERVATION_TABLES
+                    from .topic_views import TOPIC_VIEW_TABLES
                     for table in ("source_context", "text_streams_v1", "text_stream_chunks_v1", "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1",
                                   "profile_events_v1", "profile_approvals_v1", "experience_events_v1",
                                   "experience_approvals_v1", "persona_requests_v1", "persona_versions_v1",
@@ -123,7 +125,8 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
                                   "consolidation_results_v1", "consolidation_settings_v1", "preset_settings_v1",
                                   "navigation_policies_v1", "navigation_jobs_v1", "navigation_sources_v1",
                                   "scheduler_settings_v1", "scheduler_progress_v1", "scheduler_sessions_v1", "continuation_checkpoints_v1",
-                                  "preference_updates_settings_v1"):
+                                  "preference_updates_settings_v1", "management_previews_v1",
+                                  "host_recovery_previews_v1", "host_recovery_operations_v1", *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES):
                         def rows(db: sqlite3.Connection) -> set[tuple[object, ...]]:
                             exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
                             return {tuple(row) for row in db.execute(f"SELECT * FROM {table}")} if exists else set()

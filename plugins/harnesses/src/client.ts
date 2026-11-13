@@ -10,6 +10,18 @@ export interface MemoryConfig {
   embeddingConfig?: string;
   contextConfig?: string;
   cwd?: string;
+  serviceRequired?: boolean;
+  allowRemoteReflection?: boolean;
+}
+
+/** Provider credentials and endpoint selection belong to the trusted service, never this request. */
+export interface ReflectionRequest {
+  query: string;
+  mode?: 'normal' | 'deep';
+  timeout?: number;
+  topic_view_ids?: string[];
+  current_input_id?: string;
+  allow_remote?: boolean;
 }
 
 export interface Source { entry: string; session: string; branch: string; event: string }
@@ -24,7 +36,7 @@ export interface Event {
   protected_source?: boolean;
 }
 export interface Receipt { message_id: string; original_saved: boolean; representation: string; status: string }
-export interface CaptureReceipt { message: Receipt; complete: boolean; gaps: string[] }
+export interface CaptureReceipt { message: Receipt; complete: boolean; gaps: string[]; input_id?: string; tool_name?: string }
 export interface StreamReceipt {
   stream_id: string; index: number; state: 'open' | 'complete' | 'canceled' | 'failed' | 'protected';
   released_chars: number; committed_chars: number; pending_chars: number;
@@ -99,6 +111,8 @@ export class MemoryClient {
         ...(config.contextConfig ? [config.contextConfig] : [])].every(isAbsolute)
         || !config.entry || config.entry.length > 256) throw new Error('evernook:invalid_host_config');
     const args = ['-m', 'evernook.mcp_server', '--config', config.config, '--access', config.access, '--profile', 'trusted-host'];
+    if (config.serviceRequired) args.push('--require-service');
+    if (config.allowRemoteReflection === true) args.push('--allow-remote-reflection');
     if (config.embeddingConfig) args.push('--embedding-config', config.embeddingConfig);
     if (config.contextConfig) args.push('--context-config', config.contextConfig);
     this.client = new Client({ name: 'evernook-trusted-native', version: '1.0.0' });
@@ -111,7 +125,8 @@ export class MemoryClient {
   }
   async call<T>(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     try {
-      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args }, { signal });
+      const result = await this.client.callTool({ name: 'evernook_v1_' + name, arguments: args },
+        { signal, ...(name === 'reflect' ? { timeout: 130000 } : {}) });
       const payload = result.structuredContent as { ok?: boolean; result?: T; error?: { code?: string } } | undefined;
       if (!payload?.ok || result.isError) {
         const code = payload?.error?.code;
@@ -123,6 +138,11 @@ export class MemoryClient {
       if (error instanceof Error && /^evernook:[a-z_]+$/.test(error.message)) throw error;
       throw new Error('evernook:transport_failed');
     }
+  }
+
+  async reflect(request: ReflectionRequest, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const { allow_remote, ...input } = request;
+    return this.call('reflect', { ...input, ...(allow_remote === true ? { allow_remote: true } : {}) }, signal);
   }
   remember(event: Event) { return this.call<Receipt>('remember', { event }); }
   stream(event: Event, frames: object[]) { return this.call<CaptureReceipt>('capture_stream', { event, frames }); }
@@ -141,11 +161,12 @@ export class MemoryClient {
   capture(event: Event, kind: 'message' | 'tool_call' | 'tool_result', attachments: Attachment[] = [], input_id?: string, tool_name?: string) {
     return this.call<CaptureReceipt>('capture', { event, kind, attachments, input_id, tool_name });
   }
-  recall(query: string, limit = 8, current_input_id?: string) {
-    return this.call<RecallResult>('recall', { query, limit, current_input_id });
+  readCapture(message_id: string) { return this.call<CaptureReceipt>('read_capture', { message_id }); }
+  recall(query: string, limit = 8, current_input_id?: string, query_intent?: string, signal?: AbortSignal) {
+    return this.call<RecallResult>('recall', { query, limit, current_input_id, query_intent }, signal);
   }
-  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal, current_input_id?: string) {
-    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal', current_input_id }, signal);
+  context(query: string, model_id: string, max_tokens: number, as_of: string, signal?: AbortSignal, current_input_id?: string, query_intent?: string) {
+    return this.call<ContextBundle>('context', { query, model_id, max_tokens, as_of, mode: 'normal', current_input_id, query_intent }, signal);
   }
   read(message_id: string, signal?: AbortSignal) { return this.call<{ event: Event; receipt: Receipt & { content_version: number; received_at: string } }>('read', { message_id }, signal); }
   async close() { try { await this.client.close(); } catch { await this.transport.close().catch(() => {}); } }

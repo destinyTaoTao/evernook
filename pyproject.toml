@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evernook"
-version = "0.1.1"
+version = "0.1.28"
 description = "Local evidence ledger with an optional authenticated MCP adapter"
 requires-python = ">=3.14,<3.15"
 license = "MIT"
@@ -18,12 +18,13 @@ dev = ["mypy==1.18.2", "mcp==2.3.0", "PyNaCl==1.6.2"]
 mcp = ["mcp==2.3.0", "anyio==4.15.1", "pydantic==2.14.2"]
 backup = ["PyNaCl==1.6.2"]
 vault = ["PyNaCl==1.6.2"]
+vector = ["sqlite-vec==0.1.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-evernook = ["embedding_worker.mjs", "extraction_worker.mjs", "tokenizer_worker.mjs"]
+evernook = ["embedding_worker.mjs", "extraction_worker.mjs", "tokenizer_worker.mjs", "reflection_worker.mjs", "reflection_json.mjs"]
 
 [tool.mypy]
 strict = true

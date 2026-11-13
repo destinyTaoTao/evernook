@@ -16,6 +16,10 @@ def external(path: Path) -> Path:
     if not path.is_absolute():
         raise MemoryFailure("absolute_runtime_path_required")
     resolved = path.resolve()
+    # Windows may retain this prefix when a SQLite journal vanishes during
+    # resolve. Compare the same local DOS namespace; UNC/device paths stay distinct.
+    if re.match(r"^\\\\\?\\[A-Za-z]:\\", str(resolved)):
+        resolved = Path(str(resolved)[4:])
     if resolved.is_relative_to(Path(__file__).resolve().parents[2]):
         raise MemoryFailure("runtime_inside_checkout")
     if sys.platform != "win32":
@@ -77,7 +81,13 @@ def verify_private_directory(root: Path, *, extra_files: tuple[Path, ...] = ()) 
                 if (!$full) { exit 1 }
             }
             [Console]::Write('ok')
-        } catch { exit 1 }
+        } catch {
+            $failure = $_.Exception
+            while ($failure.InnerException) { $failure = $failure.InnerException }
+            $journals = @([IO.Path]::Combine($paths[0], 'memory.sqlite3-wal'), [IO.Path]::Combine($paths[0], 'memory.sqlite3-shm'))
+            if ($path -in $journals -and $failure -is [IO.FileNotFoundException]) { exit 2 }
+            exit 1
+        }
     """
     paths = [root] + [root / name for name in ("runtime.json", "client.json", "idempotency.key", "memory.sqlite3", "memory.sqlite3-wal", "memory.sqlite3-shm")]
     for path in extra_files:
@@ -85,11 +95,19 @@ def verify_private_directory(root: Path, *, extra_files: tuple[Path, ...] = ()) 
         if resolved.parent != root:
             raise MemoryFailure("unsafe_runtime_path")
         paths.append(resolved)
-    try:
-        result = subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
-                                input=json.dumps([str(path) for path in paths]), encoding="utf-8",
-                                capture_output=True, check=True, timeout=15)
-        if result.stdout != "ok":
-            raise MemoryFailure("unsafe_runtime_permissions")
-    except (OSError, subprocess.SubprocessError):
-        raise MemoryFailure("unsafe_runtime_permissions") from None
+    for attempt in range(3):
+        try:
+            result = subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
+                                    input=json.dumps([str(path) for path in paths]), encoding="utf-8",
+                                    capture_output=True, check=True, timeout=15)
+            if result.stdout != "ok":
+                raise MemoryFailure("unsafe_runtime_permissions")
+            return
+        except subprocess.CalledProcessError as error:
+            # Only a vanished optional SQLite journal retries the complete ACL check.
+            # Permission denial, other missing files and exhausted retries stay closed.
+            if error.returncode == 2 and attempt < 2:
+                continue
+            raise MemoryFailure("unsafe_runtime_permissions") from None
+        except (OSError, subprocess.SubprocessError):
+            raise MemoryFailure("unsafe_runtime_permissions") from None

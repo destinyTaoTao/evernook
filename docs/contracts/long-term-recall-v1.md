@@ -1,0 +1,21 @@
+# 长期候选与查询计划契约
+
+Core0.1.16 / dsh preview.23；接口版本保持v1，新增可选参数及输出。
+
+`recall`的`query`可以是完整原始输入（最多1048576码点），另可传`query_intent`（非空、最多256码点）。完整输入和意图都先检查凭证及UTF-8编码；无法使用意图洗掉原始输入中的受保护内容。`context`/HostContext接受同一可选意图。MCP的Recall/BuildContext及服务/CLI均传递该参数。
+
+没有显式意图时，256码点内原样查询；长输入先去掉尾部空白以定位最后实质字符，再选最多256码点的尾部，优先保留完整末句。原文不变，query_plan含kind/query/original_chars/represented_start/represented_end/limited，原文坐标以Unicode码点计。显式意图的坐标为null，表示独立请求而非逐字原文。bounded_tail总是报告query_coverage_limited。下游应显示“按部分输入检索”，不能表示整段输入已完整理解。
+
+Recall另可传`since`（含）/`until`（不含）作为调用者明确选择的发生时间范围。条件同时作用于字面与语义候选，先过滤再取候选；不自动从模型猜测年份。无条件时保留未知/未来时间的全局机会；近期标签仍遵守既有参考时间规则。
+
+语义先过滤权限、普通原始证据、当前内容/控制版本及时间范围，在全部合格片段上计算精确cosine，每来源保留最佳片段，再最多100来源进入RRF。最终limit仍为1..100，普通context仍独立受token预算约束。不存在固定前10000片段的候选边界。semantic_scanned_chunks是各语义通道检查的合格片段总数，通道之间可能重叠；它不是唯一来源数。semantic_scan_limited为false表示本次精确候选没有按片段数量截断，不代表索引、其他通道、原始意图或模型质量完整。取消/超时/索引落后仍需查看degraded和semantic状态。
+
+semantic_search_backend区分disabled、python-exact及sqlite-vec-0.1.9-exact。可选C扩展不改变索引schema；Python路径也完整搜索，超过预算时明确降级，不再永远隐藏固定后缀。异常向量不能被报告成完整的无匹配；字面证据可在语义失败时继续提供。发布前继续按权威账本回源/检查来源控制，受保护证据不进入普通通道。
+
+词法索引ready时另提供keyword候选：从查询取有界中文相邻双字与英文词（最多64项），按OR匹配已有FTS，仍执行原文连续跨度验证。它是候选启发式，不是完整中文分词或事实判断。权限、原始普通证据、内容/规范化版本与时间范围先过滤；FTS重复行在取100来源前去重，RRF每通道每来源只计一票。索引未ready不声称此通道已覆盖；精确/普通词法及语义通道继续使用既有降级状态。
+
+服务配置同时包含embedding_config与maintenance_access时，独立维护线程在前台让行策略允许后处理小批量语义索引，状态位于status.service.maintenance.semantic。每tick默认最多1片段/5秒；暂停、前台和退出会停止推理及提交。普通embedding失败单独报告，不饿死现有scheduler。模型空间变化后的pending/ready按该空间独立计算。
+
+取消从dsh AbortSignal经MemoryClient/MCP传到服务；直连stdio的recall/context也各有协作取消事件。SQLite progress handler及提交前显式检查维持错误语义。取消不是撤销已经完成的原始证据写入；刷新结果仍以实际状态及回执为准。
+
+本契约是功能及覆盖语义，日常质量/时延/资源准入沿用#81/#84；#121冻结套件的失败、缺失及实际宿主回答继续分别报告。

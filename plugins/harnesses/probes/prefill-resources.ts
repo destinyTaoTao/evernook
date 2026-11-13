@@ -10,8 +10,8 @@ import { LocalQwenChat } from './local-qwen.ts';
 
 const [profileFile, requestFile, output, variant] = process.argv.slice(2);
 if (![profileFile, requestFile, output].every(Boolean)
-    || !['baseline', 'no-prepack', 'no-logits-fetch'].includes(variant) || typeof globalThis.gc !== 'function') {
-  throw new Error('Use node --expose-gc prefill-resources.ts profile request external-output baseline|no-prepack|no-logits-fetch');
+    || !['baseline', 'no-prepack', 'no-logits-fetch', 'noarena'].includes(variant) || typeof globalThis.gc !== 'function') {
+  throw new Error('Use node --expose-gc prefill-resources.ts profile request external-output baseline|no-prepack|no-logits-fetch|noarena');
 }
 const destination = resolve(output);
 const checkout = resolve(import.meta.dirname, '../../..');
@@ -33,10 +33,17 @@ const captureOnly = new Error('diagnostic_feeds_captured_before_inference');
 const originalCreate = ort.InferenceSession.create;
 const originalRun = ort.InferenceSession.prototype.run;
 ort.InferenceSession.create = async function (model: unknown, options: Record<string, unknown>) {
+  const input = ArrayBuffer.isView(model) ? { kind: model.constructor.name, byte_length: model.byteLength,
+    backing_buffer_bytes: model.buffer.byteLength, sha256: hash(model) }
+    : model instanceof ArrayBuffer ? { kind: 'ArrayBuffer', byte_length: model.byteLength,
+      backing_buffer_bytes: model.byteLength, sha256: hash(new Uint8Array(model)) } : { kind: typeof model };
+  await writeFile(join(destination, 'model-input.json'), JSON.stringify(input) + '\n');
   const selected = { ...options, enableProfiling: true,
     profileFilePrefix: join(destination, 'ort'),
+    ...(variant === 'noarena' ? { enableCpuMemArena: false } : {}),
     ...(variant === 'no-prepack' ? { extra: { session: { disable_prepacking: '1' } } } : {}) };
   if (variant === 'no-prepack' && options.extra !== undefined) throw new Error('diagnostic_unexpected_session_extras');
+  if (variant === 'noarena' && options.enableCpuMemArena !== undefined) throw new Error('diagnostic_unexpected_allocator');
   await writeFile(join(destination, 'session-options.json'), JSON.stringify(selected) + '\n');
   return originalCreate.call(this, model, selected);
 };
@@ -60,6 +67,7 @@ await writeFile(join(destination, 'manifest.json'), JSON.stringify({ variant, pi
   request_sha256: createHash('sha256').update(JSON.stringify(request)).digest('hex'),
   probe_sha256: createHash('sha256').update(await readFile(import.meta.filename)).digest('hex'),
   model_probe_sha256: createHash('sha256').update(await readFile(new URL('./local-qwen.ts', import.meta.url))).digest('hex'),
+  file_access_probe_sha256: createHash('sha256').update(await readFile(new URL('./model-file-access.ts', import.meta.url))).digest('hex'),
   original_generation_allowance: 512, original_context_window: 32768 }) + '\n');
 let model: LocalQwenChat | undefined;
 try {

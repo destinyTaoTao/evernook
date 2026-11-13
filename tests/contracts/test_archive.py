@@ -579,7 +579,10 @@ class ArchiveTests(unittest.TestCase):
             restore_archive(self.root / "export", self.root / "export" / "nested")
 
     def test_snapshot_timeout_is_distinct_from_storage_busy_and_never_publishes_success(self) -> None:
-        with patch("evernook.archive.time.monotonic", side_effect=[0.0, 31.0]):
+        # Keep the fake clock local to archive code; runtime connection setup
+        # also uses the shared time module and must not consume these two ticks.
+        with patch("evernook.archive.time") as clock:
+            clock.monotonic.side_effect = [0.0, 31.0]
             with self.assertRaisesRegex(MemoryFailure, "archive_snapshot_timeout"):
                 self.runtime.export_archive(self.access, self.root / "export")
         self.assertFalse((self.root / "export").exists())

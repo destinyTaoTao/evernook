@@ -46,6 +46,7 @@ for (const name of await readdir(join(checkout, 'src/evernook'))) if (/\.(py|mjs
 await writeFile(join(destination, 'manifest.json'), JSON.stringify({ phase: 'actual_sdk_local_model_quality', entry,
   suite_hash: plan.suite_hash, policy_sha256: digest(policyText), plan_sha256: digest(await readFile(planFile)),
   probe_sha256: digest(await readFile(import.meta.filename)), model_probe_sha256: digest(await readFile(join(import.meta.dirname, 'local-qwen.ts'))),
+  file_access_probe_sha256: digest(await readFile(join(import.meta.dirname, 'model-file-access.ts'))),
   core_sha256: sourceHashes, model: model.startup, model_preloaded_before_user_requests: true,
   parser: policy.host.parser, sdk: { dsh: '0.2.1-rc.3', pi: '1.4.0' }, node: process.versions.node,
   maximum_cases: maximum ? Number(maximum) : null, diagnostic_control: control ?? null,

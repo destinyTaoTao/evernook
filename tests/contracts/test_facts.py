@@ -45,6 +45,53 @@ class FactTests(unittest.TestCase):
         return self.facts.decide(self.access, FactDecision(request_id, subject, "residence", candidate, evidence,
             revision, kind, valid_from, replaces_id=replaces.fact_id if replaces else None, resolves=resolves))
 
+    def test_management_fact_network_does_not_revive_hidden_successor(self) -> None:
+        from evernook.management import MemoryManagement
+
+        old = self.decide("graph-old", "合成：旧住所", 0)
+        current = self.decide("graph-new", "合成：新住所", 1, "change", replaces=old,
+                              valid_from="2023-01-01T00:00:00+08:00")
+        ui = MemoryManagement(self.runtime)
+        page = ui.read(self.access, view="network_facts")
+        self.assertEqual([item["text"] for item in page["items"]], [current.text])
+        self.assertEqual(page["items"][0]["sources"], [current.sources[0].message_id])
+        self.assertEqual(len(ui.read(self.access, view="network_facts", entry="synthetic", session_id="session",
+                                     since="2025-01-01T00:00:00Z")["items"]), 1)
+        self.assertEqual(ui.read(self.access, view="network_facts", entry="other")["items"], [])
+        self.decide("graph-dispute", "合成：住所存在争议", 2, "disputed")
+        self.assertEqual(ui.read(self.access, view="network_facts")["items"][0]["state"], "disputed")
+        _, confirmation = self.candidate("合成：隐藏当前来源")
+        self.runtime.change(self.access, Change("graph-hide", current.sources[0].message_id, 1, "suppress", confirmation, "synthetic"))
+        self.assertEqual(ui.read(self.access, view="network_facts")["items"], [])
+        access_path = self.config.parent / "mcp-access-unprivileged.json"
+        pair_client(self.config, client_id="unprivileged", entry="graph", access_path=access_path, scopes=("capture", "recall"))
+        with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            ui.read(self.runtime.access_from_file(access_path), view="network_facts")
+
+    def test_management_fact_network_pages_slots_and_filters_text(self) -> None:
+        from evernook.management import MemoryManagement
+
+        ui = MemoryManagement(self.runtime)
+        self.assertEqual(ui.read(self.access, view="network_facts")["items"], [])
+        first = self.decide("graph-a", "合成：甲", 0, subject="synthetic-a")
+        second = self.decide("graph-b", "合成：乙", 0, subject="synthetic-b")
+        page = ui.read(self.access, view="network_facts", limit=1)
+        self.assertEqual(page["items"][0]["fact_id"], first.fact_id)
+        self.assertEqual(page["next_offset"], 1)
+        cli_access = self.config.parent / "mcp-access-graph-cli.json"
+        pair_client(self.config, client_id="graph-cli", entry="graph", access_path=cli_access,
+                    scopes=("recall", "maintain", "accept"))
+        result = subprocess.run([sys.executable, "-m", "evernook.cli", "manage", "--config", str(self.config),
+                                 "--access", str(cli_access)],
+                                input=b'{"action":"read","view":"network_facts","limit":1}',
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(result.stdout)["result"]["items"][0]["fact_id"], first.fact_id)
+        last = ui.read(self.access, view="network_facts", limit=1, offset=1)
+        self.assertEqual(last["items"][0]["fact_id"], second.fact_id)
+        self.assertIsNone(last["next_offset"])
+        self.assertEqual(ui.read(self.access, view="network_facts", query="甲")["items"][0]["fact_id"], first.fact_id)
+
     def test_correction_rewrites_claim_not_real_world_time_and_knowledge_cutoff_retains_prior_belief(self) -> None:
         old = self.decide("synthetic-old", "合成：小林住杭州", 0)
         corrected = self.decide("synthetic-correction", "合成：先前说错，小林住上海", 1, "correction", replaces=old)

@@ -91,6 +91,74 @@ def automatic(suite: EvaluationSuite, root: Path) -> dict[str, Any]:
     return {"suite_hash": suite.suite_hash, "rows": rows}
 
 
+def lexical_modes(suite: EvaluationSuite, root: Path) -> dict[str, Any]:
+    """Compare literal retrieval across explicit derived-index modes, using only public APIs."""
+    prepared = seed(suite, root / "runtime", [row["id"] for row in suite.corpus["sources"]], facts_enabled=False)
+    runtime, owner = prepared["runtime"], prepared["owner"]
+    aliases = {value: key for key, value in prepared["ids"].items()}
+    queries = {query["id"]: query for query in suite.corpus["queries"]}
+    cases = [case for case in suite.cases if case.dimension == "retrieval"]
+    if not cases:
+        raise ValueError("lexical_retrieval_cases_missing")
+    baseline = {}
+    stages: list[dict[str, Any]] = []
+    directory = root / "lexical-modes"
+    directory.mkdir()
+
+    def collect(name: str, state: str, covering: bool, fts_id: bool) -> dict[str, Any]:
+        rows, pages = [], []
+        consistent = True
+        coverage = None
+        for case in cases:
+            query = queries[case.query_id]["retrieval"]
+            page = runtime.search(owner, query["query"], mode=query["mode"], limit=10)
+            if name == "not_built":
+                baseline[case.id] = page
+            prior = baseline[case.id]
+            equal = (page.hits == prior.hits and page.next_offset == prior.next_offset
+                and page.index.source_messages == prior.index.source_messages
+                and page.index.source_watermark == prior.index.source_watermark)
+            consistent = consistent and equal and (coverage is None or page.index == coverage)
+            coverage = page.index
+            rows.append({"id": case.id, "payload": {"source_ids": [aliases.get(hit.message_id, "unmapped-source") for hit in page.hits]}})
+            pages.append({"case_id": case.id, "equal_to_unindexed": equal, "page": asdict(page)})
+        observations = {"suite_hash": suite.suite_hash, "rows": rows}
+        scoring = score(suite, observations)
+        metric = scoring["metrics"]["retrieval"]
+        actual_covering = runtime.lexical_acceleration_enabled(owner)
+        actual_fts_id = runtime.lexical_id_acceleration_enabled(owner)
+        passed = (consistent and coverage is not None and coverage.state == state
+            and actual_covering == covering and actual_fts_id == fts_id
+            and metric["passed"] == len(cases) and metric["failed"] == metric["missing"] == 0)
+        item = {"mode": name, "passed": passed, "retrieval": metric, "complete_page_fields_equal": consistent,
+                "coverage": asdict(coverage) if coverage is not None else None,
+                "covering": actual_covering, "fts_id": actual_fts_id}
+        stages.append(item)
+        save(directory / (name + ".json"), {"observations": observations, "scoring": scoring, "pages": pages})
+        save(root / "lexical-mode-summary.json", {"suite_hash": suite.suite_hash, "stages": stages,
+            "unique_literal_cases": len(cases), "repeated_mode_observations": len(stages) * len(cases),
+            "completed_modes": len(stages), "expected_modes": 7,
+            "scope": "Small public-API literal retrieval fixture; not semantic, host, scale or latency admission."})
+        print(json.dumps({"phase": "lexical", **item}), flush=True)
+        if not passed:
+            raise ValueError("lexical_mode_contract_failed:" + name)
+        return observations
+
+    collect("not_built", "not_built", False, False)
+    runtime.refresh_lexical_window(owner, limit=10)
+    collect("behind_legacy", "behind", False, False)
+    runtime.refresh_lexical_window(owner, limit=5000)
+    collect("ready_legacy", "ready", False, False)
+    runtime.configure_lexical_acceleration(owner, enabled=True)
+    collect("ready_covering", "ready", True, False)
+    runtime.configure_lexical_id_acceleration(owner, enabled=True)
+    collect("ready_both", "ready", True, True)
+    runtime.configure_lexical_acceleration(owner, enabled=False)
+    collect("ready_id_only", "ready", False, True)
+    runtime.configure_lexical_id_acceleration(owner, enabled=False)
+    return collect("legacy_restored", "ready", False, False)
+
+
 def prepare(suite: EvaluationSuite, root: Path, entry: str, embedding_config: Path, maximum: int | None) -> None:
     backend = LocalMiniLM.from_file(embedding_config)
     plans = []
@@ -125,7 +193,7 @@ def prepare(suite: EvaluationSuite, root: Path, entry: str, embedding_config: Pa
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("core", "automatic", "prepare"))
+    parser.add_argument("phase", choices=("core", "automatic", "lexical", "prepare"))
     parser.add_argument("--suite", type=Path, default=Path("eval/zh-memory-v1"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--entry", choices=("dsh", "pi"))
@@ -147,7 +215,7 @@ def main() -> int:
                 raise ValueError("invalid_fixture_limit")
             prepare(suite, root, args.entry, args.embedding_config, args.max_queries)
             return 0
-        observations = automatic(suite, root)
+        observations = lexical_modes(suite, root) if args.phase == "lexical" else automatic(suite, root)
     save(root / "observations.json", observations)
     report = score(suite, observations)
     save(root / "report.json", report)

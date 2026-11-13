@@ -1,0 +1,26 @@
+{
+  "suite_version": "zh-learning-v1",
+  "scorer_version": "evernook-learning-evaluation-v1",
+  "arms": [
+    "raw",
+    "observations",
+    "views",
+    "reflect"
+  ],
+  "phases": [
+    "initial",
+    "replay",
+    "continued",
+    "processor_changed",
+    "restored"
+  ],
+  "corpus_sha256": "066b457539220faeaaf09c2c898b1ad708284d4be4c4dcd7580ad3296b6277d1",
+  "expectations_sha256": "67ee484d401e23c2956eaa4ab8bd995f27815d722afc18bc49b97118c1d4cc48",
+  "policy_sha256": "6b39e961a91fb1311fa498b2db80a61f1cfa64bb62813f31c8ef9f07e901a4ba",
+  "authorship": "Synthetic Chinese fixtures authored by implementation agent; no private data.",
+  "review": "Independent AI review performed; important findings corrected with RED to GREEN regressions. Human gold review not performed.",
+  "forbidden_literals": [
+    "SYNTHETIC-DO-NOT-DISCLOSE"
+  ],
+  "expanded_sources_sha256": "7038ae9b3551373f3517adc7e0d11ced320c8f1899491872750d09094fa393bf"
+}

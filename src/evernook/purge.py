@@ -136,6 +136,10 @@ class PurgeWorkflow:
 
     @staticmethod
     def _clean_derived(db: sqlite3.Connection, ids: tuple[str, ...]) -> None:
+        from .observations import remove_sources as remove_observation_sources
+        remove_observation_sources(db, ids)
+        from .topic_views import remove_sources as remove_view_sources
+        remove_view_sources(db, ids)
         targets = set(ids)
         placeholders = ",".join("?" for _ in ids)
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='candidate_runs_v1'").fetchone():
@@ -273,6 +277,8 @@ class PurgeWorkflow:
             db.execute(f"DELETE FROM visibility WHERE message_id IN ({placeholders})", ids)
             db.execute(f"DELETE FROM changes WHERE target_id IN ({placeholders})", ids)
             db.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
+            from .lexical_checkpoint import remove_sources as remove_checkpoint_sources
+            remove_checkpoint_sources(db, ids)
             result = PurgeResult(decision.request_id, "completed", preview.source_ids)
             db.execute("UPDATE purge_requests_v1 SET state='completed',result=? WHERE request_id=?",
                        (_json(asdict(result)), decision.request_id))

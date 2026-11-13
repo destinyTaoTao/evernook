@@ -24,6 +24,7 @@ from .cli import Parser
 from .runtime import MemoryRuntime
 from .embedding import EmbeddingBackend, LocalMiniLM
 from .semantic import SemanticRecall
+from .reflection import ReflectionEngine
 from .facts import FactRegistry
 from .experience import ExperienceRegistry
 from .host_context import HostContext
@@ -123,12 +124,24 @@ class Mark(Arguments):
 class Recall(Arguments):
     current_input_id: str | None = None
     query: str
+    query_intent: str | None = None
+    since: str | None = None
+    until: str | None = None
     limit: int = 10
     as_of: str | None = None
     recent_days: int = 7
     recent_target_chars: int = 8192
     min_similarity: float = 0.4
     timeout: float = 30
+
+
+class Reflect(Arguments):
+    query: str
+    current_input_id: str | None = None
+    mode: str = 'deep'
+    topic_view_ids: list[str] = []
+    timeout: float = 60
+    allow_remote: bool = False
 
 
 class FactQuery(Arguments):
@@ -141,6 +154,7 @@ class FactQuery(Arguments):
 class BuildContext(Arguments):
     current_input_id: str | None = None
     query: str
+    query_intent: str | None = None
     model_id: str
     max_tokens: int
     as_of: str
@@ -189,8 +203,9 @@ def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: Sema
             "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
 
 
-def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
-                 backend: EmbeddingBackend | None = None, context_config: Path | None = None) -> Server[None]:
+def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
+                     backend: EmbeddingBackend | None = None, context_config: Path | None = None, reflector: ReflectionEngine | None = None
+                     ) -> tuple[dict[str, tuple[type[Arguments], Callable[[Any], object], str]], HostContext | None, set[str]]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
     runtime.handshake(access)
@@ -246,38 +261,97 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
     if host_context is not None:
         operations["evernook_v1_context"] = (BuildContext, lambda args: host_context.build(access, **args.model_dump()),
             "Construct a budgeted low-trust memory payload using the configured local target tokenizer and current saved policy. Cannot change policy, accept facts or grant permission.")
-    recall_tools = {"evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
+    if profile == "trusted-host":
+        operations["evernook_v1_read_capture"] = (Read, lambda args: _required(runtime.read_capture(access, args.message_id)),
+            "Trusted host only: recheck a saved capture receipt and attachment integrity without exposing attachment contents. No execution or permission grant.")
+    if reflector is not None:
+        operations['evernook_v1_reflect'] = (Reflect, lambda args: reflector.reflect(access,
+            query=args.query, mode=args.mode, topic_view_ids=tuple(args.topic_view_ids), timeout=args.timeout,
+            current_input_id=args.current_input_id, allow_remote=args.allow_remote),
+            'Explicit experimental memory reasoning using the trusted configured provider. Remote requires client allowlist and explicit opt-in. Temporary unverified inference; no external tools, publication, persona or vault authority.')
+    recall_tools = {"evernook_v1_reflect","evernook_v1_read_capture", "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
                     "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience", "evernook_v1_context"}
     restricted = set(operations) - recall_tools
     if profile == "recall":
         operations = {name: operation for name, operation in operations.items() if name in recall_tools}
 
+    return operations, host_context, restricted
+
+
+def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str = "recall",
+                 backend: EmbeddingBackend | None = None, context_config: Path | None = None,
+                 service_config: Path | None = None, allow_remote_reflection: bool = False) -> Server[None]:
+    if runtime is None:
+        if service_config is None:
+            raise MemoryFailure("service_unavailable")
+        operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {}
+        host_context = None
+        restricted: set[str] = set()
+    else:
+        operations, host_context, restricted = build_operations(runtime, access, profile=profile,
+            backend=backend, context_config=context_config)
+
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        runtime.handshake(access)
+        if runtime is not None:
+            runtime.handshake(access)
+        if service_config is not None:
+            from .service import ServiceClient
+            listing = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+                access, "mcp-list", {"profile": profile}))
+            return types.ListToolsResult(tools=[types.Tool(name=item["name"],
+                input_schema=item["schema"], description=item["description"]) for item in listing["tools"]])
         return types.ListToolsResult(tools=[types.Tool(name=name, input_schema=model.model_json_schema(),
             description=description) for name, (model, _, description) in operations.items()])
 
     async def call_tool(context: ServerRequestContext[None], params: types.CallToolRequestParams) -> types.CallToolResult:
         try:
-            runtime.handshake(access)
+            if (params.name == 'evernook_v1_reflect' and (params.arguments or {}).get('allow_remote', False) is not False
+                    and not allow_remote_reflection):
+                raise MemoryFailure('remote_reflection_not_permitted')
+            if runtime is not None:
+                runtime.handshake(access)
             operation = operations.get(params.name)
-            if operation is None:
+            if operation is None and service_config is None:
                 if params.name in restricted and profile == "recall":
                     raise MemoryFailure("operation_not_allowed")
                 raise MemoryFailure("unknown_tool")
-            model, invoke, _ = operation
-            arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
             result: object
-            if params.name == "evernook_v1_context" and host_context is not None:
-                selected_context = host_context
+            if service_config is not None:
+                from .service import ServiceClient
                 cancel = threading.Event()
+                requested_timeout = (params.arguments or {}).get("timeout", 60 if params.name == 'evernook_v1_reflect' else 30)
+                transport_timeout = 40.0
+                if type(requested_timeout) in (int, float) and 0 < requested_timeout <= 120:
+                    transport_timeout = max(30.0, float(requested_timeout)) + 10
                 try:
-                    result = await anyio.to_thread.run_sync(
-                        lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    result = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+                        access, "mcp", {"name": params.name, "arguments": params.arguments or {},
+                            "profile": profile}, cancel=cancel, timeout=transport_timeout), abandon_on_cancel=True)
                 finally:
                     cancel.set()
             else:
-                result = await anyio.to_thread.run_sync(invoke, arguments)
+                assert operation is not None
+                model, invoke, _ = operation
+                arguments = model.model_validate_json(json.dumps(params.arguments or {}, ensure_ascii=False))
+                if params.name == "evernook_v1_context" and host_context is not None:
+                    selected_context = host_context
+                    cancel = threading.Event()
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            lambda: selected_context.build(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    finally:
+                        cancel.set()
+                elif params.name == "evernook_v1_recall":
+                    assert runtime is not None
+                    selected_recall = SemanticRecall(runtime, backend)
+                    cancel = threading.Event()
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            lambda: selected_recall.recall(access, **arguments.model_dump(), cancel=cancel), abandon_on_cancel=True)
+                    finally:
+                        cancel.set()
+                else:
+                    result = await anyio.to_thread.run_sync(invoke, arguments)
             if is_dataclass(result) and not isinstance(result, type):
                 result = asdict(result)
             payload: dict[str, Any] = {"contract_version": 1, "ok": True, "result": result}
@@ -300,11 +374,26 @@ def build_server(runtime: MemoryRuntime, access: Access, *, profile: str = "reca
 
 
 async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None,
-                context_config: Path | None = None) -> None:
-    runtime = MemoryRuntime(config_path)
-    access = runtime.access_from_file(access_path)
-    backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
-    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config)
+                context_config: Path | None = None, require_service: bool = False, allow_remote_reflection: bool = False) -> None:
+    from .service import ENDPOINT, ServiceClient, client_access
+    from .runtime import _load
+    use_service = require_service or (config_path.parent / ENDPOINT).exists() or _load(config_path).get("service_mode")
+    if use_service:
+        runtime = None
+        access = client_access(config_path, access_path)
+        remote = ServiceClient(config_path)
+        remote.call(access, "status", {})
+        if embedding_config is not None or context_config is not None:
+            remote.call(access, "policy-match", {
+                "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
+                "context_config": str(context_config.resolve()) if context_config else None})
+        backend = None
+    else:
+        runtime = MemoryRuntime(config_path)
+        access = runtime.access_from_file(access_path)
+        backend = LocalMiniLM.from_file(embedding_config) if embedding_config is not None else None
+    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
+        service_config=config_path if use_service else None, allow_remote_reflection=allow_remote_reflection)
     try:
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):
@@ -328,6 +417,8 @@ def main() -> None:
     parser.add_argument("--access", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, help="Trusted local MiniLM candidate configuration; disabled if omitted")
     parser.add_argument("--context-config", type=Path, help="Trusted local context policy and target tokenizer configuration")
+    parser.add_argument("--require-service", action="store_true")
+    parser.add_argument("--allow-remote-reflection", action="store_true", help="Trusted launcher consent; tools cannot enable this flag")
     parser.add_argument("--profile", choices=("recall", "trusted-host"), default="recall",
                         help="recall: query tools only (default); trusted-host: all ordinary tools")
     try:
@@ -337,7 +428,8 @@ def main() -> None:
         raise SystemExit(1) from None
     logging.disable(logging.CRITICAL)  # SDK validation/trace logs must not echo request payloads.
     try:
-        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config, arguments.context_config)
+        anyio.run(serve, arguments.config, arguments.access, arguments.profile, arguments.embedding_config,
+            arguments.context_config, arguments.require_service, arguments.allow_remote_reflection)
     except MemoryFailure as error:
         sys.stderr.write(f"evernook:{error.code}\n")
         raise SystemExit(1) from None

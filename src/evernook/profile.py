@@ -12,6 +12,7 @@ from .candidates import EvidenceSpan
 from .models import Access, MemoryFailure
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
+from .lexical import normalize
 
 
 PROFILE_CATEGORIES = ("identity", "preference", "interest", "relation", "goal", "boundary")
@@ -86,6 +87,34 @@ class ProfileRegistry:
         db.execute("""CREATE TABLE IF NOT EXISTS profile_approvals_v1 (
             message_id TEXT PRIMARY KEY REFERENCES messages(id), tag_id TEXT NOT NULL,
             reviewed_revision INTEGER NOT NULL, action TEXT NOT NULL)""")
+
+    def _rejection(self, db: sqlite3.Connection, draft: ProfileDraft) -> ProfileRecord | None:
+        """Reuse an active user rejection by source/content identity, never processor/run ID.
+
+        Existing review events are authoritative; no extra copy of rejected text is kept.
+        Explicitly reopening the original tag retires that rejection through its new head.
+        """
+        signature = sorted((s.message_id, s.state_version, s.content_version, s.representation, s.start, s.end)
+                           for s in draft.sources)
+        rows = db.execute("""SELECT e.record FROM profile_events_v1 e JOIN profile_approvals_v1 a
+            ON a.tag_id=e.tag_id AND a.reviewed_revision=e.revision-1 AND a.action='reject'
+            WHERE json_extract(e.record,'$.state')='rejected'
+            AND json_extract(e.record,'$.draft.category')=? ORDER BY e.rowid DESC LIMIT 1001""",
+                          (draft.category,)).fetchall()
+        if len(rows) > 1000:
+            raise MemoryFailure("profile_rejection_scope_too_large")
+        for row in rows:
+            rejected = self._record(row[0])
+            head = self._latest(db, rejected.tag_id)
+            if head is None or head.state != 'rejected' or head.revision != rejected.revision:
+                continue
+            if normalize(rejected.draft.label) != normalize(draft.label):
+                continue
+            prior = sorted((s.message_id, s.state_version, s.content_version, s.representation, s.start, s.end)
+                           for s in rejected.draft.sources)
+            if prior == signature:
+                return rejected
+        return None
 
     @staticmethod
     def _record(raw: str) -> ProfileRecord:
@@ -167,7 +196,7 @@ class ProfileRegistry:
     def _decide(self, db: sqlite3.Connection, request: ProfileDecision) -> ProfileRecord:
         if (not isinstance(request, ProfileDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str)
-                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm", "auto_preference", "clarify"}):
+                or request.action not in {"propose", "revise", "confirm", "reject", "suppress", "auto_confirm", "auto_preference", "clarify", "reopen"}):
             raise MemoryFailure("invalid_profile_decision")
         for identifier in (request.request_id, request.tag_id):
             _identifier(identifier)
@@ -203,6 +232,9 @@ class ProfileRegistry:
         if (request.action == "propose") != (previous is None):
             raise MemoryFailure("invalid_profile_transition")
         confirmation = None
+        confirmation_id = request.confirmation_id
+        if previous is not None and previous.state == 'rejected' and request.action != 'reopen':
+            raise MemoryFailure('profile_reopen_required')
         if (previous is not None and previous.state == "draft" and request.action in {"revise", "reject"}
                 and previous.draft.processor_version.startswith(PREFERENCE_CLARIFICATION_PROCESSOR)):
             raise MemoryFailure("preference_clarification_required")
@@ -211,9 +243,15 @@ class ProfileRegistry:
             self._sources(db, draft)
             content_revision = 1 if previous is None else previous.content_revision + 1
             state = "draft"
+            rejected = self._rejection(db, draft)
+            if rejected is not None:
+                state = 'rejected'
+                confirmation_id, confirmation = rejected.confirmation_id, rejected.confirmation_version
         else:
             assert previous is not None
             draft = previous.draft if request.draft is None else request.draft
+            if request.action in {"confirm", "auto_confirm", "auto_preference"} and self._rejection(db, draft) is not None:
+                raise MemoryFailure("profile_previously_rejected")
             content_revision = previous.content_revision + (draft != previous.draft)
             if request.action == "clarify" and (
                     previous.state != "draft" or draft.category != previous.draft.category
@@ -253,6 +291,17 @@ class ProfileRegistry:
                 PreferenceUpdates(self.runtime).validate_publication(db, draft, request.tag_id)
                 self._sources(db, draft)
                 state = "confirmed"
+            elif request.action == "reopen":
+                if previous.state != "rejected":
+                    raise MemoryFailure("invalid_profile_transition")
+                self._sources(db, draft)
+                # Inherited rejections must reopen their actual originating decision.
+                rejected = self._rejection(db, draft)
+                if (rejected is not None and rejected.tag_id != previous.tag_id) or not db.execute(
+                        "SELECT 1 FROM profile_approvals_v1 WHERE tag_id=? AND action='reject' AND reviewed_revision=?",
+                        (previous.tag_id, previous.revision - 1)).fetchone():
+                    raise MemoryFailure("profile_reopen_origin_required")
+                state = "draft"
             elif request.action == "reject":
                 if previous.state != "draft":
                     raise MemoryFailure("invalid_profile_transition")
@@ -265,7 +314,7 @@ class ProfileRegistry:
                 assert request.confirmation_id is not None
                 db.execute("INSERT OR IGNORE INTO profile_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
         record = ProfileRecord(request.tag_id, revision + 1, content_revision, state, PROFILE_TAXONOMY_VERSION,
-            draft, datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
+            draft, datetime.now(timezone.utc).isoformat(), confirmation_id, confirmation, request.request_id)
         db.execute("INSERT INTO profile_events_v1 VALUES (?,?,?,?,?)",
             (request.request_id, request.tag_id, revision + 1, fingerprint, _json(asdict(record))))
         return record

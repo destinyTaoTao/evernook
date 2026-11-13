@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 import os
@@ -19,6 +20,116 @@ class RuntimeRestoreTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.config, self.access = initialize(self.root / "source", client_id="source", entry="test", allow_archive_review=True)
         self.runtime = MemoryRuntime(self.config)
+
+    def test_ui_and_recovery_decisions_advance_the_control_checkpoint(self) -> None:
+        from evernook.host_recovery import HostRecovery
+        from evernook.management import MemoryManagement
+
+        saved = self.runtime.submit_capture(self.access, Capture(Event(Source('test', 'review', 'main', '1'),
+            'tool', 1, None, 'complete', '合成保存回执'), 'message'))
+        management = MemoryManagement(self.runtime)
+        recovery = HostRecovery(self.runtime)
+        previous = capture_control_checkpoint(self.runtime, self.access)
+        preview = management.preview(self.access, {'kind': 'source_suppress', 'message_id': saved.message.message_id})
+        changes: tuple[Callable[[], object], ...] = (
+            lambda: management.cancel(self.access, preview['proposal_id']),
+            lambda: recovery.run(self.access, {'action': 'preview', 'fingerprint': 'a' * 64, 'references': []}),
+        )
+        for change in changes:
+            change()
+            current = capture_control_checkpoint(self.runtime, self.access)
+            self.assertNotEqual(previous.control_head, current.control_head)
+            previous = current
+        proposal = recovery.run(self.access, {'action': 'preview', 'fingerprint': 'b' * 64, 'references': []})
+        changes = (
+            lambda: recovery.run(self.access, {'action': 'confirm', 'proposal_id': proposal['proposal_id'], 'fingerprint': 'b' * 64}),
+            lambda: recovery.run(self.access, {'action': 'complete', 'operation_id': proposal['target_session']}),
+        )
+        for change in changes:
+            previous = capture_control_checkpoint(self.runtime, self.access)
+            change()
+            self.assertNotEqual(previous.control_head, capture_control_checkpoint(self.runtime, self.access).control_head)
+
+    def test_stale_ui_or_recovery_state_blocks_publication_and_fresh_snapshot_preserves_it(self) -> None:
+        from evernook.host_recovery import HostRecovery
+        from evernook.management import MemoryManagement
+        from evernook.runtime_restore import publish_replayed_runtime
+
+        saved = self.runtime.submit_capture(self.access, Capture(Event(Source('test', 'review', 'main', '1'),
+            'tool', 1, None, 'complete', '合成保存回执'), 'message'))
+        recovery = HostRecovery(self.runtime)
+        management = MemoryManagement(self.runtime)
+        for phase in ('management-cancel', 'management-confirm', 'recovery-cancel', 'recovery-confirm', 'recovery-complete'):
+            with self.subTest(phase=phase):
+                if phase.startswith('management-'):
+                    proposal = management.preview(self.access, {'kind': 'source_suppress', 'message_id': saved.message.message_id})
+                else:
+                    proposal = recovery.run(self.access, {'action': 'preview', 'fingerprint': 'a' * 64, 'references': []})
+                    if phase == 'recovery-complete':
+                        recovery.run(self.access, {'action': 'confirm', 'proposal_id': proposal['proposal_id'], 'fingerprint': 'a' * 64})
+                self.runtime.export_archive(self.access, self.root / (phase + '-old'))
+                previous = capture_control_checkpoint(self.runtime, self.access)
+                if phase == 'management-cancel':
+                    management.cancel(self.access, proposal['proposal_id'])
+                elif phase == 'management-confirm':
+                    management.confirm(self.access, proposal['proposal_id'], {'kind': 'source_suppress', 'message_id': saved.message.message_id})
+                elif phase == 'recovery-complete':
+                    recovery.run(self.access, {'action': 'complete', 'operation_id': proposal['target_session']})
+                else:
+                    recovery.run(self.access, {'action': phase.removeprefix('recovery-'), 'proposal_id': proposal['proposal_id'],
+                        **({'fingerprint': 'a' * 64} if phase == 'recovery-confirm' else {})})
+                current = capture_control_checkpoint(self.runtime, self.access)
+                self.assertNotEqual(previous.control_head, current.control_head)
+                replay_archive_controls(self.runtime, self.access, self.root / (phase + '-old'),
+                    self.root / (phase + '-review'), checkpoint=current)
+                with self.assertRaisesRegex(MemoryFailure, 'archive_evidence_incomplete'):
+                    publish_replayed_runtime(self.runtime, self.access, self.root / (phase + '-review'), self.root / (phase + '-bad'),
+                        checkpoint=current, client_id='restored', entry='test')
+                self.assertFalse((self.root / (phase + '-bad')).exists())
+                self.runtime.export_archive(self.access, self.root / (phase + '-fresh'))
+                replay_archive_controls(self.runtime, self.access, self.root / (phase + '-fresh'),
+                    self.root / (phase + '-fresh-review'), checkpoint=current)
+                config, owner = publish_replayed_runtime(self.runtime, self.access, self.root / (phase + '-fresh-review'),
+                    self.root / (phase + '-good'), checkpoint=current, client_id='restored', entry='test')
+                restored = MemoryRuntime(config)
+                with self.runtime._connection() as live, restored._connection() as copy:
+                    for table in ('management_previews_v1', 'host_recovery_previews_v1', 'host_recovery_operations_v1'):
+                        if live.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
+                            self.assertEqual([tuple(row) for row in live.execute(f'SELECT * FROM {table} ORDER BY rowid')],
+                                [tuple(row) for row in copy.execute(f'SELECT * FROM {table} ORDER BY rowid')])
+                with self.assertRaises(MemoryFailure):
+                    restored.handshake(self.access)
+                if not phase.startswith('management-'):
+                    with self.assertRaisesRegex(MemoryFailure, 'recovery_not_found'):
+                        HostRecovery(restored).run(owner, {'action': 'confirm', 'proposal_id': proposal['proposal_id'], 'fingerprint': 'a' * 64})
+                # Only an explicit new pairing may reuse the old actor's durable receipts.
+                from evernook import pair_client
+                paired = pair_client(config, client_id='source', entry='restored-maintenance',
+                    access_path=config.parent / 'mcp-access-maintenance.json', scopes=('recall', 'maintain', 'accept'))
+                if phase == 'management-cancel':
+                    with self.assertRaisesRegex(MemoryFailure, 'management_preview_canceled'):
+                        MemoryManagement(restored).confirm(paired, proposal['proposal_id'],
+                            {'kind': 'source_suppress', 'message_id': saved.message.message_id})
+                elif phase == 'management-confirm':
+                    result = MemoryManagement(restored).confirm(paired, proposal['proposal_id'],
+                        {'kind': 'source_suppress', 'message_id': saved.message.message_id})
+                    self.assertEqual(result['state'], 'suppressed')
+                elif phase == 'recovery-cancel':
+                    with self.assertRaisesRegex(MemoryFailure, 'recovery_canceled'):
+                        HostRecovery(restored).run(paired, {'action': 'confirm', 'proposal_id': proposal['proposal_id'], 'fingerprint': 'a' * 64})
+                else:
+                    result = HostRecovery(restored).run(paired,
+                        {'action': 'confirm', 'proposal_id': proposal['proposal_id'], 'fingerprint': 'a' * 64})
+                    self.assertEqual(result['state'], 'complete' if phase == 'recovery-complete' else 'confirmed')
+                    self.assertEqual(result['target_session'], proposal['target_session'])
+
+    def test_unused_optional_control_tables_preserve_legacy_checkpoint_identity(self) -> None:
+        import sqlite3
+        from evernook.archive import _control_head
+
+        with sqlite3.connect(':memory:') as db:
+            self.assertEqual(_control_head(db, b'synthetic-legacy-control-head-key'),
+                '0153022613cc5617fd4c998dfb1e765f1a77a98a718a1c4c5803c112f8913150')
 
     def test_revoked_automatic_processor_cannot_return_through_an_older_snapshot(self) -> None:
         from evernook.automatic_preferences import PreferenceUpdates

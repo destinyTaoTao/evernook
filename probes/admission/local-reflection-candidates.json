@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "admission": "pending; diagnostic assets are not production profiles",
+  "runtime": {
+    "directory": "llama-b12360",
+    "archive": "llama-b12360-bin-win-cpu-x64.zip",
+    "sha256": "eae1726047e0eaa707b1302929d196c999b96c2f243b21aea6e93bcebacc4e17",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12360/llama-b12360-bin-win-cpu-x64.zip"
+  },
+  "jinja": {"version": "0.5.11", "sha256": "c8871915dfa68f976c11540c33fc9341c0810ebe29adb7027b8d51f2a8044936"},
+  "models": [
+    {"id":"qwen25-15b-q4","file":"Qwen2.5-1.5B-Instruct-Q4_K_M.gguf","bytes":1117320736,"sha256":"6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e","url":"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf"},
+    {"id":"qwen3-17b-q4","file":"Qwen3-1.7B-Q4_K_M.gguf","bytes":1107409472,"sha256":"b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897","url":"https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/d7f544eead698dbd1f15126ef60b45a1e1933222/Qwen3-1.7B-Q4_K_M.gguf"},
+    {"id":"qwen35-2b-q4","file":"Qwen3.5-2B-Q4_K_M.gguf","bytes":1280835840,"sha256":"aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223","url":"https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf"},
+    {"id":"qwen35-2b-q6","file":"Qwen3.5-2B-Q6_K.gguf","bytes":1574961408,"sha256":"fc90339420b4298887aafb307a4291c55440b730133bbffe6ba9630503dcb548","url":"https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q6_K.gguf"},
+    {"id":"qwen35-4b-iq2m","file":"Qwen3.5-4B-UD-IQ2_M.gguf","bytes":1759997088,"sha256":"cb4c45ca42c0d7777667e94e3963f8e59e939b3665098328ce601feb5be129c1","url":"https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-UD-IQ2_M.gguf"},
+    {"id":"lfm25-12b-instruct-q8","file":"LFM2.5-1.2B-Instruct-Q8_0.gguf","bytes":1246253888,"sha256":"f6b981dcb86917fa463f78a362320bd5e2dc45445df147287eedb85e5a30d26a","url":"https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/8ed288026e23958ad9dfa92d53ed773a8eee7125/LFM2.5-1.2B-Instruct-Q8_0.gguf","license":"LFM1.0","generation":{"thinking":false,"temperature":0.1,"top_k":50,"repeat_penalty":1.05}},
+    {"id":"lfm25-12b-thinking-q8","file":"LFM2.5-1.2B-Thinking-Q8_0.gguf","bytes":1246257792,"sha256":"e346f3d63c9e44258019a044b7993d74a0952bc31873c8954f3b86a5caa97e46","url":"https://huggingface.co/LiquidAI/LFM2.5-1.2B-Thinking-GGUF/resolve/b71945805f7d4d87dabd73e26098d44bcad6c35f/LFM2.5-1.2B-Thinking-Q8_0.gguf","license":"LFM1.0","generation":{"thinking":true,"temperature":0.05,"top_k":50,"repeat_penalty":1.05}},
+    {"id":"qwen35-4b-iq3xxs","file":"Qwen3.5-4B-UD-IQ3_XXS.gguf","bytes":1949047968,"sha256":"00aab66a2359a9afc52f0ab757e61f9be1656e6fcaba8468bd95579a8b2cbc40","url":"https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-UD-IQ3_XXS.gguf"},
+    {"id":"granite40-hmicro-q3l","file":"granite-4.0-h-micro-Q3_K_L.gguf","bytes":1637523104,"sha256":"5dc8e86b93be7fda95ed332cf1b954b0b8a535812dc3f97b5860e21b4793a6b5","url":"https://huggingface.co/ibm-granite/granite-4.0-h-micro-GGUF/resolve/dc1dd2585fac18a78001c677d33ef8a7bbb7eb68/granite-4.0-h-micro-Q3_K_L.gguf","license":"Apache-2.0"},
+    {"id":"granite42-3b-q3m","file":"granite-4.2-3b-Q3_K_M.gguf","bytes":1835968032,"sha256":"cf620d4d440f544ece5e6257ed86539d7729d75c3585c9e17dd74d2632a34322","url":"https://huggingface.co/ibm-granite/granite-4.2-3b-GGUF/resolve/c40945d71cd90f249a56985e8155551a9188dc30/granite-4.2-3b-Q3_K_M.gguf","license":"Apache-2.0","generation":{"thinking":false,"temperature":1.0,"top_k":0,"repeat_penalty":1.0,"top_p":0.95}},
+    {"id":"granite42-3b-q3m-thinking","file":"granite-4.2-3b-Q3_K_M.gguf","bytes":1835968032,"sha256":"cf620d4d440f544ece5e6257ed86539d7729d75c3585c9e17dd74d2632a34322","url":"https://huggingface.co/ibm-granite/granite-4.2-3b-GGUF/resolve/c40945d71cd90f249a56985e8155551a9188dc30/granite-4.2-3b-Q3_K_M.gguf","license":"Apache-2.0","generation":{"thinking":true,"temperature":1.0,"top_k":0,"repeat_penalty":1.0,"top_p":0.95}}
+  ]
+}

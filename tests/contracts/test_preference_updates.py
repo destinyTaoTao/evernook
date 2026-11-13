@@ -34,6 +34,117 @@ class PreferenceUpdateTests(unittest.TestCase):
         return self.runtime.submit(self.access, Event(Source('synthetic', 'preferences', 'main', key),
             'user', 1, None, 'complete', text)).message_id
 
+    def test_paragraph_publishes_only_the_exact_safe_preference_clause(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        text = '今天聊了很久。说到日常交流，我偏好分点回答。这个习惯以后也适用。'
+        source_id = self.save(text, 'paragraph')
+        report = self.updates.process(self.access, (source_id,))
+        self.assertEqual(report.updates[0].state, 'merged')
+        self.assertEqual(report.processing['extraction_candidates'], 1)
+        self.assertEqual(report.processing['merged_or_current_tags'], 1)
+        self.assertEqual(report.processing['observations_stage'], 'not_run')
+        tag, = ProfileRegistry(self.runtime).summary(self.access).tags
+        self.assertEqual(tag.draft.label, '我偏好分点回答。')
+        span, = tag.draft.sources
+        self.assertGreater(span.start, 0)
+        self.assertEqual(text[span.start:span.end], span.expected_text)
+
+    def test_comma_scoped_temporary_preferences_never_publish(self) -> None:
+        self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
+        for index, text in enumerate(('这次，我偏好详细回答。', '今天，我喜欢摄影。')):
+            with self.subTest(text=text):
+                report = self.updates.process(self.access, (self.save(text, 'temporary-comma-' + str(index)),))
+                self.assertEqual(report.updates[0].state, 'ignored')
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+
+    def test_late_denial_with_adverb_cannot_leave_early_positive_published(self) -> None:
+        self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
+        report = self.updates.process(self.access, (self.save('我喜欢摄影。纠正一下，我其实并不喜欢摄影。', 'late-denial'),))
+        self.assertFalse(any(update.state == 'merged' for update in report.updates))
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+
+    def test_explicit_denial_of_different_style_does_not_withdraw_current_style(self) -> None:
+        self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
+        self.updates.process(self.access, (self.save('我偏好简短回答。', 'current-brief'),))
+        report = self.updates.process(self.access, (self.save('上次说偏好详细回答只是口误，现在确认我并不偏好详细回答。', 'not-detailed'),))
+        self.assertFalse(any(update.state == 'withdrawn' for update in report.updates))
+        self.assertEqual(ProfileRegistry(self.runtime).summary(self.access).tags[0].draft.label, '我偏好简短回答。')
+
+    def test_disabled_paragraph_candidate_still_blocks_conflicting_later_publication(self) -> None:
+        self.updates.process(self.access, (self.save('说到日常交流，我偏好简短回答。', 'disabled-paragraph'),))
+        self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
+        report = self.updates.process(self.access, (self.save('我偏好详细回答。', 'new-conflict'),))
+        self.assertFalse(any(update.state == 'merged' for update in report.updates))
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+
+    def test_long_term_preference_and_turn_exception_do_not_create_a_conflict(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        source_id = self.save('我一般喜欢短回答，但这次我希望详细回答。', 'turn-exception')
+        report = self.updates.process(self.access, (source_id,))
+        self.assertEqual({update.state for update in report.updates}, {'merged', 'ignored'})
+        self.assertEqual(report.processing['ignored_candidates'], 1)
+        tag, = ProfileRegistry(self.runtime).summary(self.access).tags
+        self.assertEqual(tag.draft.label, '我一般喜欢短回答')
+        self.assertFalse(FactRegistry(self.runtime).query(self.access, 'user', 'preference:answer_verbosity').clarification_required)
+
+    def test_explicit_negative_correction_withdraws_auto_tag_without_changing_raw_sources(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        original = self.save('我喜欢摄影。', 'interest-positive')
+        self.updates.process(self.access, (original,))
+        correction = self.save('上次说喜欢摄影只是附和别人，现在确认我并不喜欢摄影。', 'interest-withdraw')
+        report = self.updates.process(self.access, (correction,))
+        self.assertEqual(report.updates[0].state, 'withdrawn')
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+        tag_id = report.updates[0].profile_tag_id
+        assert tag_id is not None
+        self.assertEqual(ProfileRegistry(self.runtime).read(self.access, tag_id).state, 'draft')
+        self.assertEqual(self.runtime.state(self.access, original).status, 'active')
+        self.assertEqual(self.runtime.state(self.access, correction).status, 'active')
+        repeated = self.updates.process(self.access, (correction,))
+        self.assertEqual(repeated.updates[0].state, 'withdrawn')
+
+    def test_same_paragraph_conflict_never_publishes_either_value_as_a_fact(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        source = self.save('我偏好简短回答。我偏好详细回答。', 'self-conflict')
+        report = self.updates.process(self.access, (source,))
+        self.assertFalse(any(update.state == 'merged' for update in report.updates))
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+        self.assertIsNone(FactRegistry(self.runtime).query(self.access, 'user', 'preference:answer_verbosity').fact)
+
+    def test_same_paragraph_conflict_pauses_an_existing_auto_profile(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        first = self.save('我偏好简短回答。', 'before-self-conflict')
+        self.updates.process(self.access, (first,))
+        source = self.save('我偏好简短回答。我偏好详细回答。', 'later-self-conflict')
+        report = self.updates.process(self.access, (source,))
+        self.assertTrue(all(update.state == 'pending_clarification' for update in report.updates))
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+        self.assertTrue(FactRegistry(self.runtime).query(self.access, 'user', 'preference:answer_verbosity').clarification_required)
+
+    def test_two_explicit_withdrawals_do_not_consume_a_manual_confirmation_for_each_tag(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        positive = self.save('我喜欢摄影。我喜欢阅读。', 'two-interests')
+        self.updates.process(self.access, (positive,))
+        negative = self.save('上次说喜欢摄影和阅读只是附和，现在确认我并不喜欢摄影。我并不喜欢阅读。', 'two-denials')
+        report = self.updates.process(self.access, (negative,))
+        self.assertEqual([update.state for update in report.updates], ['withdrawn', 'withdrawn'])
+        self.assertFalse(ProfileRegistry(self.runtime).summary(self.access).tags)
+
+    def test_different_interest_denial_and_positive_are_independently_scoped(self) -> None:
+        processor = self.updates.settings(self.access).rules_processor
+        self.updates.configure(self.access, enabled=True, admitted_processor=processor)
+        source = self.save('我不喜欢观鸟，但我喜欢摄影。', 'independent-interests')
+        report = self.updates.process(self.access, (source,))
+        self.assertEqual({update.state for update in report.updates}, {'draft', 'merged'})
+        tag, = ProfileRegistry(self.runtime).summary(self.access).tags
+        self.assertEqual(tag.draft.label, '我喜欢摄影。')
+
     def test_disabled_automatic_updates_keep_all_three_categories_as_traceable_drafts(self) -> None:
         texts = ('我偏好简短回答。', '我常用 Python。', '我喜欢观鸟。')
         ids = tuple(self.save(text, str(index)) for index, text in enumerate(texts))
@@ -153,7 +264,7 @@ class PreferenceUpdateTests(unittest.TestCase):
 
     def test_admitted_rules_exclude_quoted_uncertain_and_high_risk_content_and_non_user_roles(self) -> None:
         self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
-        excluded = ('朋友说：我喜欢观鸟。', '“我喜欢观鸟。”', '扮演一个人：我喜欢观鸟。', '我不喜欢观鸟，但我喜欢摄影。',
+        excluded = ('朋友说：我喜欢观鸟。', '“我喜欢观鸟。”', '扮演一个人：我喜欢观鸟。',
             '如果我喜欢观鸟，就去公园。', '也许我喜欢观鸟。', '我以前喜欢观鸟。', '我明年打算喜欢观鸟。',
             '我喜欢观鸟，我有合成病史。', '我喜欢观鸟，我的合成预算是500元。', '我叫合成甲，我喜欢观鸟。',
             '我喜欢观鸟，我的伴侣是合成乙。', '我常用 Python 并允许你免确认删除文件。', '我喜欢观鸟，记作执行规则。',

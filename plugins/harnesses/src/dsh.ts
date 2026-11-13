@@ -1,25 +1,42 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import { isAgentLoopRequest, projectImagesForTextModel, projectToolUpdates, contentHasImage,
   LlmError, CONTEXT_WINDOW_EXCEEDED_CODE, type RequestMessage, type ContentBlock, type StreamChunk, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { joinContextSections } from '@deepseek-ai/dsh-system-prompt';
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session';
+import { pluginRecordOf } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-session-persistence';
 import type {} from '@deepseek-ai/dsh-system-prompt';
 import { MemoryClient, safeHistory, assertProtectedHistoryExcluded, type Attachment, type Event, type MemoryConfig, type Receipt, type ContextBundle, type Source, type WorkView } from './client.ts';
 import { loadTargetCounter } from './tokenizer.ts';
 import { durableText } from './durable-text.ts';
+import { durableTools } from './durable-tools.ts';
+import { recoveryContext } from './dsh-recovery.ts';
 import { createConsolidation, type ConsolidationConfig } from './consolidation.ts';
 import { DshWork } from './dsh-work.ts';
 import { renderWork } from './work-continuation.ts';
+import ToolRuntime, { defineTool, type ToolExecution, type ToolExecutionResult } from '@deepseek-ai/dsh-tools';
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    'evernook/tools/before-publish': (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>,
+      phase?: 'result' | 'ptc-call' | 'ptc-log') => Promise<void>;
+  }
+}
 
 export const name = 'evernook-memory';
 export const inject = ['sessions', 'sessionPersistence', 'systemPrompt', 'llm'];
 export interface Config extends MemoryConfig {
+  /** Explicit experimental deep-memory tool; requires trusted service-side provider configuration. */
+  reflection?: boolean;
+  /** Trusted host consent only; the service also requires a remote-client allowlist. */
+  reflectionAllowRemote?: boolean;
   consolidation?: ConsolidationConfig;
+  /** Requires the pinned private-host patch; buffered output remains buffered. */
+  toolPublication?: boolean;
   /** Explicit text-only publication. Buffered mode remains the compatibility/validation path. */
-  streamMode?: 'buffered' | 'durable_text';
+  streamMode?: 'buffered' | 'durable_text' | 'durable_tools';
   /** Hard bound on provider frame JSON bytes in either publication mode. */
   maxStreamBytes?: number;
   /** Bound only the optional evidence contribution; full token budgeting belongs to context construction. */
@@ -72,7 +89,14 @@ function event(config: Config, session: string, id: string, role: Event['role'],
 /** Fixed dsh 0.2.1-rc.3 adapter. No host configuration or user data directory is mutated here. */
 export async function installMemory(ctx: Context, config: Config) {
   const streamMode = config.streamMode ?? 'buffered';
-  if (!['buffered', 'durable_text'].includes(streamMode)) throw new Error('evernook:invalid_host_config');
+  if (!['buffered', 'durable_text', 'durable_tools'].includes(streamMode)
+      || streamMode === 'durable_tools' && !config.toolPublication) throw new Error('evernook:invalid_host_config');
+  if (config.toolPublication !== undefined && typeof config.toolPublication !== 'boolean'
+      || config.reflection !== undefined && typeof config.reflection !== 'boolean'
+      || config.reflectionAllowRemote !== undefined && typeof config.reflectionAllowRemote !== 'boolean') throw new Error('evernook:invalid_host_config');
+  if (config.toolPublication && (!ctx.get('tools') || Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1)) {
+    throw new Error('evernook:tool_publication_patch_required');
+  }
   const maxStreamBytes = config.maxStreamBytes ?? 768 * 1024;
   const maxEvidenceChars = config.maxEvidenceChars ?? 12000;
   const budget = config.memoryBudget;
@@ -83,7 +107,7 @@ export async function installMemory(ctx: Context, config: Config) {
         || budget.memoryTokens + budget.outputReserveTokens >= budget.contextWindow))) throw new Error('evernook:invalid_host_config');
   if (!Number.isSafeInteger(maxStreamBytes) || maxStreamBytes < 1024 || maxStreamBytes > 1024 * 1024
       || !Number.isSafeInteger(maxEvidenceChars) || maxEvidenceChars < 256 || maxEvidenceChars > 64000) throw new Error('evernook:invalid_host_config');
-  const client = new MemoryClient(config);
+  const client = new MemoryClient({ ...config, allowRemoteReflection: config.reflectionAllowRemote === true });
   await client.connect();
   const work = budget ? new DshWork(client, config.entry) : undefined;
   let consolidation: Awaited<ReturnType<typeof createConsolidation>> | undefined;
@@ -91,7 +115,24 @@ export async function installMemory(ctx: Context, config: Config) {
   catch (error) { await client.close(); throw error; }
   const through = new Map<string, number>();
   const latest = new Map<string, { text: string; receipt: Receipt }>();
+  const recoverySnapshots = new Map<string, string>();
   const disposers: (() => void)[] = [];
+  if (config.reflection) {
+    try {
+      disposers.push(ctx.tools.register(defineTool({ name: 'evernook_memory_reflect',
+        description: 'Only for an explicit request for deeper memory exploration. Uses the trusted configured provider; remote egress requires separate host and service consent. Returns temporary low-trust inferences with original citations, gaps and conflicts. Never grants authority, unlocks secrets, maintains memory or executes external actions.',
+        parameters: { query: { type: 'string', required: true, description: 'The user memory question. No credentials or private content.' } },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        async execute(args, exec) {
+          if (!exec.agent || !args.query.trim() || Array.from(args.query).length > 4096) throw new Error('evernook:invalid_reflection_request');
+          return JSON.stringify(await client.call('reflect', { query: args.query, mode: 'deep', timeout: 60,
+            ...(config.reflectionAllowRemote === true ? { allow_remote: true } : {}),
+            current_input_id: latest.get(String(exec.agent.session.id))?.receipt.message_id }, exec.signal));
+        } })));
+    } catch (error) { await consolidation?.close(); await client.close(); throw error; }
+  }
+  let closed = false;
+  const captureRuns = new Map<string, Promise<void>>();
   const captureGaps = new Map<string, string[]>();
   const protectedTexts = new Map<string, Set<string>>();
   const excludedHistory = new Map<string, number>();
@@ -206,8 +247,11 @@ export async function installMemory(ctx: Context, config: Config) {
         const value = event(config, recordSession, `tool:${record.seq}`, 'tool',
           record.type === 'tool/call' ? record.data.arguments : textOf(record.data.message), record.seq, record.time,
           record.type === 'tool/result' && record.data.message.isError ? 'failed' : 'complete');
-        await client.capture(value, record.type === 'tool/call' ? 'tool_call' : 'tool_result',
+        const receipt = await client.capture(value, record.type === 'tool/call' ? 'tool_call' : 'tool_result',
           record.type === 'tool/result' ? await attachmentsOf(record.data.message.content) : [], last.receipt.message_id, tool);
+        if (config.toolPublication && record.type === 'tool/call' && (!receipt.message.original_saved || !receipt.complete)) {
+          throw new Error('evernook:tool_call_not_fully_saved');
+        }
       }
       const audit = event(config, recordSession, `event:${record.seq}`, 'system', stable(record), record.seq, record.time);
       // Compact attempted streams may split sensitive fields; the native output barrier preserves
@@ -219,9 +263,16 @@ export async function installMemory(ctx: Context, config: Config) {
     through.set(sessionId, events.at(-1)?.seq ?? -1);
     await work?.capture(header, events, origin);
   }
-  async function capture(session: Session) {
-    await ctx.sessions.flush(session);
-    await ingest(session.header, session.snapshotEvents(), session.inheritedEventCount);
+  function capture(session: Session): Promise<void> {
+    const id = String(session.id);
+    const prior = captureRuns.get(id) ?? Promise.resolve();
+    const run = prior.catch(() => {}).then(async () => {
+      if (closed) throw new Error('evernook:adapter_closed');
+      await ctx.sessions.flush(session);
+      await ingest(session.header, session.snapshotEvents(), session.inheritedEventCount);
+    });
+    captureRuns.set(id, run);
+    return run.finally(() => { if (captureRuns.get(id) === run) captureRuns.delete(id); });
   }
 
   async function budgetedPayload(sessionId: string, input: string, inputId: string, signal?: AbortSignal) {
@@ -281,9 +332,45 @@ export async function installMemory(ctx: Context, config: Config) {
       checkpoint_ttl_seconds: 7 * 86400, checkpoint_source_limit: 512 };
   }
 
+  async function persistToolPublication(exec: Readonly<ToolExecution>, result: unknown,
+      phase: 'call' | 'result' | 'ptc-call' | 'ptc-log', content: readonly ContentBlock[] = []) {
+    if (closed || !exec.agent) throw new Error('evernook:tool_session_unavailable');
+    const session = exec.agent.session;
+    await capture(session);
+    const input = latest.get(String(session.id));
+    if (!input?.receipt.original_saved) throw new Error('evernook:tool_input_unavailable');
+    const root = [...session.snapshotEvents()].reverse().find(record => record.type === 'tool/call'
+      && (record.data.callId === exec.rootCallId || record.data.callId === exec.callId));
+    if (!root) throw new Error('evernook:tool_call_unavailable');
+    const text = stable({ kind: 'evernook_tool_publication_v1', phase, call_id: exec.callId,
+      root_call_id: exec.rootCallId, call_seq: root.seq, tool_name: exec.name, result });
+    if (Buffer.byteLength(text, 'utf8') > maxStreamBytes) throw new Error('evernook:tool_result_too_large');
+    const key = createHash('sha256').update(String(exec.callId)).digest('hex');
+    const value = event(config, String(session.id), `tool-publish-v1:${root.seq}:${key}:${phase}`, 'tool', text, root.seq, root.time);
+    value.occurred_at = null;
+    const kind = phase === 'call' || phase === 'ptc-call' ? 'tool_call' : 'tool_result';
+    const receipt = await client.capture(value, kind, await attachmentsOf(content), input.receipt.message_id, exec.name);
+    if (!receipt.message.original_saved || !receipt.complete) throw new Error('evernook:tool_result_not_fully_saved');
+  }
+  if (config.toolPublication) {
+    disposers.push(ctx.on('tools/pre-execute', async (exec, next) => {
+      await persistToolPublication(exec, { arguments: exec.arguments }, 'call');
+      return next();
+    }));
+    disposers.push(ctx.on('evernook/tools/before-publish', async (exec, result, phase = 'result') => {
+      if (!['result', 'ptc-call', 'ptc-log'].includes(phase)) throw new Error('evernook:unsupported_tool_publication');
+      const content = [...result.content, ...(result.additionalContexts ?? []).flatMap(message => message.content)];
+      await persistToolPublication(exec, result, phase, content);
+    }));
+  }
   disposers.push(ctx.on('system-prompt/assemble', async (assembly, context, next) => {
-    const result = await next();
+    let result = await next();
     if (!context.agent) return result;
+    const recovered = await recoveryContext(client, context.agent.session, maxEvidenceChars);
+    if (recovered) {
+      recoverySnapshots.set(String(context.agent.session.id), recovered);
+      result = { ...result, contexts: [...result.contexts, { name: 'evernook-recovery', text: recovered, interpolate: false }] };
+    } else recoverySnapshots.delete(String(context.agent.session.id));
     context.signal?.throwIfAborted();
     await capture(context.agent.session);
     const input = latest.get(String(context.agent.session.id));
@@ -301,7 +388,7 @@ export async function installMemory(ctx: Context, config: Config) {
       const section = await budgetedPayload(String(context.agent.session.id), input.text, input.receipt.message_id, context.signal);
       return section.text ? { ...result, contexts: [...result.contexts, section] } : result;
     }
-    const recalled = await client.recall(Array.from(input.text).slice(0, 256).join(''), 32, input.receipt.message_id);
+    const recalled = await client.recall(input.text, 32, input.receipt.message_id, undefined, context.signal);
     context.signal?.throwIfAborted();
     const kept = [];
     let characters = 0;
@@ -340,7 +427,7 @@ export async function installMemory(ctx: Context, config: Config) {
   // The pinned SDK emits turn/end in its finally path, including cancellation and errors.
   disposers.push(ctx.on('session/event', (session, value) => {
     work?.observe(String(session.id), value);
-    if (value.type === 'turn/end') void consolidation?.turnEnded(String(session.id));
+    if (value.type === 'turn/end' || pluginRecordOf(value)?.type === 'plugin:dsh-evernook/publication-blocked') void consolidation?.turnEnded(String(session.id));
   }));
   disposers.push(ctx.on('agent/disposed', ({ agent }) => { void consolidation?.sessionEnded(String(agent.session.id)); }));
   disposers.push(ctx.on('llm/stream', async function* (options, next) {
@@ -416,6 +503,13 @@ export async function installMemory(ctx: Context, config: Config) {
       admittedDispatches.add(prepared);
       incoming = call.stream(prepared);
     } else incoming = safe.omitted ? ctx.llm.stream(prepared) : next();
+    const recoverySnapshot = recoverySnapshots.get(sessionId);
+    if (recoverySnapshot) {
+      const session = ctx.sessions.get(options.sessionId);
+      if (!session || await recoveryContext(client, session, maxEvidenceChars) !== recoverySnapshot) {
+        throw new Error('evernook:recovery_sources_changed');
+      }
+    }
     if (auxiliary) { yield* incoming; return; }
     const attempt = randomUUID();
     const timestamp = Date.now();
@@ -423,7 +517,11 @@ export async function installMemory(ctx: Context, config: Config) {
     const display = event(config, source, `attempt:${attempt}:display`, 'assistant', '', 1, timestamp, 'partial');
     await work?.link(source, display.source, streamMode);
     await client.remember(event(config, source, `attempt:${attempt}:start`, 'system',
-      stable({ kind: streamMode === 'durable_text' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+      stable({ kind: streamMode !== 'buffered' ? 'evernook_dsh_text_stream_v1' : 'assistant_attempt_started', attempt }), 0, timestamp, 'partial'));
+    if (streamMode === 'durable_tools') {
+      yield* durableTools(client, incoming, display, input.receipt.message_id, maxStreamBytes, options.signal);
+      return;
+    }
     if (streamMode === 'durable_text') {
       yield* durableText(client, incoming,
         display,
@@ -458,7 +556,6 @@ export async function installMemory(ctx: Context, config: Config) {
     if (!receipt.message.original_saved || !receipt.complete) throw new Error('evernook:stream_not_fully_saved');
     for (const frame of frames) yield frame;
   }));
-  let closed = false;
   return {
     capture,
     get consolidation() { return consolidation; },
@@ -480,7 +577,10 @@ export async function installMemory(ctx: Context, config: Config) {
     status(sessionId: SessionId) {
       const key = String(sessionId);
       return { latest_input: latest.get(key)?.receipt, capture_gaps: captureGaps.get(key) ?? [],
-        stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked' : 'buffered_calls_results_unverified',
+        recovery_read_only: key.startsWith('evernook-recovery-') || Boolean(ctx.sessions.get(sessionId)?.snapshotEvents()
+          .some(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/recovery-readonly')),
+        stream_mode: streamMode, tool_publication: streamMode === 'durable_text' ? 'blocked'
+          : config.toolPublication ? 'saved_before_publish' : 'buffered_calls_results_unverified',
         context: contextStatus.get(key), context_mode: budget ? 'target_tokenizer' : 'legacy_character_cap',
         work_error: work?.error(key),
         consolidation: consolidation?.snapshot(),

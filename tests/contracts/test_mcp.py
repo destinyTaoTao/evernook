@@ -22,6 +22,31 @@ from contract_assertions import assert_original_roundtrip
 
 
 class MCPTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trusted_capture_receipt_rechecks_completeness_and_hides_suppressed_sources(self) -> None:
+        from evernook import Capture, AttachmentInput, Change
+        runtime = MemoryRuntime(self.config)
+        event = Event(Source('test', 'receipt-review', 'main', 'tool'), 'tool', 1, None, 'complete', '合成结果')
+        request = runtime.submit(self.access, Event(Source('test', 'receipt-review', 'main', 'input'),
+            'user', 0, None, 'complete', '合成输入'))
+        receipt = runtime.submit_capture(self.access, Capture(event, 'tool_result', request.message_id,
+            'synthetic-tool', attachments=(AttachmentInput('missing', 'missing.txt', 'text/plain', None, expected_size=1),)))
+        async with Client(self.parameters, read_timeout_seconds=10) as client:
+            result = await client.call_tool('evernook_v1_read_capture', {'message_id': receipt.message.message_id})
+            self.assertFalse(result.is_error, result)
+            assert result.structured_content is not None
+            self.assertFalse(result.structured_content['result']['complete'])
+            confirmation = runtime.submit(self.access, Event(Source('test', 'receipt-review', 'main', 'confirmation'),
+                'user', 2, None, 'complete', '合成确认停止召回'))
+            runtime.change(self.access, Change('hide-review-result', receipt.message.message_id, 1,
+                'suppress', confirmation.message_id, 'synthetic confirmation'))
+            hidden = await client.call_tool('evernook_v1_read_capture', {'message_id': receipt.message.message_id})
+            self.assertTrue(hidden.is_error)
+            assert hidden.structured_content is not None
+            self.assertEqual(hidden.structured_content['error']['code'], 'message_not_found')
+        recall = self.parameters.model_copy(update={'args': list(self.parameters.args[:-2])})
+        async with Client(recall, read_timeout_seconds=10) as client:
+            self.assertNotIn('evernook_v1_read_capture', [tool.name for tool in (await client.list_tools()).tools])
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-mcp-")
         self.addCleanup(temporary.cleanup)

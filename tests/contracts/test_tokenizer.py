@@ -193,6 +193,135 @@ with patch('evernook.tokenizer.subprocess.Popen',side_effect=spawn):
         else:
             self.assertEqual(ctypes.get_last_error(), 87)  # Already exited: invalid process ID.
 
+    def test_host_prewarm_overlaps_recall_and_rechecks_assets_in_the_same_child(self) -> None:
+        from evernook import MemoryRuntime, initialize
+        from evernook.host_context import HostContext
+        from evernook.semantic import RecallPage, SemanticRecall
+        from evernook.tokenizer import LocalTokenCounter, _TokenSession
+
+        for tamper in (False, True):
+            with self.subTest(tamper=tamper):
+                config, access = initialize(self.root / f"warm-{tamper}", client_id="test", entry="test")
+                runtime = MemoryRuntime(config)
+                context_file = self.root / f"warm-context-{tamper}.json"
+                context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(self.config),
+                    "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
+                               "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
+                host = HostContext(runtime, SemanticRecall(runtime), context_file)
+                ready = threading.Event()
+                children: list[subprocess.Popen[str]] = []
+                original_popen, original_count = subprocess.Popen, _TokenSession.count
+                original_recall = host.recall.recall
+
+                def counted(session: _TokenSession, text: str) -> int:
+                    result = original_count(session, text)
+                    if text == "":
+                        self.assertEqual(result, 0)
+                        ready.set()
+                    return result
+
+                def recall(*args: Any, **kwargs: Any) -> RecallPage:
+                    self.assertTrue(ready.wait(2), "tokenizer must initialize while recall is in progress")
+                    if tamper:
+                        self.model_config.write_text('{}\n', encoding="utf-8")
+                    return original_recall(*args, **kwargs)
+
+                def spawn(arguments: list[str], **options: Any) -> subprocess.Popen[str]:
+                    child: subprocess.Popen[str] = original_popen(arguments, **options)
+                    children.append(child)
+                    return child
+
+                with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn), \
+                        patch.object(_TokenSession, "count", counted), patch.object(host.recall, "recall", recall):
+                    if tamper:
+                        with self.assertRaisesRegex(MemoryFailure, "tokenizer_unavailable"):
+                            host.build(access, "hello", model_id="synthetic-local", max_tokens=512,
+                                as_of="2026-11-04T00:00:00Z", mode="normal", timeout=5)
+                    else:
+                        bundle = host.build(access, "hello", model_id="synthetic-local", max_tokens=512,
+                            as_of="2026-11-04T00:00:00Z", mode="normal", timeout=5)
+                self.assertEqual(len(children), 1)
+                self.assertIsNotNone(children[0].poll())
+                if not tamper:
+                    self.assertEqual(LocalTokenCounter.from_file(self.config).count(bundle.payload), bundle.used_tokens)
+
+    def test_invalid_host_request_reaps_nonresponsive_prewarm_before_returning(self) -> None:
+        from evernook import MemoryRuntime, initialize
+        from evernook.context import ContextBuilder, ContextBundle
+        from evernook.host_context import HostContext
+        from evernook.semantic import SemanticRecall
+
+        config, access = initialize(self.root / "invalid-warm", client_id="test", entry="test")
+        runtime = MemoryRuntime(config)
+        context_file = self.root / "invalid-warm-context.json"
+        context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(self.config),
+            "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
+                       "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
+        host = HostContext(runtime, SemanticRecall(runtime), context_file)
+        children: list[subprocess.Popen[str]] = []
+        original_popen, original_build = subprocess.Popen, ContextBuilder.build
+        spawned = threading.Event()
+
+        def spawn(arguments: list[str], **options: Any) -> subprocess.Popen[str]:
+            child: subprocess.Popen[str] = original_popen(
+                [arguments[0], "-e", "process.stdin.resume(); setInterval(()=>{},1000)"], **options)
+            children.append(child)
+            spawned.set()
+            return child
+
+        def build(builder: ContextBuilder, *args: Any, **kwargs: Any) -> ContextBundle:
+            self.assertTrue(spawned.wait(2))
+            return original_build(builder, *args, **kwargs)
+
+        with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn), patch.object(ContextBuilder, "build", build):
+            with self.assertRaisesRegex(MemoryFailure, "protected_query"):
+                host.build(access, "password=synthetic-protected-123", model_id="synthetic-local", max_tokens=512,
+                    as_of="2026-11-04T00:00:00Z", mode="normal", timeout=10)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+        self.assertFalse(any(thread.name.startswith("evernook-tokenizer") for thread in threading.enumerate()))
+
+    def test_host_cancel_and_timeout_reap_pending_prewarm_and_count(self) -> None:
+        from evernook import MemoryRuntime, initialize
+        from evernook.host_context import HostContext
+        from evernook.semantic import SemanticRecall
+
+        for canceling in (False, True):
+            with self.subTest(canceling=canceling):
+                config, access = initialize(self.root / f"stalled-warm-{canceling}", client_id="test", entry="test")
+                runtime = MemoryRuntime(config)
+                context_file = self.root / f"stalled-warm-context-{canceling}.json"
+                context_file.write_text(json.dumps({"schema_version": 1, "tokenizer_config": str(self.config),
+                    "policy": {"normal_tokens": 512, "deep_tokens": 1024, "pinned_tokens": 0,
+                               "recent_days": 7, "recent_target_chars": 8192}}), encoding="utf-8")
+                host = HostContext(runtime, SemanticRecall(runtime), context_file)
+                canceled = threading.Event()
+                timer = threading.Timer(.05, canceled.set)
+                children: list[subprocess.Popen[str]] = []
+                original_popen = subprocess.Popen
+
+                def spawn(arguments: list[str], **options: Any) -> subprocess.Popen[str]:
+                    child: subprocess.Popen[str] = original_popen(
+                        [arguments[0], "-e", "process.stdin.resume(); setInterval(()=>{},1000)"], **options)
+                    children.append(child)
+                    if canceling:
+                        timer.start()
+                    return child
+
+                with patch("evernook.tokenizer.subprocess.Popen", side_effect=spawn):
+                    try:
+                        with self.assertRaisesRegex(MemoryFailure, "context_canceled" if canceling else "tokenizer_unavailable"):
+                            host.build(access, "hello", model_id="synthetic-local", max_tokens=512,
+                                as_of="2026-11-04T00:00:00Z", mode="normal", timeout=2 if canceling else .3,
+                                cancel=canceled if canceling else None)
+                    finally:
+                        timer.cancel()
+                        if canceling and children:
+                            timer.join()
+                self.assertEqual(len(children), 1)
+                self.assertIsNotNone(children[0].poll())
+                self.assertFalse(any(thread.name.startswith("evernook-tokenizer") for thread in threading.enumerate()))
+
     def test_host_context_uses_saved_policy_model_binding_and_request_ceiling(self) -> None:
         from evernook import MemoryRuntime, initialize
         from evernook.host_context import HostContext

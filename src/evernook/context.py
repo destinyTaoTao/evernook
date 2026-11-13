@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import math
 import json
+import sqlite3
 import threading
 import time
 from typing import Any, Protocol
@@ -17,6 +18,7 @@ from .models import Access, MemoryFailure, Receipt
 from .runtime import MemoryRuntime, _identifier, _json, _time
 from .safety import credential_signal
 from .semantic import SemanticRecall
+from .query_plan import plan_query
 
 
 class TokenCounter(Protocol):
@@ -37,6 +39,8 @@ class ContextPolicy:
     experience_ids: tuple[str, ...] = ()
     persona_tokens: int = 0
     profile_tokens: int = 0
+    topic_view_ids: tuple[str, ...] = ()
+    topic_view_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -74,18 +78,22 @@ class ContextBuilder:
             raise MemoryFailure("invalid_context_policy")
         if (any(type(value) is not int for value in (policy.normal_tokens, policy.deep_tokens, policy.pinned_tokens,
                                                    policy.recent_days, policy.recent_target_chars,
-                                                   policy.persona_tokens, policy.profile_tokens))
+                                                   policy.persona_tokens, policy.profile_tokens, policy.topic_view_tokens))
                 or not 128 <= policy.normal_tokens <= policy.deep_tokens <= 131072
                 or not 0 <= policy.pinned_tokens <= policy.normal_tokens
                 or not 0 <= policy.persona_tokens <= 131072 or not 0 <= policy.profile_tokens <= 131072
+                or not 0 <= policy.topic_view_tokens <= 131072
                 or not 1 <= policy.recent_days <= 36500 or not 1 <= policy.recent_target_chars <= 1048576
                 or not isinstance(policy.pinned_ids, tuple) or len(policy.pinned_ids) > 64
                 or not isinstance(policy.fact_keys, tuple) or len(policy.fact_keys) > 64
-                or not isinstance(policy.experience_ids, tuple) or len(policy.experience_ids) > 64):
+                or not isinstance(policy.experience_ids, tuple) or len(policy.experience_ids) > 64
+                or not isinstance(policy.topic_view_ids, tuple) or len(policy.topic_view_ids) > 16):
             raise MemoryFailure("invalid_context_policy")
         for item in policy.pinned_ids:
             _identifier(item)
         for item in policy.experience_ids:
+            _identifier(item)
+        for item in policy.topic_view_ids:
             _identifier(item)
         for key in policy.fact_keys:
             if not isinstance(key, tuple) or len(key) != 2:
@@ -103,18 +111,23 @@ class ContextBuilder:
 
     def build(self, access: Access, query: str, *, as_of: str, mode: str, timeout: float,
               known_at: str | None = None, cancel: threading.Event | None = None,
-              query_omitted: bool = False, current_input_id: str | None = None) -> ContextBundle:
+              query_omitted: bool = False, current_input_id: str | None = None,
+              query_intent: str | None = None) -> ContextBundle:
         self.runtime._require_scope(access, "recall", "context_build")
         if current_input_id is not None:
             _identifier(current_input_id)
         _time(as_of)
         if known_at is not None:
             _time(known_at)
-        if (not isinstance(query, str) or len(query) > 256 or not isinstance(mode, str) or mode not in {"normal", "deep"}
+        if (not isinstance(query, str) or len(query) > 1048576 or not isinstance(mode, str) or mode not in {"normal", "deep"}
                 or type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120):
             raise MemoryFailure("invalid_context_request")
         if credential_signal(query):
             raise MemoryFailure("protected_query")
+        if query.strip():
+            plan_query(query, query_intent)  # Validate the intent before any tokenizer/model call.
+        elif query_intent is not None:
+            raise MemoryFailure("invalid_query_intent")
         try:
             query.encode("utf-8", errors="strict")
         except UnicodeError:
@@ -259,14 +272,45 @@ class ContextBuilder:
                 assert experience_record.confirmation_id is not None and experience_record.confirmation_version is not None
                 references.append((experience_record.confirmation_id, experience_record.confirmation_version, 1))
                 items.append(_Item("reviewed_experience", experience_id, asdict(experience), tuple(references)))
+            if self.policy.topic_view_tokens:
+                from .topic_views import TopicViews
+                topic_views = TopicViews(self.runtime, self.recall)
+                selected_views: list[dict[str, Any]] = []
+                for view_id in dict.fromkeys(self.policy.topic_view_ids):
+                    budget()
+                    if known_at is not None:
+                        omitted.append(OmittedEvidence(view_id, 'topic_view_history_unavailable'))
+                        continue
+                    try:
+                        topic_view = topic_views.read(access, view_id, check=budget, current_input_id=current_input_id)
+                    except MemoryFailure as error:
+                        if error.code != 'topic_view_not_found':
+                            raise
+                        omitted.append(OmittedEvidence(view_id, error.code))
+                        continue
+                    if topic_view.state not in {'valid', 'conflict'} or topic_view.data is None:
+                        omitted.append(OmittedEvidence(view_id, 'topic_view_' + topic_view.state))
+                        continue
+                    data = {'view_id': view_id, 'definition_revision': topic_view.definition_revision,
+                        'snapshot_revision': topic_view.snapshot_revision, 'state': topic_view.state, 'clock': topic_view.clock,
+                        'scope_excludes_current_input_id': current_input_id, 'content': topic_view.data}
+                    if self._tokens(_json([*selected_views, data])) > self.policy.topic_view_tokens:
+                        omitted.append(OmittedEvidence(view_id, 'topic_view_budget'))
+                        continue
+                    selected_views.append(data)
+                    refs = tuple((citation['message_id'], citation['state_version'], citation['content_version'])
+                        for citation in topic_view.data['citations'])
+                    items.append(_Item('topic_view', view_id, data, refs))
             if query.strip():
                 recalled = self.recall.recall(access, query, limit=32, as_of=as_of,
                     recent_days=self.policy.recent_days, recent_target_chars=self.policy.recent_target_chars,
-                    timeout=budget(), cancel=cancel, current_input_id=current_input_id)
+                    timeout=budget(), cancel=cancel, current_input_id=current_input_id, query_intent=query_intent)
                 degraded.extend(recalled.degraded)
                 coverage = {"lexical": asdict(recalled.lexical), "semantic": asdict(recalled.semantic),
                     "recent_since": recalled.recent_since, "recent_expanded": recalled.recent_expanded,
-                    "recent_window_limited": recalled.recent_window_limited, "semantic_scan_limited": recalled.semantic_scan_limited}
+                    "recent_window_limited": recalled.recent_window_limited, "semantic_scan_limited": recalled.semantic_scan_limited,
+                    "semantic_search_backend": recalled.semantic_search_backend,
+                    "query_plan": asdict(recalled.query_plan) if recalled.query_plan is not None else None}
                 pinned_sources = {reference[0] for item in items if item.kind == "important" for reference in item.references}
                 for hit in recalled.hits:
                     budget()
@@ -287,57 +331,69 @@ class ContextBuilder:
         except MemoryFailure as error:
             degrade(error)
 
-        # A single final visibility snapshot prevents handing out already changed evidence.
+        # Reuse the same visibility/version rules before and after tokenizer work.
+        def usable_now(db: sqlite3.Connection, item: _Item) -> bool:
+            usable = True
+            if item.kind == 'topic_view':
+                from .topic_views import TopicViews
+                current_view = TopicViews(self.runtime, self.recall)._read(db, item.evidence_id, current_input_id=current_input_id)
+                usable = (current_view.state in {'valid', 'conflict'} and current_view.definition_revision == item.data['definition_revision']
+                    and current_view.snapshot_revision == item.data['snapshot_revision'] and current_view.clock == item.data['clock'])
+            if item.kind == "facts":
+                current_facts = FactRegistry._query_snapshot(db, item.data["subject_id"], item.data["predicate"],
+                    valid_at=as_of, known_at=known_at)
+                usable = (current_facts.knowledge_revision == item.data["knowledge_revision"]
+                          and current_facts.clarification_required == item.data["clarification_required"])
+                if 'preference_profile' in item.data:
+                    guard = item.data['preference_profile']
+                    try:
+                        linked = ProfileRegistry(self.runtime)._view(db, guard['tag_id'])
+                        usable = usable and linked.revision == guard['revision'] and linked.state == guard['state']
+                    except MemoryFailure as error:
+                        if error.code != 'profile_not_found':
+                            raise
+                        usable = usable and guard['state'] == 'missing'
+            if item.kind == "reviewed_experience":
+                current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
+                usable = current.state == "enabled" and current.revision == item.data["revision"]
+            if item.kind == "profile":
+                try:
+                    profile = ProfileRegistry(self.runtime)._view(db, item.data["tag_id"])
+                    usable = (profile.state == "confirmed" and profile.revision == item.data["revision"]
+                              and profile.content_revision == item.data["content_revision"])
+                except MemoryFailure as error:
+                    if error.code != "profile_not_found":
+                        raise
+                    usable = False
+            for message_id, version, content_version in item.references:
+                try:
+                    state = self.runtime._state(db, message_id)
+                except MemoryFailure as error:
+                    if error.code != "message_not_found":
+                        raise
+                    usable = False
+                    break
+                row = db.execute("SELECT receipt FROM messages WHERE id=?", (message_id,)).fetchone()
+                if state.status != "active" or state.version != version or Receipt(**json.loads(row["receipt"])).content_version != content_version:
+                    usable = False
+                    break
+            return usable
+
         valid: list[_Item] = []
-        with self.runtime._connection() as db:
-            db.execute("BEGIN")
-            for item in items:
-                if any(reference[0] == current_input_id for reference in item.references):
-                    omitted.append(OmittedEvidence(item.evidence_id, "current_input"))
-                    continue
-                usable = True
-                if item.kind == "facts":
-                    current_facts = FactRegistry._query_snapshot(db, item.data["subject_id"], item.data["predicate"],
-                        valid_at=as_of, known_at=known_at)
-                    usable = (current_facts.knowledge_revision == item.data["knowledge_revision"]
-                              and current_facts.clarification_required == item.data["clarification_required"])
-                    if 'preference_profile' in item.data:
-                        guard = item.data['preference_profile']
-                        try:
-                            linked = ProfileRegistry(self.runtime)._view(db, guard['tag_id'])
-                            usable = usable and linked.revision == guard['revision'] and linked.state == guard['state']
-                        except MemoryFailure as error:
-                            if error.code != 'profile_not_found':
-                                raise
-                            usable = usable and guard['state'] == 'missing'
-                if item.kind == "reviewed_experience":
-                    current = ExperienceRegistry(self.runtime)._view(db, item.evidence_id)
-                    usable = current.state == "enabled" and current.revision == item.data["revision"]
-                if item.kind == "profile":
-                    try:
-                        profile = ProfileRegistry(self.runtime)._view(db, item.data["tag_id"])
-                        usable = (profile.state == "confirmed" and profile.revision == item.data["revision"]
-                                  and profile.content_revision == item.data["content_revision"])
-                    except MemoryFailure as error:
-                        if error.code != "profile_not_found":
-                            raise
-                        usable = False
-                for message_id, version, content_version in item.references:
-                    try:
-                        state = self.runtime._state(db, message_id)
-                    except MemoryFailure as error:
-                        if error.code != "message_not_found":
-                            raise
-                        usable = False
-                        break
-                    row = db.execute("SELECT receipt FROM messages WHERE id=?", (message_id,)).fetchone()
-                    if state.status != "active" or state.version != version or Receipt(**json.loads(row["receipt"])).content_version != content_version:
-                        usable = False
-                        break
-                if usable:
-                    valid.append(item)
-                else:
-                    omitted.append(OmittedEvidence(item.evidence_id, "source_changed_during_context"))
+        try:
+            if items:
+                with self.runtime._connection(check=budget) as db:
+                    db.execute("BEGIN")
+                    for item in items:
+                        if any(reference[0] == current_input_id for reference in item.references):
+                            omitted.append(OmittedEvidence(item.evidence_id, "current_input"))
+                        elif usable_now(db, item):
+                            valid.append(item)
+                        else:
+                            omitted.append(OmittedEvidence(item.evidence_id, "source_changed_during_context"))
+        except MemoryFailure as error:
+            degrade(error)
+            valid = []
         self.runtime._authorize(access)
         reasons = tuple(dict.fromkeys(degraded))
         def render(selected: list[_Item]) -> str:
@@ -354,5 +410,24 @@ class ContextBuilder:
         if used > limit:
             payload, used = "", 0
             reasons = tuple(dict.fromkeys((*reasons, "context_envelope_over_budget")))
+        if valid:
+            # Tokenization can run in a worker; no stale evidence may cross this boundary.
+            try:
+                budget()
+                with self.runtime._connection(check=budget) as db:
+                    db.execute('BEGIN')
+                    changed = any(not usable_now(db, item) for item in valid)
+            except MemoryFailure as error:
+                if error.code in {'unauthorized', 'incompatible_contract'}:
+                    raise
+                changed = True
+                reasons = tuple(dict.fromkeys((*reasons, error.code)))
+            self.runtime._authorize(access)
+            if changed:
+                for item in valid:
+                    omitted.append(OmittedEvidence(item.evidence_id, 'memory_changed_before_handoff'))
+                # Avoid a second tokenizer call reopening the same race on retained raw evidence.
+                valid, payload, used = [], '', 0
+                reasons = tuple(dict.fromkeys((*reasons, 'memory_changed_before_handoff')))
         return ContextBundle(payload, used, limit, self.counter.counter_id, mode, as_of, tuple(omitted), reasons,
                              not omitted and not reasons, len(valid))

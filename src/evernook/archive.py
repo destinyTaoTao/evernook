@@ -218,6 +218,13 @@ def export_archive(runtime: MemoryRuntime, access: Access, destination: Path) ->
             target = sqlite3.connect(snapshot)
             try:
                 source.backup(target, pages=256, progress=progress, sleep=0.05)
+                from .lexical_checkpoint import strip_export
+                from .topic_view_clock import strip_export as strip_topic_clock
+                target.execute("PRAGMA trusted_schema=OFF")
+                target.execute("BEGIN IMMEDIATE")
+                strip_topic_clock(target)
+                strip_export(target)
+                target.execute("COMMIT")
             finally:
                 target.close()
         if not runtime._authorize(access).archive_review:
@@ -270,15 +277,19 @@ def restore_archive(source: Path, destination: Path) -> EvidenceArchive:
 
 
 def _control_head(db: sqlite3.Connection, key: bytes) -> str:
+    from .observations import OBSERVATION_TABLES
+    from .topic_views import TOPIC_VIEW_TABLES
     digest = hmac.new(key, b"evernook-control-head-v1\0", hashlib.sha256)
     for table in ("ledger_identity_v1", "messages", "captures", "attachments", "changes", "visibility", "purge_requests_v1", "purge_targets_v1",
                   "text_streams_v1", "text_stream_chunks_v1",
                   "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1", "profile_events_v1",
                   "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1", "continuation_checkpoints_v1",
-                  "preference_updates_settings_v1"):
+                  "preference_updates_settings_v1", "management_previews_v1",
+                  "host_recovery_previews_v1", "host_recovery_operations_v1", *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES):
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()
         # Preserve older control-head identities when this optional feature was never used.
-        if table in {'continuation_checkpoints_v1', 'preference_updates_settings_v1'} and not exists:
+        if table in {'continuation_checkpoints_v1', 'preference_updates_settings_v1', 'management_previews_v1',
+                       'host_recovery_previews_v1', 'host_recovery_operations_v1', *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES} and not exists:
             continue
         digest.update(table.encode() + b"\0")
         if exists:
@@ -596,6 +607,14 @@ def replay_archive_controls(runtime: MemoryRuntime, access: Access, source: Path
                         if str(state["change_id"]) not in {str(row["request_id"]) for row in applicable}:
                             raise MemoryFailure("archive_control_incomplete")
                         copy.execute("INSERT OR REPLACE INTO visibility VALUES (?,?,?,?,?)", tuple(state))
+                if (live.execute("SELECT 1 FROM sqlite_master WHERE name='topic_view_clock_v1'").fetchone()
+                        and copy.execute("SELECT 1 FROM sqlite_master WHERE name='topic_view_clock_v1'").fetchone()):
+                    # Replay housekeeping fires source triggers too. Bind the replayed copy to
+                    # the verified live clock, rather than counting duplicate control application.
+                    clock = live.execute('SELECT generation,evidence,control,derived,last_source_id FROM topic_view_clock_v1 WHERE id=1').fetchone()
+                    if clock is None:
+                        raise MemoryFailure('archive_control_incomplete')
+                    copy.execute('UPDATE topic_view_clock_v1 SET generation=?,evidence=?,control=?,derived=?,last_source_id=? WHERE id=1', tuple(clock))
                 copy.execute("""CREATE TABLE IF NOT EXISTS control_replay_v1 (id INTEGER PRIMARY KEY CHECK(id=1),
                     source_sha TEXT NOT NULL, control_head TEXT NOT NULL, coverage TEXT NOT NULL)""")
                 copy.execute("INSERT OR REPLACE INTO control_replay_v1 VALUES (1,?,?,?)",

@@ -17,6 +17,7 @@ From the repository root, run each phase into a **new** external directory:
 ```powershell
 .venv\Scripts\python.exe probes/admission/quality.py core --output E:\lab\core-01
 .venv\Scripts\python.exe probes/admission/quality.py automatic --output E:\lab\auto-01
+.venv\Scripts\python.exe probes/admission/quality.py lexical --output E:\lab\lexical-modes-01
 .venv\Scripts\python.exe probes/admission/quality.py prepare --entry dsh --embedding-config E:\models\embedding-profile.json --output E:\lab\dsh-fixtures-01
 ```
 
@@ -46,7 +47,31 @@ The automatic collector explicitly enables only the existing rules processor in 
 fixtures. Its conservative `review` fallback is a collector mapping, not a model classification.
 No accepted records means automatic acceptance precision is undefined.
 
+The `lexical` phase creates a fresh public-API fixture with the frozen sources and
+replays each literal retrieval case in seven modes: unbuilt, behind legacy,
+ready legacy, covering index, both optional accelerations, FTS ID only, and legacy
+restored. Each mode is scored separately and compared with the unbuilt page's
+complete hits/spans/order/pagination and unchanged source count/watermark. A failed
+mode saves its evidence and exits with an error; it cannot silently pass because
+the final mode recovered. `lexical-mode-summary.json` separates unique cases from
+repeated mode observations; `lexical-modes/*.json` retains actual pages and scores.
+The standard root observations/report contain only the final mode's retrieval
+rows and remain incomplete (exit 2) for other unrun dimensions. This small fixture
+is not the 100k/1M semantic/host, concurrent rebuild or p95 matrix. All enable/disable
+operations affect only its new external synthetic runtime.
+
 ## Scale
+
+### Bounded embedding file-access diagnostic
+
+`embedding_file_access.py --embedding-config EXTERNAL_PROFILE --output NEW_EXTERNAL_DIR`
+runs three public MiniLM calls against the pinned real assets. A diagnostic Node preload
+records worker starts and closed JavaScript ONNX read streams without consuming them.
+The assertion requires three starts and zero such graph bytes; it does not measure ORT's
+native file access or the mandatory Python asset hashes. Optional `--baseline EXTERNAL_JSON`
+also checks the vector-space identity, fixed synthetic inputs and every returned vector
+against a previous report with the same `space`, `texts` and three `records[].vectors`.
+Use the normal outer monitor with a 30-second cap. This is not a scale or p95 gate.
 
 ```powershell
 .venv\Scripts\python.exe probes/admission/scale_ingest.py --messages 100000 --output E:\lab\scale-100k-01
@@ -184,3 +209,88 @@ the observation is explicitly an error/diagnostic, never a successful quality an
 See [candidate results and remaining gates](../../docs/reports/m58-followup-86-last-head-candidate.md).
 These experiment scripts use actual APIs and SDKs for measurement; synthetic or component
 success does not establish real daily use, physical power-loss safety or model admission.
+
+For the same-request allocator control, use `prefill-resources.ts ... noarena`, or
+`model-resources.ts PROFILE REQUEST NEW_EXTERNAL reuse default|noarena`. The optional
+allocator argument defaults to the original behavior. Each invocation records actual session
+options and requires its own fresh directory and 35/100-second monitor budget. The prefill
+probe also records the model argument kind at the actual ORT creation boundary, without
+logging a path string or retaining model buffers for measurement. See the
+[arena comparison and rejected hashing hypothesis](../../docs/reports/m58-followup-86-arena-comparison.md).
+The candidate remains over the frozen 2 GiB gate; these switches are diagnostic only.
+
+An independent copy of the experimental Qwen profile may select
+`"file_access": "verified-local-path-v1"`. It resolves only the already hash-verified q4
+graph through the library's custom cache, with scoped/serialized global state and no cache
+writes. All nine asset hashes still run before load and every generation. Check startup
+`file_access` and `verified_graph_path_hits`; an absent field keeps `library-default`.
+`model-file-access-check.ts PROFILE NEW_EXTERNAL original|verified` is the small real-library
+8 MiB path-only regression (original fails, verified passes), requiring no model generation.
+See [full evidence and limits](../../docs/reports/m58-followup-86-path-cache.md).
+This profile remains experimental and over the memory gate; no daily provider is switched.
+
+## Same-machine external/prepacked weights candidate (#86)
+
+`node plugins/harnesses/probes/export-external-qwen.ts LAST_HIDDEN_PROFILE NEW_EXTERNAL_ROOT`
+exports a distinct pinned ONNX graph and external original/prepacked weights. Use
+`monitor.py --max-seconds 45`; export itself exceeds 2 GiB and is offline preparation.
+The exporter requires a fresh external output, rejects overlap with source, verifies the
+parent assets, and accepts only the independently pinned output bytes. No quantization,
+weights, tokenizer, context or output allowance is reduced. All runtime assets stay external.
+
+The generated profile is explicitly
+`qwen3-0.6b-last-hidden-external-prepacked-experimental-v1`. It requires the verified local
+path strategy, full hashes of all ten assets before loading and each generation, and uses
+CPU arena disabled as part of this independent profile. Because optimized/prepacked outputs
+may be hardware-specific, the loader/exporter reject environments outside the pinned
+Windows x64/i5-13600K/Transformers.js4.2.0/ORT1.24.3 combination. Existing profiles retain
+their original behavior. There is no automatic profile selection or model admission.
+
+For this candidate run `prefill-resources.ts PROFILE REQUEST NEW_EXTERNAL baseline` under
+35 seconds, or `model-resources.ts PROFILE REQUEST NEW_EXTERNAL reuse default` under
+100 seconds. Here `default` preserves the candidate's explicit noarena setting; check actual
+session options and startup metadata. Fixed-request Private Bytes is now below 2 GiB,
+but working set is still about 2.41 GB and strict quality still fails. ORT-format direct-byte
+loading was measured and rejected for higher memory. See
+[measurements, integrity and native cancellation/replay](../../docs/reports/m58-followup-86-external-prepacked.md).
+
+## Read-only host failure diagnostics (#81)
+
+`python probes/admission/host_diagnostics.py --input ACTUAL_BATCH_1 --input ACTUAL_BATCH_2 --output NEW_EXTERNAL_ROOT`
+combines host observations/runs only for diagnosis, invokes the unchanged frozen scorer,
+and records field/literal differences and input/source hashes. Duplicate case/run identities,
+missing paired observations and mismatched suite identities are rejected. Each captured JSON
+file is bounded to 64 MiB; the scorer retains its own observation limits. Raw inputs are not
+rewritten. Exit 0 means a diagnostic report was written, not that its score passed admission.
+
+Source-scope checks recognize actual dsh runtime-context `evernook-evidence` sections;
+user-authored JSON is not treated as host provenance. Unknown host snapshot formats or
+missing capture receipts remain null. A substring relation is not semantic grading and cannot
+turn a strict failure into a pass. Run `python probes/admission/test_host_diagnostics.py -v`
+for the seven narrow diagnostic checks. `host_error_code` and `observation_error_code`
+separately retain runtime and observation/parser failures; legacy `error_code` remains
+the host field. A null code alone cannot prove dispatch, valid JSON or publication. The
+[six-case pilot](../../docs/reports/m58-quality-pilot-2026-11-08.md) preserves 0/6 native
+strict matches, a rejected/partial prompt experiment, and renewed variation-input resource
+failures; no frozen thresholds, profile activation or full-suite claims are changed.
+
+## Pinned CPU output ownership check (#86)
+
+`node --expose-gc plugins/harnesses/probes/output-ownership.ts PROFILE NEW_EXTERNAL copy|reuse`
+uses a 116-byte synthetic float32 Add graph against actual Windows x64 ORT1.24.3,
+recording binding/DLL hashes. It checks caller buffer writes, offset sentinels, returned
+buffer/object identity, rejection of wrong shape and readability after session release.
+It does not load Qwen or establish model/resource/quality admission. Give it a fresh output
+and a 15-second monitor limit; very short process samples do not establish a memory peak.
+The stock library passes `copy` and fails `reuse` after writing its receipt. Returning correct
+values into a preallocated buffer does not itself remove the CPU return copy.
+
+[Long-input and ownership evidence](../../docs/reports/m58-followup-86-output-ownership.md)
+also retains unsuccessful MemPattern/forced-GC controls, an excluded overlapping attempt,
+and the pending separate native-patch decision. No patch binary has been applied or
+promoted by this diagnostic. Original model, context/output allowance and thresholds remain.
+
+The [follow-up presentation controls and current Core observations](../../docs/reports/m58-followup-81-prompt-projection.md)
+retain rejected lossless-layout/message-order trials, 304/304 frozen Core storage/lexical/temporal
+checks, and 21/60 automatic-rule outcomes with zero accepted profiles. These are distinct
+diagnostic windows, not a combined admission run; raw outputs and the original scorer remain.

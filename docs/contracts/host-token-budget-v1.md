@@ -1,5 +1,9 @@
 # M58-09/10：dsh/pi 本地目标 tokenizer 与完整上下文预算
 
+这里的dsh目标预算指显式SDK接线；当前Web插件的Config尚未转交contextConfig/memoryBudget，实际仍为`legacy_character_cap`，见[#105](https://github.com/destinyTaoTao/evernook/issues/105)。Web安装成功或Core计数优化不等于Web已经具备真实目标token预算。
+
+2026-11-08路线决策：Web等待dsh原生完整请求计数接口，不增加自维护provider计数服务。既有显式SDK能力保留；原生接口适用性与完整接线仍须验证，当前Web保持字符模式披露和`daily_admitted=false`。
+
 `contextConfig` 与 `memoryBudget` 同时启用 dsh 的目标 tokenizer 模式。Python MCP 的 `--context-config` 指向仓库外可信设置文件；每次调用重新读取设置，复用 `ContextBuilder` 组合置顶、人设、画像、指定事实及经验和相关证据。查询超过 256 code point 时保留完整原始输入，省略查询召回并在 payload 中披露 `query_too_long`，不会截取前缀冒充完整查询。
 
 设置文件示例（路径与散列均需替换）：
@@ -11,6 +15,8 @@
 `counter.json` 必须包含 `schema_version: 1`、绝对路径 `node`、`package_dir`、`tokenizer_file`、`config_file`，以及 `model_id`、`tokenizer_sha256`、`config_sha256`。`package_dir` 是可信安装的 `@huggingface/tokenizers` **0.2.0** 目录；两份模型文件分别为目标模型的 `tokenizer.json` 与 `tokenizer_config.json`，以真实 SHA-256 固定。模型和运行设置放在 checkout 外，启动不下载资源。分词库需支持所选 tokenizer；不支持、资产变化或计数失败时明确失败，没有字符估算回退。计数身份绑定模型、文件散列和库版本。
 
 一次 `HostContext.build` 使用一个有界分词器会话，复用已验证的 tokenizer 对象；每次计数仍重新核对两份资产散列。请求/响应有独立序号，禁止把旧计数当作下一次响应。会话继承构造超时（最多 120 秒）、单次计数最多 10 秒，取消、异常和正常返回均回收自己的 Node 进程；所有者退出关闭输入后 worker 退出。独立 `LocalTokenCounter.count` 保留单次协议；可信调用端可显式使用 `with counter.session(timeout=...) as scoped`。没有跨构造常驻服务、字符估算或 token 预算缩减。
+
+Core0.1.5在该构造内部，以一次空字符串计数预热同一个worker，与召回并行；预热不发送查询或来源正文，不延长原会话截止时间。正式计数仍走同一有序请求队列并逐次校验资产，不能以预热成功替代后续校验。正常返回前等待预热完成；构造早期拒绝、取消或失败时先关闭会话、解除阻塞，再回收预热线程。并行会增加短时资源重叠，性能与资源仍须按实际负载验收。
 
 dsh `memoryBudget` 由可信宿主提供 `provider`、`modelId`、`memoryTokens`、`contextWindow`、`outputReserveTokens` 和同步 `countRequest(request: GenerateOptions): number`。该回调必须按对应 provider 的实际聊天模板、工具声明与请求封装使用真实目标 tokenizer 计数；它不是 SDK 自带的通用计数器。没有可靠的 provider framing counter 时不能启用此模式。输出额度受预留额度限制；已知模型窗口与配置窗口取较小值。宿主历史或模板占满窗口时，在调用 provider 前报 `host_context_window_exceeded`。#79 协作既有原生压缩 backend，辅助 compaction 调用也受完整计数/屏蔽约束；工作检查点与遗漏规则见[续接契约](work-continuation-v1.md)。
 

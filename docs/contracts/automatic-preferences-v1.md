@@ -1,5 +1,15 @@
 # 三类偏好自动更新 v1
 
+## Core0.1.17：完整段落及范围
+
+#113沿用三类有限规则、默认未准入及可信配置边界。当前规则从完整原文提取第一人称子句，保存精确非零跨度；不是任意自然语言理解模型。一般/平时等长期陈述与这次/本轮等临时例外分开处理，临时、过去与计划范围回执为ignored，不进入稳定画像。逗号前仍有效的时间限定不能丢弃。
+
+整段引用、转述、条件、不确定及高风险语境保守阻断；无法解析的第一人称否定也阻断该段，避免只截取肯定子串。同段同槽冲突不发布任一肯定，有旧值时暂停旧值并保留争议。明确否定纠错仅在否定当前值时返回withdrawn，复用dispute/profile draft；不抑制、修改或删除原始消息。否定其他兼容值不撤当前偏好。历史长段落草案同样参与冲突检查。
+
+处理器身份同时绑定规则、完整上下文解析器和既有抽取实现字节。升级不继承旧准入；可信维护者需重新选择当前身份，不能由模型自行批准。自动提取、候选数、合并/撤下标签数、澄清与忽略分别在process.processing报告；source_contexts包含来源元组、角色、发生/获知时间、控制/内容版本及范围。observations_stage=not_run明确尚未执行#118。
+
+独立服务支持上述preference-update-*及preference-clarify/resolve可信CLI，普通capture/recall身份无法配置或发布；profile-summary可通过服务读取。dsh下一次构建背景时读取当前版本，不撤回宿主先前已持有的历史消息。实测见[本票记录](../reports/automatic-profile-2026-11-13.md)。
+
 对应 [#78](https://github.com/destinyTaoTao/evernook/issues/78)。公开本地入口 `evernook.automatic_preferences.PreferenceUpdates`；普通 MCP 没有发布、配置或准入工具。自动处理必须由持有 recall/maintain/accept 的独立可信工作身份执行，普通 dsh/pi 采集与模型身份仍只有 capture/recall。
 
 ## 准入与配置

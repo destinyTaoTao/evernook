@@ -8,13 +8,17 @@ import hashlib
 import json
 import secrets
 import sqlite3
-from threading import Event as Signal
 import time
+from typing import Protocol
 
 from .candidates import EvidenceSpan
 from .models import Access, MemoryFailure
 from .runtime import MemoryRuntime, _identifier, _json
 from .safety import credential_signal
+
+
+class Signal(Protocol):
+    def is_set(self) -> bool: ...
 
 
 @dataclass(frozen=True)

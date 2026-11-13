@@ -1,11 +1,11 @@
 """Versioned derived vectors and evidence fusion; no fact acceptance or query cache."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-import heapq
 import math
+import re
 import sqlite3
 import struct
 import threading
@@ -13,10 +13,13 @@ import time
 
 from .embedding import EmbeddingBackend, EmbeddingSpace, unit_vector
 from .models import Access, LexicalStatus, MemoryFailure, SearchHit, SearchPage, SearchSpan
-from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _time
+from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVIDENCE, _time
+from .query_plan import QueryPlan, plan_query
+from .vector_distance import distance_function
+from .lexical import NORMALIZATION_IDENTITY, matching_spans, query_expression
 
 
-_ELIGIBLE = f"{_RECALLABLE} AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
+_ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,8 @@ class RecallPage:
     recent_window_limited: bool
     semantic_scanned_chunks: int
     semantic_scan_limited: bool
+    query_plan: QueryPlan | None = None
+    semantic_search_backend: str = "disabled"
 
 
 class SemanticRecall:
@@ -129,10 +134,10 @@ class SemanticRecall:
         return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
                               None, failed, vectors)
 
-    def status(self, access: Access) -> SemanticStatus:
+    def status(self, access: Access, *, check: Callable[[], float] | None = None) -> SemanticStatus:
         self.runtime._require_scope(access, "recall", "semantic_status")
         try:
-            with self.runtime._connection() as db:
+            with self.runtime._connection(check=check) as db:
                 db.execute("BEGIN")
                 return self._status(db)
         except MemoryFailure as failure:
@@ -141,16 +146,26 @@ class SemanticRecall:
             return SemanticStatus("unavailable", self.space.key if self.space else None,
                                   None, None, None, None, failure.code)
 
-    def refresh(self, access: Access, *, limit: int = 16, timeout: float = 30) -> SemanticStatus:
+    def refresh(self, access: Access, *, limit: int = 16, timeout: float = 30,
+                cancel: threading.Event | None = None) -> SemanticStatus:
         self.runtime._require_scope(access, "maintain", "semantic_refresh")
         if type(limit) is not int or not 1 <= limit <= 16:
             raise MemoryFailure("invalid_page")
         self._timeout(timeout)
+        deadline = time.monotonic() + timeout
+        def budget() -> float:
+            if cancel is not None and cancel.is_set():
+                raise MemoryFailure("semantic_refresh_canceled")
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise MemoryFailure("semantic_refresh_timeout")
+            return left
+        budget()
         backend, space = self.backend, self.space
         if backend is None or space is None:
             raise MemoryFailure("embedding_disabled")
         # Snapshot bounded missing chunks; no inference or waiting inside a DB transaction.
-        with self.runtime._connection() as db:
+        with self.runtime._connection(check=budget) as db:
             db.execute("BEGIN IMMEDIATE")
             self._schema(db)
             db.execute("INSERT OR IGNORE INTO semantic_spaces_v1 VALUES (?,?)", (space.key, _json(asdict(space))))
@@ -182,8 +197,9 @@ class SemanticRecall:
                 if len(pending) == limit:
                     break
         if not pending:
-            return self.status(access)
-        vectors = backend.embed(tuple(item[-1] for item in pending), timeout=timeout)
+            return self.status(access, check=budget)
+        vectors = backend.embed(tuple(item[-1] for item in pending), timeout=budget(), cancel=cancel)
+        budget()
         if len(vectors) != len(pending):
             raise MemoryFailure("invalid_embedding")
         encoded = [None if vector is None else struct.pack(f"<{space.dimensions}f", *unit_vector(vector, space.dimensions))
@@ -191,9 +207,10 @@ class SemanticRecall:
         writable = [(item, code) for item, code in zip(pending, encoded) if code is not None]
         unembeddable = [item for item, code in zip(pending, encoded) if code is None]
         self.runtime._authorize(access)
-        with self.runtime._connection() as db:
+        with self.runtime._connection(check=budget) as db:
             db.execute("BEGIN IMMEDIATE")
             for item, vector in writable:
+                budget()
                 message_id, version, content_version, length, count, start, end, _ = item
                 current = self.runtime._state(db, message_id)
                 if current.status != "active" or current.version != version:
@@ -205,12 +222,14 @@ class SemanticRecall:
                 db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
                     AND (state_version<>? OR content_version<>?)""",
                     (space.key, message_id, version, content_version))
+            budget()
             db.execute("COMMIT")
         if unembeddable:
-            self._mark_failures(access, unembeddable)
-        return self.status(access)
+            self._mark_failures(access, unembeddable, check=budget)
+        return self.status(access, check=budget)
 
-    def _mark_failures(self, access: Access, items: list[tuple[str, int, int, int, int, int, int, str]]) -> None:
+    def _mark_failures(self, access: Access, items: list[tuple[str, int, int, int, int, int, int, str]], *,
+                       check: Callable[[], float] | None = None) -> None:
         """Record deterministic per-chunk model failures so one bad piece cannot wedge the queue."""
         self.runtime._authorize(access)
         assert self.space is not None
@@ -219,9 +238,11 @@ class SemanticRecall:
         for item in items:
             message_id, version, content_version, length, count, start, _, _ = item
             grouped.setdefault((message_id, version, content_version, length, count), []).append(start)
-        with self.runtime._connection() as db:
+        with self.runtime._connection(check=check) as db:
             db.execute("BEGIN IMMEDIATE")
             for (message_id, version, content_version, length, count), starts in grouped.items():
+                if check is not None:
+                    check()
                 current = self.runtime._state(db, message_id)
                 if current.status != "active" or current.version != version:
                     continue  # A state/content change re-derives the chunk; the stale failure is not recorded.
@@ -233,6 +254,8 @@ class SemanticRecall:
                 for start in starts:
                     db.execute("INSERT OR REPLACE INTO semantic_failures_v1 VALUES (?,?,?,?,?,?)",
                         (space.key, message_id, start, version, content_version, "token_limit"))
+            if check is not None:
+                check()
             db.execute("COMMIT")
 
     @staticmethod
@@ -264,64 +287,118 @@ class SemanticRecall:
                     break
         return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, False
 
+    def _keyword(self, access: Access, query: str, *, since: str | None, until: str | None,
+                 check: Callable[[], float], current_input_id: str | None) -> tuple[SearchHit, ...]:
+        self.runtime._require_scope(access, "recall", "keyword_recall")
+        # Overlapping grams are retrieval candidates, not inferred facts or an NLP segmentation claim.
+        stop = {"我在", "在哪", "哪里", "什么", "为何", "如何", "是否", "可以", "应该", "我的", "的是", "谁的", "怎样"}
+        english_stop = {"what", "where", "when", "which", "who", "how", "the", "is", "are", "my", "i", "a", "an", "do", "did", "does", "can"}
+        words = list(dict.fromkeys(word for run in re.findall(r"[\u3400-\u9fff]+", query)
+            for index in range(len(run) - 1) if (word := run[index:index + 2]) not in stop))
+        words.extend(word for word in re.findall(r"[a-zA-Z][a-zA-Z0-9_+.#-]+", query.casefold()) if word not in english_stop)
+        words = list(dict.fromkeys(words))[:64]
+        if not words:
+            return ()
+        expression = " OR ".join("(" + query_expression((word,)) + ")" for word in words)
+        with self.runtime._connection(check=check) as db:
+            db.execute("BEGIN")
+            parameters: list[object] = [expression, NORMALIZATION_IDENTITY, current_input_id, current_input_id]
+            condition = ""
+            for value, operator in ((since, ">="), (until, "<")):
+                if value is not None:
+                    condition += f" AND occurred{operator}?"
+                    parameters.append(_time(value))
+            rows = db.execute(f"""WITH ranked AS MATERIALIZED (
+                SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
+                FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
+                JOIN messages ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
+                WHERE lexical MATCH ? AND d.normalization_version=? AND (? IS NULL OR messages.id<>?)
+                  AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}
+                ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
+                ORDER BY best,message_id LIMIT 100""", parameters)
+            candidates = list(rows)
+            hits = []
+            for candidate in candidates:
+                check()
+                row = db.execute("""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                    FROM messages LEFT JOIN visibility v ON v.message_id=messages.id WHERE messages.id=?""", (candidate["message_id"],)).fetchone()
+                message = self.runtime._stored(row)
+                spans = next((spans for word in words if (spans := matching_spans(message.event.text, (word,), check=check))), ())
+                if not spans:
+                    continue
+                start = max(0, spans[0].start - 64)
+                end = min(len(message.event.text), max(spans[0].end, start + 192))
+                event, receipt = message.event, message.receipt
+                hits.append(SearchHit(receipt.message_id, event.source, event.role, event.sequence, event.occurred_at,
+                    receipt.received_at, event.completion, receipt.representation, receipt.content_version,
+                    int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),)))
+            return tuple(hits)
+
     def _semantic(self, access: Access, vector: tuple[float, ...], *, since: str | None, until: str | None,
                   minimum: float, check: Callable[[], float] | None = None,
-                  current_input_id: str | None = None) -> tuple[list[tuple[SearchHit, float]], int, bool]:
+                  current_input_id: str | None = None) -> tuple[list[tuple[SearchHit, float]], int, bool, str]:
         space = self.space
         if space is None:
-            return [], 0, False
+            return [], 0, False, "disabled"
         parameters: list[object] = [space.key, current_input_id, current_input_id]
         condition = ""
         for key, value, operator in (("since", since, ">="), ("until", until, "<")):
             if value is not None:
                 condition += f" AND occurred{operator}?"
                 parameters.append(_time(value))
-        best: dict[str, tuple[SearchHit, float]] = {}
-        scanned = 0
-        with self.runtime._connection() as db:
+        best: list[tuple[SearchHit, float]] = []
+        with self.runtime._connection(check=check) as db:
             db.execute("BEGIN")
             if not self._present(db):
-                return [], 0, False
-            rows = db.execute(f"""SELECT messages.event,messages.receipt,c.start,c.end,c.vector,
-                COALESCE(v.version,1) AS state_version FROM semantic_chunks_v1 c
+                return [], 0, False, "disabled"
+            function, encoded, engine = distance_function(db, vector, check=check)
+            base = f"""FROM semantic_chunks_v1 c
                 JOIN messages ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
-                  AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}
-                ORDER BY received,messages.id,c.start LIMIT 10001""", parameters)
-            for row in rows:
-                # The scan-limit return wins at the boundary: fully verified chunk hits must not be
-                # dropped to a deadline/cancel firing on exactly the row where partial results are promised.
-                if scanned == 10000:
-                    return heapq.nlargest(100, best.values(), key=lambda item: (item[1], item[0].message_id)), scanned, True
+                  AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""
+            scanned = int(db.execute("SELECT count(*) " + base, parameters).fetchone()[0])
+            # Exact search covers the eligible history BEFORE top-K. SQLite's single MIN aggregate
+            # returns its associated bare columns; grouping first prevents one long source taking every seat.
+            rows = db.execute(f"""SELECT c.message_id,c.start,c.end,c.state_version,c.content_version,
+                min(COALESCE({function}(c.vector,?),-2.0)) AS distance
+                {base} GROUP BY c.message_id ORDER BY distance,c.message_id LIMIT 100""", [encoded, *parameters])
+            candidates = list(rows)
+            for row in candidates:
                 if check is not None:
                     check()
-                scanned += 1
-                stored = self.runtime._stored(row)
+                distance = row["distance"]
+                if type(distance) not in (float, int) or not math.isfinite(distance) or not -1e-5 <= distance <= 2.00001:
+                    raise MemoryFailure("invalid_semantic_index")
+                similarity = max(-1., min(1., 1 - float(distance)))
+                if similarity < minimum:
+                    break
+                original = db.execute("SELECT event,receipt FROM messages WHERE id=?", (row["message_id"],)).fetchone()
+                stored = self.runtime._stored(original)
                 start, end = int(row["start"]), int(row["end"])
                 if not 0 <= start < end <= len(stored.event.text) or end - start > space.chunk_size:
                     raise MemoryFailure("invalid_semantic_index")
-                raw = bytes(row["vector"])
-                if len(raw) != space.dimensions * 4:
-                    raise MemoryFailure("invalid_semantic_index")
-                other = unit_vector(struct.unpack(f"<{space.dimensions}f", raw), space.dimensions)
-                similarity = sum(a * b for a, b in zip(vector, other))
-                if similarity < minimum:
-                    continue
                 receipt, event = stored.receipt, stored.event
                 hit = SearchHit(receipt.message_id, event.source, event.role, event.sequence, event.occurred_at,
                     receipt.received_at, event.completion, receipt.representation, receipt.content_version,
                     int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),))
-                if hit.message_id not in best or similarity > best[hit.message_id][1]:
-                    best[hit.message_id] = hit, similarity
-        return heapq.nlargest(100, best.values(), key=lambda item: (item[1], item[0].message_id)), scanned, False
+                best.append((hit, similarity))
+        return best, scanned, False, engine
 
     def recall(self, access: Access, query: str, *, limit: int = 10, as_of: str | None = None,
                recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
-               cancel: threading.Event | None = None, current_input_id: str | None = None) -> RecallPage:
+               cancel: threading.Event | None = None, current_input_id: str | None = None, query_intent: str | None = None,
+               since: str | None = None, until: str | None = None) -> RecallPage:
         self.runtime._require_scope(access, "recall", "recall")
         if current_input_id is not None:
             _identifier(current_input_id)
         self._timeout(timeout)
+        focus_since, focus_until = since, until
+        lower = _time(since) if since is not None else None
+        upper = _time(until) if until is not None else None
+        if lower is not None and upper is not None and lower >= upper:
+            raise MemoryFailure("invalid_time_range")
+        plan = replace(plan_query(query, query_intent), since=since, until=until)
+        query = plan.query
         deadline = time.monotonic() + timeout
         def budget() -> float:
             if cancel is not None and cancel.is_set():
@@ -334,7 +411,7 @@ class SemanticRecall:
         def literal(*, mode: str = "lexical", since: str | None = None, until: str | None = None) -> SearchPage:
             try:
                 return self.runtime.search(access, query, mode=mode, since=since, until=until,
-                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id)
+                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id, memory_evidence_only=True)
             except MemoryFailure as failure:
                 if failure.code in {"search_timeout", "search_canceled"}:
                     raise MemoryFailure(failure.code.replace("search_", "recall_", 1)) from None
@@ -348,21 +425,35 @@ class SemanticRecall:
         if type(min_similarity) not in (int, float) or not math.isfinite(min_similarity) or not -1 <= min_similarity <= 1:
             raise MemoryFailure("invalid_similarity")
         # Core validation and protected-query refusal happen before any model invocation.
-        lexical = literal()
+        lexical = literal(since=focus_since, until=focus_until)
         budget()
-        exact = literal(mode="exact")
+        exact = literal(mode="exact", since=focus_since, until=focus_until)
         instant = as_of if as_of is not None else datetime.now(timezone.utc).isoformat()
         since, expanded, chars, window_limited = self._recent(access, instant, recent_target_chars, recent_days,
                                                            check=budget, current_input_id=current_input_id)
         # until is exclusive; one microsecond includes the reference instant in this channel.
         until = (datetime.fromtimestamp(_time(instant), timezone.utc) + timedelta(microseconds=1)).isoformat()
-        recent_lexical = literal(since=since, until=until)
+        recent_since = max((value for value in (since, focus_since) if value is not None), key=_time)
+        recent_until = min((value for value in (until, focus_until) if value is not None), key=_time)
+        recent_intersects = _time(recent_since) < _time(recent_until)
+        recent_lexical = literal(since=recent_since, until=recent_until) if recent_intersects else None
         channels: dict[str, list[SearchHit]] = {"exact": list(exact.hits), "lexical": list(lexical.hits),
-                                               "recent_lexical": list(recent_lexical.hits)}
+                                               "recent_lexical": list(recent_lexical.hits) if recent_lexical is not None else []}
         degraded = [reason for reason in (lexical.fallback_reason, exact.fallback_reason) if reason is not None]
+        if lexical.index.state == "ready":
+            try:
+                channels["keyword"] = list(self._keyword(access, query, since=focus_since, until=focus_until,
+                    check=budget, current_input_id=current_input_id))
+            except MemoryFailure as failure:
+                if failure.code in {"unauthorized", "incompatible_contract", "scope_forbidden"}:
+                    raise
+                degraded.append(failure.code if failure.code in {"recall_canceled", "recall_timeout"} else "keyword_unavailable")
+        if plan.limited:
+            degraded.append("query_coverage_limited")
         similarities: dict[str, float] = {}
+        engine = "disabled"
         scanned, scan_limited = 0, False
-        semantic_status = self.status(access)
+        semantic_status = self.status(access, check=budget)
         if semantic_status.state != "ready":
             degraded.append("semantic_" + semantic_status.state)
         backend, space = self.backend, self.space
@@ -372,10 +463,10 @@ class SemanticRecall:
                 if len(vectors) != 1:
                     raise MemoryFailure("invalid_embedding")
                 vector = unit_vector(vectors[0], space.dimensions)
-                global_hits, count, limited = self._semantic(access, vector, since=None, until=None, minimum=min_similarity,
+                global_hits, count, limited, engine = self._semantic(access, vector, since=focus_since, until=focus_until, minimum=min_similarity,
                                                            check=budget, current_input_id=current_input_id)
-                recent_hits, recent_count, recent_limited = self._semantic(access, vector, since=since, until=until, minimum=min_similarity,
-                                                                         check=budget, current_input_id=current_input_id)
+                recent_hits, recent_count, recent_limited, _ = self._semantic(access, vector, since=recent_since, until=recent_until, minimum=min_similarity,
+                    check=budget, current_input_id=current_input_id) if recent_intersects else ([], 0, False, engine)
                 scanned, scan_limited = count + recent_count, limited or recent_limited
                 channels["semantic"] = [hit for hit, _ in global_hits]
                 channels["recent_semantic"] = [hit for hit, _ in recent_hits]
@@ -392,8 +483,14 @@ class SemanticRecall:
         scores: dict[str, float] = {}
         sources: dict[str, list[str]] = {}
         for name, hits in channels.items():
-            for rank, hit in enumerate(hits, 1):
+            seen: set[str] = set()
+            rank = 0
+            for hit in hits:
                 message_id = hit.message_id
+                if message_id in seen:
+                    continue
+                seen.add(message_id)
+                rank += 1
                 evidence[message_id] = hit
                 sources.setdefault(message_id, []).append(name)
                 scores[message_id] = scores.get(message_id, 0) + 1 / (60 + rank)
@@ -424,4 +521,4 @@ class SemanticRecall:
         reasons = tuple(dict.fromkeys(degraded))
         evidence_state = "candidates" if result else ("incomplete" if reasons else "no_matching_evidence")
         return RecallPage(tuple(result), lexical.index, semantic_status, reasons, evidence_state, since, expanded, chars,
-                          window_limited, scanned, scan_limited)
+                          window_limited, scanned, scan_limited, plan, engine)

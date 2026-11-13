@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -13,7 +13,7 @@ import AgentRegistry from '@deepseek-ai/dsh-agent';
 import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local';
 import LlmRuntime, { LlmAdapter, MessageId, ToolCallId, freezeMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
-import SessionStore, { SessionId, SessionLogOffset, buildForkSeed } from '@deepseek-ai/dsh-session';
+import SessionStore, { SessionId, SessionLogOffset, buildForkSeed, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import * as persistence from '@deepseek-ai/dsh-session-persistence-jsonl';
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
@@ -21,10 +21,21 @@ import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools';
 import TokenMeter from '@deepseek-ai/dsh-token-meter';
 import BasicCompaction, { type BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic';
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction';
-import { installMemory } from '../src/dsh.ts';
+import { installMemory as installMemorySource } from '../src/dsh.ts';
 import type { Config } from '../src/dsh.ts';
+import { createRecovery } from '../src/dsh-recovery.ts';
+import { runLocalCli } from '../src/local-cli.ts';
 import { Tokenizer } from '@huggingface/tokenizers';
 import { MemoryClient } from '../src/client.ts';
+import { installWeb as installWebSource } from '../src/dsh-web.ts';
+import { pathToFileURL } from 'node:url';
+
+const installWeb: typeof installWebSource = process.env.EVERNOOK_TEST_WEB_MODULE
+  ? (await import(pathToFileURL(process.env.EVERNOOK_TEST_WEB_MODULE).href)).installWeb
+  : installWebSource;
+const installMemory: typeof installMemorySource = process.env.EVERNOOK_TEST_NATIVE_MODULE
+  ? (await import(pathToFileURL(process.env.EVERNOOK_TEST_NATIVE_MODULE).href)).installMemory
+  : installMemorySource;
 
 const python = process.env.EVERNOOK_TEST_PYTHON;
 if (!python) throw new Error('Set EVERNOOK_TEST_PYTHON to the external dev interpreter');
@@ -43,10 +54,15 @@ class Synthetic extends LlmAdapter {
   interrupt = false;
   afterFirst?: () => Promise<void>;
   chunks?: StreamChunk[];
+  afterChunk?: (index: number) => Promise<void>;
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options);
     this.inspect?.(options);
-    if (this.chunks) { yield* this.chunks; return; }
+    if (this.chunks) {
+      let index = 0;
+      for (const chunk of this.chunks) { yield chunk; await this.afterChunk?.(index++); }
+      return;
+    }
     if (this.toolOnce && !this.toolUsed) {
       this.toolUsed = true;
       const id = ToolCallId('synthetic-call');
@@ -66,10 +82,10 @@ class Synthetic extends LlmAdapter {
   }
 }
 
-async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { consolidation?: boolean; compaction?: boolean | BasicCompactionConfig } = {}) {
+async function boot(adapter: Synthetic, budgeted = false, durable = false, lifecycle: { service?: boolean; reflectionConfig?: string; reflectionAllowRemote?: boolean; consolidation?: boolean; compaction?: boolean | BasicCompactionConfig; toolPublication?: boolean; streamMode?: Config['streamMode']; maxParallelToolCalls?: number } = {}) {
   await mkdir(output!, { recursive: true });
   const root = await mkdtemp(join(output!, 'native-'));
-  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
+  const script = "import json,sys; from pathlib import Path; from evernook import initialize,pair_client; config,access=initialize(Path(sys.argv[1]),client_id='synthetic-owner',entry='owner'); owner=config.parent/'mcp-access-owner.json'; pair_client(config,client_id='synthetic-owner',entry='owner',access_path=owner); path=config.parent/'mcp-access-dsh.json'; pair_client(config,client_id='synthetic-dsh',entry='dsh',access_path=path,scopes=('capture','recall')); print(json.dumps({'config':str(config),'access':str(path)}))";
   const paths = JSON.parse(execFileSync(python!, ['-c', script, join(root, 'memory')], { cwd: checkout, encoding: 'utf8' })) as { config: string; access: string };
   const ctx = new Context();
   await ctx.plugin(SessionStore).await();
@@ -80,7 +96,7 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   await ctx.plugin(ToolRuntime).await();
   await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
   await ctx.plugin(persistence, { root: join(root, 'sessions'), compression: 'none' }).await();
-  await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 }).await();
+  await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: lifecycle.maxParallelToolCalls ?? 1 }).await();
   if (lifecycle.compaction) {
     await ctx.plugin(TokenMeter).await();
     await ctx.plugin(BasicCompaction, { auto: false, maxTokens: 512, headroomTokens: 512,
@@ -88,12 +104,16 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   }
   ctx.llm.registerAdapter(['synthetic'], adapter);
   const config: Config = { python: python!, config: paths.config, access: paths.access, entry: 'dsh', cwd: checkout };
+  if (lifecycle.reflectionConfig) config.reflection = true;
+  if (lifecycle.reflectionAllowRemote) config.reflectionAllowRemote = true;
   if (lifecycle.consolidation) {
     const access = join(root, 'memory/mcp-access-consolidation.json');
     execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client,MemoryRuntime; from evernook.scheduler import ConsolidationScheduler; c=Path(sys.argv[1]); owner=c.parent/'mcp-access-owner.json'; a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=owner); pair_client(c,client_id='synthetic-consolidation',entry='dsh-background',access_path=Path(sys.argv[2]),scopes=('recall','maintain','accept')); ConsolidationScheduler(MemoryRuntime(c)).configure(a,paused=True,min_pending=1,idle_seconds=0,max_sources_per_run=4,max_runs_per_trigger=2,max_trigger_seconds=2)", paths.config, access], { cwd: checkout });
     config.consolidation = { access, pollMs: 100 };
   }
   if (durable) Object.assign(config, { streamMode: 'durable_text' });
+  if (lifecycle.toolPublication) Object.assign(config, { toolPublication: true });
+  if (lifecycle.streamMode) Object.assign(config, { streamMode: lifecycle.streamMode });
   let target: Tokenizer | undefined;
   if (budgeted) {
     const tokenizer = { model: { type: 'WordLevel', vocab: { '[UNK]': 0, hello: 1, world: 2 }, unk_token: '[UNK]' },
@@ -119,7 +139,35 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
       countRequest: request => counter.encode(JSON.stringify({ messages: request.messages, system: request.system, tools: request.tools }), { add_special_tokens: false }).ids.length };
     if (lifecycle.compaction) config.memoryBudget.memoryTokens = 2048;
   }
-  const memory = await installMemory(ctx, config);
+  let service: childProcess.ChildProcess | undefined;
+  if (lifecycle.service) {
+    config.serviceRequired = true;
+    const args = ['-B', '-m', 'evernook.service', '--config', config.config, '--activate-owner', join(root, 'memory/mcp-access-owner.json')];
+    if (config.contextConfig) args.push('--context-config', config.contextConfig);
+    if (lifecycle.reflectionConfig) args.push('--reflection-config', lifecycle.reflectionConfig);
+    service = childProcess.spawn(python!, args, { cwd: checkout, windowsHide: true,
+      stdio: ['ignore', 'ignore', 'ignore'] });
+    const deadline = Date.now() + 15000;
+    while (true) {
+      try { await readFile(join(root, 'memory/memory-service.json')); break; }
+      catch {
+        if (service.exitCode !== null || Date.now() > deadline) throw new Error('service readiness failed');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  }
+  let memory: Awaited<ReturnType<typeof installMemory>>;
+  try { memory = await installMemory(ctx, config); }
+  catch (error) {
+    try { await ctx.fiber.dispose(); }
+    finally {
+      if (service && service.exitCode === null) {
+        const stopped = new Promise<void>(resolve => service!.once('exit', () => resolve()));
+        service.kill(); await stopped;
+      }
+    }
+    throw error;
+  }
   const errors: unknown[] = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error); });
   function rows() {
@@ -129,10 +177,61 @@ async function boot(adapter: Synthetic, budgeted = false, durable = false, lifec
   }
   return { root, ctx, memory, config, errors, rows, target,
     create: (session: string) => ctx.agents.create({ sessionId: SessionId(session), meta: { cwd: root, delegationDepth: 0 }, agentOptions: { provider: 'synthetic', model: 'local-test' } }),
-    async close() { await memory.close(); await ctx.fiber.dispose(); },
+    async close() {
+      try { await memory.close(); await ctx.fiber.dispose(); }
+      finally {
+        if (service && service.exitCode === null) {
+          const stopped = new Promise<void>(resolve => service!.once('exit', () => resolve()));
+          service.kill(); await stopped;
+        }
+      }
+    },
   };
 }
 function user(id: string, text: string) { return freezeMessage({ id: MessageId(id), role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] }); }
+
+test('explicit local reflection tool returns verified original evidence to the actual dsh provider',
+    { skip: !process.env.EVERNOOK_TEST_REFLECTION_CONFIG, timeout: 120000 }, async t => {
+  const adapter = new Synthetic(); adapter.toolOnce = true; adapter.toolName = 'evernook_memory_reflect';
+  adapter.toolArguments = JSON.stringify({ query: '旧相册' });
+  const patched = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+  const host = await boot(adapter, false, patched, { service: true, reflectionConfig: process.env.EVERNOOK_TEST_REFLECTION_CONFIG,
+    streamMode: patched ? 'durable_tools' : 'buffered', toolPublication: patched });
+  t.after(() => host.close());
+  const seed = "import sys,json; from pathlib import Path; from dataclasses import asdict; from evernook import Event,Source; from evernook.service import ServiceClient,client_access; c=Path(sys.argv[1]); a=client_access(c,c.parent/'mcp-access-owner.json'); s=ServiceClient(c); r=s.call(a,'remember',{'event':asdict(Event(Source('owner','old','main','1'),'user',1,'2020-01-01T00:00:00Z','complete','合成：旧相册记录了银叶桥湿地的苍鹭。'))}); s.call(a,'cli',{'command':'reflect-configure','input':{}}); print(json.dumps(r))";
+  const receipt = JSON.parse(execFileSync(python!, ['-B', '-c', seed, host.config.config], { cwd: checkout, encoding: 'utf8' })) as { message_id: string };
+  const handle = await host.create('explicit-reflection'); t.after(() => handle.dispose());
+  handle.agent.followup(user('reflect-input', '请深入追忆旧相册里的共同经历。')); await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  assert.ok(adapter.requests.length >= 2);
+  const finalRequest = JSON.stringify(adapter.requests.at(-1));
+  assert.ok(finalRequest.includes('untrusted_memory_reflection'));
+  assert.ok(finalRequest.includes(receipt.message_id));
+  assert.ok(finalRequest.includes('旧相册记录了银叶桥湿地的苍鹭'));
+  assert.ok(finalRequest.includes('temporary_only'));
+});
+
+test('explicit remote reflection uses trusted host consent and returns verified evidence to dsh',
+    { skip: !process.env.EVERNOOK_TEST_REMOTE_REFLECTION_CONFIG, timeout: 120000 }, async t => {
+  const adapter = new Synthetic(); adapter.toolOnce = true; adapter.toolName = 'evernook_memory_reflect';
+  adapter.toolArguments = JSON.stringify({ query: '旧相册' });
+  const patched = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+  const host = await boot(adapter, false, patched, { service: true,
+    reflectionConfig: process.env.EVERNOOK_TEST_REMOTE_REFLECTION_CONFIG, reflectionAllowRemote: true,
+    streamMode: patched ? 'durable_tools' : 'buffered', toolPublication: patched });
+  t.after(() => host.close());
+  const seed = "import sys; from pathlib import Path; from dataclasses import asdict; from evernook import Event,Source; from evernook.service import ServiceClient,client_access; c=Path(sys.argv[1]); a=client_access(c,c.parent/'mcp-access-owner.json'); s=ServiceClient(c); s.call(a,'remember',{'event':asdict(Event(Source('owner','old','main','1'),'user',1,None,'complete','合成：旧相册记录了银叶桥湿地的苍鹭。'))}); s.call(a,'cli',{'command':'reflect-configure','input':{}})";
+  execFileSync(python!, ['-B', '-c', seed, host.config.config], { cwd: checkout });
+  const handle = await host.create('explicit-remote-reflection'); t.after(() => handle.dispose());
+  handle.agent.followup(user('remote-reflect-input', '请深入追忆旧相册。')); await handle.agent.whenIdle();
+  assert.deepEqual(host.errors, []);
+  const request = JSON.stringify(adapter.requests.at(-1));
+  assert.ok(request.includes('untrusted_memory_reflection'));
+  assert.ok(request.replaceAll('\\"', '"').includes('"provider":"remote"'));
+  assert.ok(request.includes('旧相册记录了银叶桥湿地的苍鹭'));
+  assert.ok(request.includes('cost_reserved_micro_usd'));
+  assert.ok(request.includes('temporary_only'));
+});
 
 for (const budgeted of [false, true]) test(`current input receipt stays native and saved while only prior identical input is evidence (dsh ${budgeted})`, async t => {
   const adapter = new Synthetic();
@@ -162,9 +261,10 @@ for (const budgeted of [false, true]) test(`current input receipt stays native a
     && message.content.some(block => block.type === 'text' && block.text === text)));
 });
 
-test('real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget', async t => {
+for (const mode of ['durable_text', 'durable_tools'] as const) test(`real dsh compaction and a fresh native resume restore source-backed work inside the shared token budget (${mode})`,
+    { skip: mode === 'durable_tools' && Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1 }, async t => {
   const adapter = new Synthetic();
-  const host = await boot(adapter, true, true, { compaction: true });
+  const host = await boot(adapter, true, true, { compaction: true, streamMode: mode, toolPublication: mode === 'durable_tools' });
   t.after(() => host.close());
   const sessionId = SessionId('work-' + 'a'.repeat(205));
   const handle = await host.create(sessionId);
@@ -582,6 +682,107 @@ test('native dsh next-turn provider uses admitted preferences and excludes their
   assert.doesNotMatch(JSON.stringify(adapter.requests), /mcp-access-(owner|consolidation)/);
 });
 
+test('independent service paragraph profile corrections reach the next actual provider request', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-B', '-m', 'evernook.cli', command, '--config', host.config.config,
+      '--access', owner], { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 4096, deep_tokens: 8192, profile_tokens: 1000,
+    fact_keys: [['user', 'preference:answer_verbosity']] });
+  await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+  host.config.memoryBudget!.memoryTokens = 4096;
+  cli('preference-update-configure', { enabled: true,
+    admitted_processor: cli('preference-update-status').settings.rules_processor });
+  async function turn(session: string, text: string) {
+    const handle = await host.create(session); t.after(() => handle.dispose());
+    handle.agent.followup(user(session + '-input', text)); await handle.agent.whenIdle();
+    return host.memory.status(handle.agent.session.id).latest_input!.message_id;
+  }
+  function items() {
+    const block = adapter.requests.at(-1)!.messages.flatMap(m => m.content)
+      .find(b => b.type === 'text' && b.text.includes('untrusted_memory_context'));
+    assert.ok(block?.type === 'text');
+    return JSON.parse(block.text.slice(block.text.indexOf('{'))).items as
+      { kind: string; data: { label?: string; fact?: { text: string } | null } }[];
+  }
+  const first = await turn('paragraph-first', '今天聊了很久。说到日常交流，我偏好简短回答。');
+  cli('preference-update-process', { source_ids: [first] });
+  const temporary = await turn('paragraph-temporary', '这次，我偏好详细回答。');
+  assert.ok(items().some(i => i.kind === 'profile' && i.data.label === '我偏好简短回答。'));
+  cli('preference-update-process', { source_ids: [temporary] });
+  assert.equal(cli('profile-summary').tags[0].draft.label, '我偏好简短回答。');
+  const incomingId = await turn('paragraph-new', '最近重新想过。现在我偏好详细回答。');
+  const incoming = cli('preference-update-process', { source_ids: [incomingId] }).updates[0];
+  assert.equal(incoming.state, 'pending_clarification');
+  const confirmation = await turn('paragraph-confirm', '合成：确认详细回答是我的真实偏好，更正之前说法。');
+  assert.equal(items().some(i => i.kind === 'profile'), false);
+  const fact = cli('fact-query', { subject_id: 'user', predicate: incoming.predicate });
+  const profile = cli('profile-read', { tag_id: incoming.profile_tag_id });
+  cli('preference-resolve', { subject_id: 'user', predicate: incoming.predicate,
+    profile_tag_id: incoming.profile_tag_id, clarification_id: incoming.clarification_id,
+    confirmation_id: confirmation, expected_fact_revision: fact.knowledge_revision,
+    expected_profile_revision: profile.revision, kind: 'correction', choice: 'incoming' });
+  await turn('paragraph-after', '合成：继续聊天。');
+  assert.ok(items().some(i => i.kind === 'profile' && i.data.label === '我偏好详细回答。'));
+  assert.ok(items().some(i => i.kind === 'facts' && i.data.fact?.text === '我偏好详细回答。'));
+  assert.equal(items().some(i => (i.kind === 'profile' && i.data.label === '我偏好简短回答。')
+    || (i.kind === 'facts' && i.data.fact?.text === '我偏好简短回答。')), false);
+  assert.deepEqual(host.errors, []);
+});
+
+test('independent service topic views reach native provider and source withdrawal excludes old body', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  function cli(command: string, input: Record<string, unknown> = {}) {
+    return JSON.parse(execFileSync(python!, ['-B', '-m', 'evernook.cli', command, '--config', host.config.config,
+      '--access', owner], { cwd: checkout, input: JSON.stringify(input), encoding: 'utf8' })).result;
+  }
+  async function turn(session: string, text: string) {
+    const handle = await host.create(session); t.after(() => handle.dispose());
+    handle.agent.followup(user(session + '-input', text)); await handle.agent.whenIdle();
+    return host.memory.status(handle.agent.session.id).latest_input!.message_id;
+  }
+  function items() {
+    const block = adapter.requests.at(-1)!.messages.flatMap(m => m.content)
+      .find(b => b.type === 'text' && b.text.includes('untrusted_memory_context'));
+    assert.ok(block?.type === 'text');
+    return JSON.parse(block.text.slice(block.text.indexOf('{'))).items as
+      { kind: string; data: { view_id?: string; content?: { citations: { quote: string }[] } } }[];
+  }
+  const original = '合成：我们在桥北湿地见过白鹭。';
+  const source = await turn('topic-history', original);
+  cli('topic-view-define', { request_id: 'define-wetland', view_id: 'wetland', expected_revision: 0,
+    definition: { title: '湿地共同经历', purpose: '给未来聊天提供可回源的经历背景', query: '湿地' } });
+  const saved = JSON.parse(await readFile(host.config.contextConfig!, 'utf8'));
+  Object.assign(saved.policy, { normal_tokens: 8192, deep_tokens: 16384,
+    topic_view_ids: ['wetland'], topic_view_tokens: 5000 });
+  await writeFile(host.config.contextConfig!, JSON.stringify(saved));
+  host.config.memoryBudget!.memoryTokens = 8192;
+  assert.equal(cli('topic-view-refresh', { view_id: 'wetland', timeout: 10 }).state, 'valid');
+  const confirmation = await turn('topic-with-view', '合成：继续聊共同经历。');
+  assert.ok(items().some(i => i.kind === 'topic_view' && i.data.view_id === 'wetland'
+    && i.data.content?.citations.some(c => c.quote === original)), JSON.stringify({ items: items(),
+      viewStateAfterTurn: cli('topic-view-read', { view_id: 'wetland', current_input_id: confirmation }).state }));
+  cli('change', { request_id: 'hide-topic-source', target_id: source, expected_version: 1,
+    action: 'suppress', evidence_id: confirmation, reason: 'synthetic topic control' });
+  await turn('topic-withdrawn', '合成：再聊湿地。');
+  assert.equal(items().some(i => i.kind === 'topic_view'), false);
+  assert.doesNotMatch(JSON.stringify(adapter.requests.at(-1)), /桥北湿地见过白鹭/);
+  const updated = '合成：更正后的经历在银叶桥湿地，见过苍鹭。';
+  cli('topic-view-edit', { request_id: 'edit-wetland', view_id: 'wetland', expected_revision: 1, text: updated });
+  assert.equal(cli('topic-view-refresh', { view_id: 'wetland', timeout: 10 }).state, 'valid');
+  await turn('topic-updated', '合成：继续。');
+  assert.ok(items().some(i => i.kind === 'topic_view' && i.data.content?.citations.some(c => c.quote === updated)));
+  assert.deepEqual(host.errors, []);
+});
+
 test('native dsh cancellation and provider failure release foreground activity without disposing the session', async t => {
   for (const canceled of [true, false]) {
     const adapter = new Synthetic();
@@ -799,7 +1000,8 @@ test('a truncated provider finish keeps the withheld tail incomplete rather than
   } finally { await handle.dispose(); await host.close(); }
 });
 
-test('budgeted durable text preserves split UTF-16 pairs and splits large provider deltas at the core byte limit', async () => {
+for (const mode of ['durable_text', 'durable_tools'] as const) test(`budgeted durable text preserves split UTF-16 pairs and splits large provider deltas at the core byte limit (${mode})`,
+    { skip: mode === 'durable_tools' && Reflect.get(ToolRuntime, 'evernookPublicationVersion') !== 1 }, async () => {
   const adapter = new Synthetic();
   const text = '安全🙂' + '字'.repeat(22000) + '。';
   adapter.chunks = [
@@ -809,7 +1011,7 @@ test('budgeted durable text preserves split UTF-16 pairs and splits large provid
     { type: 'block-end', index: 0, block: { type: 'text', text } },
     { type: 'finish', reason: { kind: 'stop' } },
   ];
-  const host = await boot(adapter, true, true);
+  const host = await boot(adapter, true, true, { streamMode: mode, toolPublication: mode === 'durable_tools' });
   const visible: string[] = [];
   host.ctx.on('agent/assistant-stream', ({ frame }) => {
     if (frame.type === 'chunk' && frame.chunk.type === 'text-delta') visible.push(frame.chunk.text);
@@ -893,7 +1095,7 @@ test('target tokenizer budgets the real core payload and provider request with a
     const state = host.memory.status(handle.agent.session.id).context;
     assert.equal(state?.token_limit, 256);
     assert.equal((await host.memory.settings()).core.saved_policy?.recent_days, 1);
-    assert.ok(state?.degraded.includes('query_too_long'));
+    assert.ok(state?.degraded.includes('query_coverage_limited'));
     assert.equal(state?.complete, false);
     const latest = adapter.requests.at(-1)!;
     const memories = latest.messages.flatMap(message => message.content).filter(block => block.type === 'text')
@@ -901,6 +1103,33 @@ test('target tokenizer budgets the real core payload and provider request with a
     assert.equal(memories.length, 1);
     assert.ok(memories.reduce((sum, block) => sum + host.target!.encode(block.text, { add_special_tokens: false }).ids.length, 0) <= 512);
   } finally { await handle.dispose(); await host.close(); }
+});
+
+test('long native input recalls its tail question through the independent service in both budget modes', async () => {
+  for (const budgeted of [false, true]) {
+    const adapter = new Synthetic();
+    const host = await boot(adapter, budgeted, false, { service: true });
+    const handle = await host.create('long-tail-history');
+    const ordinary = new MemoryClient(host.config);
+    await ordinary.connect();
+    try {
+      const receipt = await ordinary.call<{ message_id: string }>('remember', { event: {
+        source: { entry: 'dsh', session: 'synthetic-history', branch: 'main', event: 'tail-target' },
+        role: 'user', sequence: 1, occurred_at: '2019-01-01T00:00:00Z', completion: 'complete',
+        text: '合成：跨年约定是蓝色风铃。',
+      } });
+      handle.agent.followup(user('long-tail-input', '无关背景。'.repeat(100) + '跨年约定'));
+      await handle.agent.whenIdle();
+      assert.deepEqual(host.errors, []);
+      assert.equal(adapter.requests.length, 1);
+      const delivered = JSON.stringify(adapter.requests[0]);
+      assert.ok(delivered.includes(receipt.message_id));
+      assert.ok(delivered.includes('蓝色风铃'));
+      const originals = host.rows().filter(row => row.event.role === 'user');
+      assert.ok(originals.some(row => row.event.text === '无关背景。'.repeat(100) + '跨年约定'));
+      if (budgeted) assert.ok(host.memory.status(handle.agent.session.id).context?.degraded.includes('query_coverage_limited'));
+    } finally { await ordinary.close(); await handle.dispose(); await host.close(); }
+  }
 });
 
 test('budgeted native provider receives core persona profile facts and important words as data', async () => {
@@ -1539,4 +1768,634 @@ test('native file references and tool events preserve exact text, input links an
       assert.deepEqual(Buffer.from(object!.content as Uint8Array), data);
     } finally { db.close(); }
   } finally { await handle.dispose(); await host.close(); }
+});
+
+
+const patchedPublication = Reflect.get(ToolRuntime, 'evernookPublicationVersion') === 1;
+
+test('reasoning tool stream saves complete frames before disclosure and preserves replay on the next model request', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('reasoning-tool');
+  const reasoning = '合成推理🙂：只核对临时证据。';
+  const frames: StreamChunk[] = [
+    { type: 'block-start', index: 0, blockType: 'reasoning' },
+    { type: 'reasoning-delta', index: 0, text: '合成推理\uD83D' },
+    { type: 'reasoning-delta', index: 0, text: '\uDE42：只核对临时证据。' },
+    { type: 'block-end', index: 0, block: { type: 'reasoning', text: reasoning } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '合成可见答案。' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '合成可见答案。' } },
+    { type: 'block-start', index: 2, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' }, replayState: { response: { id: 'synthetic-reasoning-response' },
+      blocks: [{ signature: 'synthetic-replay-signature' }, {}, {}] } },
+  ];
+  adapter.chunks = frames;
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('reasoning-complete');
+  const visible: StreamChunk[] = []; let effects = 0; let checked = false;
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  adapter.afterChunk = async index => {
+    if (index === 8) { assert.equal(visible.length, 0); assert.equal(effects, 0); checked = true; }
+  };
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic reasoning workflow',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        const result = await reader.call<{ hits: { message_id: string }[] }>('search', { query: 'evernook_dsh_tool_frames_v1', mode: 'exact', limit: 100 });
+        assert.equal(result.hits.length, 1);
+        const capture = await reader.readCapture(result.hits[0].message_id);
+        assert.equal(capture.complete, true); assert.equal(capture.input_id, host.memory.status(handle.agent.session.id).latest_input!.message_id);
+        const saved = JSON.parse(execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import MemoryRuntime; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); sys.stdout.buffer.write(r.read_attachment(a,sys.argv[3],'raw-tool-stream-v1'))", host.config.config, host.config.access, result.hits[0].message_id], { cwd: checkout, encoding: 'utf8' }));
+        assert.deepEqual(saved, frames);
+        const attempts = await host.memory.streams(handle.agent.session.id);
+        assert.equal((await reader.readStream(attempts.streams[0])).text, '合成可见答案。');
+        effects++; adapter.chunks = undefined;
+        return [{ type: 'text', text: '合成工具完成。' }];
+      } }));
+    handle.agent.followup(user('reasoning-input', '合成：推理、文本与工具分开保存。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.equal(checked, true); assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 2);
+    assert.match(JSON.stringify(adapter.requests[1]), /synthetic-replay-signature/);
+    assert.equal(visible.filter(value => value.type === 'reasoning-delta').map(value => value.text).join(''), reasoning);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+for (const failure of ['protected', 'cross-channel', 'mismatch', 'unclosed', 'canceled', 'interrupted', 'oversized', 'save-revoked']) {
+  test(`reasoning tool stream blocks ${failure} before reasoning disclosure or tool execution`, { skip: !patchedPublication }, async () => {
+    const adapter = new Synthetic();
+    const reasoning = failure === 'protected' ? 'password=synthetic-reasoning-secret'
+      : failure === 'cross-channel' ? 'pass' : failure === 'oversized' ? 'x'.repeat(800000) : '合成推理。';
+    const id = ToolCallId('reasoning-failure-call');
+    adapter.chunks = [
+      { type: 'block-start', index: 0, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 0, text: reasoning },
+    ];
+    if (failure !== 'unclosed') adapter.chunks.push({ type: 'block-end', index: 0,
+      block: { type: 'reasoning', text: failure === 'mismatch' ? 'changed' : reasoning } });
+    if (failure === 'cross-channel') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'word=synthetic-reasoning-secret' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'word=synthetic-reasoning-secret' } });
+    adapter.chunks.push({ type: 'block-start', index: 2, blockType: 'tool-call' },
+      { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+      { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+      { type: 'finish', reason: { kind: 'tool-calls' } });
+    const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+    const handle = await host.create('reasoning-failure-' + failure);
+    const visible: StreamChunk[] = []; let effects = 0;
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+    adapter.afterChunk = async index => {
+      if (index !== 1) return;
+      if (failure === 'canceled') handle.agent.cancel({ kind: 'user' });
+      if (failure === 'interrupted') throw new Error('synthetic protocol interruption');
+      if (failure === 'save-revoked') execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+    };
+    try {
+      host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic blocked reasoning',
+        parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return []; } }));
+      handle.agent.followup(user('reasoning-failure-input', '合成：失败不展示推理或运行工具。'));
+      await handle.agent.whenIdle();
+      assert.equal(effects, 0); assert.equal(visible.length, 0);
+      if (failure !== 'canceled') assert.ok(host.errors.length);
+      assert.doesNotMatch(host.errors.map(String).join('\n'), /synthetic-reasoning-secret/);
+      const streams = await host.memory.streams(handle.agent.session.id);
+      const saved = await host.memory.readStream(streams.streams[0]);
+      assert.equal(saved.complete, false); assert.equal(saved.final_message_id, null);
+      if (failure === 'canceled') assert.equal(saved.state, 'canceled');
+    } finally { await handle.dispose(); await host.close(); }
+  });
+}
+test('patched tool publication saves the exact final snapshot before native notification', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('publication-exact');
+  const observed: Promise<void>[] = [];
+  const finalText = '合成最终修整🙂\r\n37.50元。';
+  try {
+    host.ctx.tools.register({ ...defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic final content',
+      parameters: { amount: { type: 'number' } }, execute: async () => [{ type: 'text', text: 'before final transform' }] }),
+      finalizeContent: () => [{ type: 'text', text: finalText }] });
+    host.ctx.on('tools/result', () => { observed.push((async () => {
+      const found = await reader.call<{ hits: { message_id: string; source: { event: string }; role: string }[] }>('search',
+        { query: 'evernook_tool_publication_v1', mode: 'exact', limit: 100 });
+      const hit = found.hits.find(value => value.role === 'tool' && value.source.event.startsWith('tool-publish-v1:') && value.source.event.endsWith(':result'));
+      assert.ok(hit, 'Final result must already be in the real ledger');
+      const stored = await reader.read(hit.message_id);
+      const snapshot = JSON.parse(stored.event.text) as { result: { content: { text: string }[]; value: unknown } };
+      assert.equal(snapshot.result.content[0].text, finalText);
+      assert.deepEqual(snapshot.result.value, [{ type: 'text', text: 'before final transform' }]);
+      const manifest = JSON.parse(execFileSync(python!, ['-c', "import json,sys; from pathlib import Path; from dataclasses import asdict; from evernook import pair_client,MemoryRuntime; c=Path(sys.argv[1]); a=pair_client(c,client_id='synthetic-owner',entry='owner',access_path=c.parent/'mcp-access-owner.json'); print(json.dumps(asdict(MemoryRuntime(c).read_capture(a,sys.argv[2]))))", host.config.config, hit.message_id], { cwd: checkout, encoding: 'utf8' })) as { input_id: string; tool_name: string; complete: boolean };
+      assert.equal(manifest.input_id, host.memory.status(handle.agent.session.id).latest_input!.message_id);
+      assert.equal(manifest.tool_name, 'synthetic-tool');
+      assert.equal(manifest.complete, true);
+    })()); void observed.at(-1)!.catch(() => {}); });
+    handle.agent.followup(user('publication-exact-input', '合成：验证最终工具结果先保存再通知。'));
+    await handle.agent.whenIdle();
+    assert.equal(observed.length, 1); await Promise.all(observed);
+    assert.deepEqual(host.errors, []);
+    assert.equal(adapter.requests.length, 2);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+test('patched tool publication blocks after the real capture identity is revoked following a side effect', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const handle = await host.create('publication-save-failure');
+  let effects = 0;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic permission failure',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        effects++;
+        execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+        return [{ type: 'text', text: 'synthetic result must remain unpublished' }];
+      } }));
+    handle.agent.followup(user('publication-failure-input', '合成：执行后撤销保存权限。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 1);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').length, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/publication-blocked').length, 1);
+    handle.agent.followup(user('publication-no-retry', '合成：核对状态，不得自动重复副作用。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+
+for (const failure of ['protected', 'oversized']) test(`patched tool publication blocks ${failure} final snapshots`, { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('publication-' + failure);
+  let effects = 0;
+  try {
+    const resultText = failure === 'protected' ? 'password=synthetic-tool-never-publish' : 'x'.repeat(600000);
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic unsafe result',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; return [{ type: 'text', text: resultText }]; } }));
+    handle.agent.followup(user('publication-' + failure + '-input', '合成：验证不安全结果阻断。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').length, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/publication-blocked').length, 1);
+    if (failure === 'protected') {
+      await assert.rejects(reader.call('search', { query: resultText, mode: 'exact', limit: 100 }), /evernook:protected_query/);
+      const found = await reader.call<{ hits: unknown[] }>('search', { query: 'synthetic-tool-never-publish', mode: 'exact', limit: 100 });
+      assert.equal(found.hits.length, 0);
+    }
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+
+for (const streamMode of ['buffered', 'durable_tools'] as const) test(`tool publication refuses an unpatched host before starting the memory transport (${streamMode})`, { skip: patchedPublication }, async () => {
+  const ctx = new Context();
+  try {
+    await ctx.plugin(SystemPrompt, { includeHarnessIdentity: false }).await();
+    await ctx.plugin(ToolRuntime).await();
+    await assert.rejects(installMemory(ctx, { python: python!, config: join(output!, 'unused-runtime.json'),
+      access: join(output!, 'unused-access.json'), entry: 'dsh', streamMode, toolPublication: true }), /evernook:tool_publication_patch_required/);
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test('mixed reliable mode refuses missing tool publication before starting the memory transport', async () => {
+  const ctx = new Context();
+  try {
+    await assert.rejects(installMemory(ctx, { python: python!, config: join(output!, 'unused-runtime.json'),
+      access: join(output!, 'unused-access.json'), entry: 'dsh', streamMode: 'durable_tools' }), /evernook:invalid_host_config/);
+  } finally { await ctx.fiber.dispose(); }
+});
+
+test('mixed durable stream saves visible text before provider finish and saves exact tool frames before execution', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('mixed-call');
+  const frames: StreamChunk[] = [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text: '合成前缀🙂。' },
+    { type: 'block-end', index: 0, block: { type: 'text', text: '合成前缀🙂。' } },
+    { type: 'block-start', index: 1, blockType: 'text' },
+    { type: 'text-delta', index: 1, text: '37.50元。\r\n' },
+    { type: 'block-end', index: 1, block: { type: 'text', text: '37.50元。\r\n' } },
+    { type: 'block-start', index: 2, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ];
+  adapter.chunks = frames;
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const reader = new MemoryClient(host.config); await reader.connect();
+  const handle = await host.create('mixed-complete');
+  const visible: StreamChunk[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  let effects = 0;
+  let liveChecked = false;
+  adapter.afterChunk = async index => {
+    if (index === 1) {
+      assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), '合成前缀🙂。');
+      const found = await host.memory.streams(handle.agent.session.id);
+      assert.equal(found.streams.length, 1);
+      const saved = await reader.readStream(found.streams[0]);
+      assert.equal(saved.text, '合成前缀🙂。'); assert.equal(saved.state, 'open');
+      liveChecked = true;
+    }
+    if (index === 7) {
+      assert.equal(visible.some(value => value.type === 'tool-call-delta'), false);
+      assert.equal(effects, 0);
+    }
+  };
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic mixed workflow',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        const found = await reader.call<{ hits: { message_id: string; source: { session: string } }[] }>('search',
+          { query: 'evernook_dsh_tool_frames_v1', mode: 'exact', limit: 100 });
+        const hit = found.hits.find(value => value.source.session === String(handle.agent.session.id)); assert.ok(hit);
+        const saved = JSON.parse(execFileSync(python!, ['-c', "import json,sys; from pathlib import Path; from evernook import MemoryRuntime; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); sys.stdout.buffer.write(r.read_attachment(a,sys.argv[3],'raw-tool-stream-v1'))", host.config.config, host.config.access, hit.message_id], { cwd: checkout, encoding: 'utf8' }));
+        assert.deepEqual(saved, frames);
+        const attempts = await host.memory.streams(handle.agent.session.id);
+        const complete = await reader.readStream(attempts.streams[0]);
+        assert.equal(complete.state, 'complete'); assert.equal(complete.text, '合成前缀🙂。37.50元。\r\n');
+        effects++; adapter.chunks = undefined;
+        return [{ type: 'text', text: '合成工具结果。' }];
+      } }));
+    handle.agent.followup(user('mixed-input', '合成：可靠文本加工具。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.equal(liveChecked, true); assert.equal(effects, 1);
+    assert.equal(adapter.requests.length, 2);
+    assert.equal(visible.filter(value => value.type === 'tool-call-delta').length, 1);
+  } finally { await reader.close(); await handle.dispose(); await host.close(); }
+});
+
+test('mixed durable stream never publishes unsaved provider fields attached to live text frames', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  adapter.chunks = [
+    Object.assign({ type: 'block-start' as const, index: 0, blockType: 'text' as const }, { providerHint: 'password=synthetic-metadata-secret' }),
+    Object.assign({ type: 'text-delta' as const, index: 0, text: '合成安全前缀。' }, { providerHint: 'password=synthetic-metadata-secret' }),
+    { type: 'block-end', index: 0, block: { type: 'text', text: '合成安全前缀。' } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ];
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const handle = await host.create('mixed-extra-fields');
+  const visible: StreamChunk[] = [];
+  host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+  try {
+    handle.agent.followup(user('mixed-metadata-input', '合成：不能展示尚未保存的额外字段。'));
+    await handle.agent.whenIdle();
+    assert.doesNotMatch(JSON.stringify(visible), /providerHint|synthetic-metadata-secret/);
+    assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), '合成安全前缀。');
+    assert.equal(visible.some(value => value.type === 'finish'), false);
+    assert.ok(host.errors.length);
+    const found = await host.memory.streams(handle.agent.session.id);
+    const saved = await host.memory.readStream(found.streams[0]);
+    assert.equal(saved.state, 'failed'); assert.equal(saved.final_message_id, null);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+test('mixed durable stream rejects duplicate provider call identities before any side effect', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const id = ToolCallId('duplicate-mixed-call');
+  adapter.chunks = [0, 1].flatMap((index): StreamChunk[] => [
+    { type: 'block-start', index, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index, id, name: 'synthetic-tool', argumentsDelta: '{"amount":37.50}' },
+    { type: 'block-end', index, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: '{"amount":37.50}' } },
+  ]);
+  adapter.chunks.push({ type: 'finish', reason: { kind: 'tool-calls' } });
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+  const handle = await host.create('mixed-duplicate-call');
+  let effects = 0;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic duplicate identity',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return [{ type: 'text', text: 'synthetic result' }]; } }));
+    handle.agent.followup(user('mixed-duplicate-input', '合成：重复调用身份必须阻断。'));
+    await handle.agent.whenIdle();
+    assert.equal(effects, 0);
+    assert.equal(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/call').length, 0);
+    assert.ok(host.errors.length);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
+for (const failure of ['cross-block', 'escaped-arguments', 'malformed-arguments', 'canceled', 'interrupted', 'truncated', 'mismatch', 'oversized', 'save-revoked', 'reasoning']) {
+  test(`mixed durable stream preserves only saved prefixes on ${failure}`, { skip: !patchedPublication }, async () => {
+    const adapter = new Synthetic();
+    const prefix = '合成前缀🙂。';
+    const first = prefix + (failure === 'cross-block' ? 'pass' : '');
+    const id = ToolCallId('mixed-failure-call');
+    const args = failure === 'escaped-arguments' ? '{"pass\\u0077ord":"synthetic-stream-secret"}'
+      : failure === 'malformed-arguments' ? 'password=synthetic-invalid-json' : '{"amount":37.50}';
+    adapter.chunks = [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: first },
+      { type: 'block-end', index: 0, block: { type: 'text', text: failure === 'mismatch' ? 'changed final text' : first } },
+    ];
+    if (failure === 'cross-block') adapter.chunks.push(
+      { type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'word=synthetic-stream-secret' },
+      { type: 'block-end', index: 1, block: { type: 'text', text: 'word=synthetic-stream-secret' } });
+    if (failure === 'oversized') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'text' },
+      { type: 'text-delta', index: 1, text: 'x'.repeat(800000) });
+    if (failure === 'reasoning') adapter.chunks.push({ type: 'block-start', index: 1, blockType: 'reasoning' },
+      { type: 'reasoning-delta', index: 1, text: 'unadmitted reasoning' });
+    adapter.chunks.push(
+      { type: 'block-start', index: 2, blockType: 'tool-call' },
+      { type: 'tool-call-delta', index: 2, id, name: 'synthetic-tool', argumentsDelta: args },
+      { type: 'block-end', index: 2, block: { type: 'tool-call', id, name: 'synthetic-tool', arguments: args } },
+      { type: 'finish', reason: { kind: failure === 'truncated' ? 'max-tokens' : 'tool-calls' } });
+    const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools' });
+    const handle = await host.create('mixed-failure-' + failure);
+    const visible: StreamChunk[] = [];
+    host.ctx.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'chunk') visible.push(frame.chunk); });
+    let effects = 0;
+    adapter.afterChunk = async index => {
+      if (index !== 1) return;
+      if (failure === 'interrupted') throw new Error('synthetic provider interruption');
+      if (failure === 'canceled') handle.agent.cancel({ kind: 'user' });
+      if (failure === 'save-revoked') execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-dsh',entry='dsh',access_path=c.parent/'mcp-access-dsh.json',scopes=('recall',))", host.config.config], { cwd: checkout });
+    };
+    let fresh: Awaited<ReturnType<typeof installMemory>> | undefined;
+    const reader = new MemoryClient(host.config); await reader.connect();
+    try {
+      host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic rejected stream',
+        parameters: { amount: { type: 'number' } }, execute: async () => { effects++; adapter.chunks = undefined; return [{ type: 'text', text: 'must not run' }]; } }));
+      handle.agent.followup(user('mixed-failure-input', '合成：失败前缀必须能回取，不执行工具。'));
+      await handle.agent.whenIdle();
+      assert.equal(effects, 0);
+      assert.equal(visible.filter(value => value.type === 'text-delta').map(value => value.text).join(''), prefix);
+      assert.equal(visible.some(value => value.type === 'tool-call-delta' || value.type === 'finish'), false);
+      assert.doesNotMatch(JSON.stringify(visible), /synthetic-stream-secret|unadmitted reasoning/);
+      assert.doesNotMatch(host.errors.map(String).join('\n'), /password|synthetic-invalid-json/);
+      const found = await host.memory.streams(handle.agent.session.id);
+      assert.equal(found.streams.length, 1);
+      const saved = await reader.readStream(found.streams[0]);
+      assert.equal(saved.text, prefix); assert.equal(saved.final_message_id, null);
+      assert.equal(saved.state, failure === 'cross-block' ? 'protected' : failure === 'canceled' ? 'canceled' : failure === 'save-revoked' ? 'open' : 'failed');
+      if (failure !== 'save-revoked') {
+        await host.memory.close(); fresh = await installMemory(host.ctx, host.config);
+        await fresh.rescan(handle.agent.session.id); await fresh.rescan(handle.agent.session.id);
+        assert.deepEqual(await fresh.readStream(found.streams[0]), saved);
+      }
+      assert.deepEqual(await reader.readStream(found.streams[0]), saved);
+    } finally { await fresh?.close(); await reader.close(); await handle.dispose(); await host.close(); }
+  });
+}
+
+test('mixed durable stream accepts interleaved tool deltas and publishes parallel results in model order', { skip: !patchedPublication }, async () => {
+  const adapter = new Synthetic();
+  const first = ToolCallId('mixed-parallel-first'); const second = ToolCallId('mixed-parallel-second');
+  adapter.chunks = [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 0, id: first, name: 'first', argumentsDelta: '{"amount":' },
+    { type: 'block-start', index: 1, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 1, id: second, name: 'second', argumentsDelta: '{"amount":48.75}' },
+    { type: 'block-end', index: 1, block: { type: 'tool-call', id: second, name: 'second', arguments: '{"amount":48.75}' } },
+    { type: 'tool-call-delta', index: 0, id: first, argumentsDelta: '37.50}' },
+    { type: 'block-end', index: 0, block: { type: 'tool-call', id: first, name: 'first', arguments: '{"amount":37.50}' } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ];
+  const host = await boot(adapter, false, false, { toolPublication: true, streamMode: 'durable_tools', maxParallelToolCalls: 2 });
+  const handle = await host.create('mixed-parallel');
+  const secondDone = Promise.withResolvers<void>();
+  const bodies: string[] = [];
+  try {
+    for (const name of ['first', 'second']) host.ctx.tools.register({ ...defineContentToolFixture({ name,
+      description: 'Synthetic parallel mixed stream', parameters: { amount: { type: 'number' } }, execute: async () => {
+        if (name === 'first') await secondDone.promise;
+        bodies.push(name); if (name === 'second') secondDone.resolve(); adapter.chunks = undefined;
+        return [{ type: 'text', text: name + '合成结果。' }];
+      } }), isConcurrencySafe: () => true });
+    handle.agent.followup(user('mixed-parallel-input', '合成：交错参数与并行执行。'));
+    await handle.agent.whenIdle();
+    assert.deepEqual(host.errors, []); assert.deepEqual(bodies, ['second', 'first']);
+    assert.deepEqual(handle.agent.session.snapshotEvents().filter(value => value.type === 'tool/result').map(value => value.data.message.toolCallId), [first, second]);
+  } finally { secondDone.resolve(); await handle.dispose(); await host.close(); }
+});
+
+test('trusted recovery creates one durable read-only continuation without replaying the failed tool',
+    { skip: Reflect.get(ToolRuntime, 'evernookRecoveryVersion') !== 1 }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, false, false, { toolPublication: true });
+  const source = await host.create('recovery-source');
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))", host.config.config, owner], { cwd: checkout });
+  let failCompletion = true;
+  const control = (input: Record<string, unknown>) => {
+    if (input.action === 'complete' && failCompletion) { failCompletion = false; return Promise.reject(new Error('synthetic completion receipt lost')); }
+    return runLocalCli(host.config, owner, 'host-recovery', input);
+  };
+  const recovery = await createRecovery(host.ctx, host.config, control);
+  let effects = 0;
+  let fresh: Awaited<ReturnType<typeof createRecovery>> | undefined;
+  let resumed: Awaited<ReturnType<typeof host.ctx.agents.resume>> | undefined;
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic recovery side effect',
+      parameters: { amount: { type: 'number' } }, execute: async () => { effects++; return [{ type: 'text', text: '合成副作用已经发生一次。' }]; } }));
+    host.ctx.on('evernook/tools/before-publish', async exec => {
+      if (exec.agent?.session.id === source.agent.session.id) throw new Error('synthetic lost publication after a real capture');
+    });
+    source.agent.followup(user('recovery-input', '合成任务：操作一次，然后核对证据。'));
+    await source.agent.whenIdle();
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    const original = source.agent.session.snapshotEvents();
+    const view = await recovery.read(String(source.agent.session.id));
+    assert.equal(view.blocked, true); assert.equal(view.calls[0].result, 'complete');
+    assert.ok(view.evidence.some(value => value.phase === 'input'));
+    const preview = await recovery.preview(String(source.agent.session.id));
+    await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint), /synthetic completion receipt lost/);
+    const persisted = await host.ctx.sessionPersistence.open(SessionId(preview.target_session), 'read');
+    try { assert.ok((await persisted.read()).events.some(value => pluginRecordOf(value)?.type === 'plugin:dsh-evernook/recovery-readonly')); }
+    finally { await persisted.close(); }
+    const results = await Promise.all([0, 1].map(() => recovery.confirm(view.session_id, String(preview.proposal_id), view.fingerprint)));
+    assert.deepEqual(results[0], results[1]); assert.equal(results[0].state, 'complete');
+    assert.equal(effects, 1); assert.equal(adapter.requests.length, 1);
+    assert.deepEqual(source.agent.session.snapshotEvents(), original);
+    await recovery.close(); fresh = await createRecovery(host.ctx, host.config, control);
+    const repeated = await fresh.preview(view.session_id);
+    assert.equal((await fresh.confirm(view.session_id, String(repeated.proposal_id), view.fingerprint)).target_session, results[0].target_session);
+    const ownedTarget = await host.ctx.sessionPersistence.open(SessionId(results[0].target_session), 'write');
+    try {
+      assert.equal((await fresh.confirm(view.session_id, preview.proposal_id, view.fingerprint)).target_session, results[0].target_session,
+        'Reading a completed recovery receipt must not compete for the target writer lease');
+    } finally { await ownedTarget.close(); }
+    resumed = await host.ctx.agents.resume({ resumeSessionId: SessionId(results[0].target_session), agentOptions: { provider: 'synthetic', model: 'local-test' } });
+    assert.equal(adapter.requests.length, 1, 'Creating and resuming an empty recovery never invokes the provider');
+    resumed.agent.followup(user('recovery-discussion', '只讨论已经保存的证据，不做任何操作。'));
+    await resumed.agent.whenIdle();
+    assert.equal(adapter.requests.length, 2);
+    assert.match(JSON.stringify(adapter.requests.at(-1)), /untrusted_read_only_recovery/);
+    assert.match(JSON.stringify(adapter.requests.at(-1)), /合成副作用已经发生一次/);
+    assert.equal(effects, 1);
+    await host.memory.close();
+    const denied = await host.ctx.tools.execute({ callId: ToolCallId('different-identity-after-unload'),
+      name: 'synthetic-tool', arguments: { amount: 37.5 }, agent: resumed.agent, signal: AbortSignal.timeout(5000) });
+    assert.equal(denied.isError, true); assert.equal(denied.error?.info?.code, 'EVERNOOK_RECOVERY_READ_ONLY');
+    assert.equal(effects, 1);
+  } finally { await resumed?.dispose(); await fresh?.close(); await recovery.close(); await source.dispose(); await host.close(); }
+});
+
+for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-suppressed', 'missing-target', 'invalid-target']) test(`trusted recovery handles ${failure} without replaying side effects`,
+    { skip: Reflect.get(ToolRuntime, 'evernookRecoveryVersion') !== 1 }, async () => {
+  const adapter = new Synthetic(); adapter.toolOnce = true;
+  const host = await boot(adapter, failure === 'counter-suppressed', false, { toolPublication: true });
+  const source = await host.create('recovery-' + failure);
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import pair_client; c=Path(sys.argv[1]); pair_client(c,client_id='synthetic-owner',entry='owner',access_path=Path(sys.argv[2]))", host.config.config, owner], { cwd: checkout });
+  const recovery = await createRecovery(host.ctx, host.config, input => runLocalCli(host.config, owner, 'host-recovery', input));
+  const started = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  let effects = 0;
+  let resumed: Awaited<ReturnType<typeof host.ctx.agents.resume>> | undefined;
+  function suppress(id: string) {
+    execFileSync(python!, ['-c', "import sys; from pathlib import Path; from evernook import MemoryRuntime,Event,Source,Change; r=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); c=r.submit(a,Event(Source('owner','synthetic-review','main','confirmation'),'user',1,None,'complete','合成确认停止召回结果')); r.change(a,Change('suppress-reviewed-result',sys.argv[3],1,'suppress',c.message_id,'synthetic confirmation'))", host.config.config, owner, id], { cwd: checkout });
+  }
+  try {
+    host.ctx.tools.register(defineContentToolFixture({ name: 'synthetic-tool', description: 'Synthetic recovery failure cases',
+      parameters: { amount: { type: 'number' } }, execute: async () => {
+        effects++; started.resolve(); if (failure === 'active') await release.promise;
+        return [{ type: 'text', text: failure === 'protected' ? 'password=synthetic-unpublished-recovery-secret' : '合成待核对结果。' }];
+      } }));
+    host.ctx.on('evernook/tools/before-publish', async exec => {
+      if (exec.agent?.session.id === source.agent.session.id) throw new Error('synthetic blocked publication');
+    });
+    source.agent.followup(user('recovery-failure-input', '合成：只执行一次。'));
+    if (failure === 'active') {
+      await started.promise;
+      await assert.rejects(recovery.read(String(source.agent.session.id)), /evernook:recovery_busy/);
+      release.resolve();
+    }
+    await source.agent.whenIdle();
+    const view = await recovery.read(String(source.agent.session.id));
+    assert.doesNotMatch(JSON.stringify(view), /synthetic-unpublished-recovery-secret/);
+    if (failure === 'protected') assert.equal(view.calls[0].result, 'unconfirmed');
+    const preview = await recovery.preview(view.session_id);
+    if (failure === 'stale') suppress(view.evidence.find(item => item.phase === 'result')!.message_id);
+    if (failure === 'canceled') await recovery.cancel(preview.proposal_id);
+    if (failure === 'stale' || failure === 'canceled') {
+      await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint),
+        failure === 'stale' ? /evernook:recovery_stale/ : /evernook:recovery_canceled/);
+      await assert.rejects(host.ctx.sessionPersistence.open(SessionId(preview.target_session), 'read'));
+    } else {
+      const result = await recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint);
+      if (failure === 'missing-target' || failure === 'invalid-target') {
+        const files = (await readdir(join(host.root, 'sessions'), { recursive: true }))
+          .filter(path => path.split(/[\\/]/).includes(result.target_session) && path.endsWith('session.v4.jsonl'));
+        assert.equal(files.length, 1);
+        const file = join(host.root, 'sessions', files[0]);
+        const original = await readFile(file);
+        try {
+          if (failure === 'missing-target') await rename(file, file + '.withheld');
+          else {
+            const rows = original.toString('utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+            const marker = rows.find(row => row.type === 'plugin:dsh-evernook/recovery-readonly'); assert.ok(marker);
+            marker.data.fingerprint = '0'.repeat(64);
+            await writeFile(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+          }
+          await assert.rejects(recovery.confirm(view.session_id, preview.proposal_id, view.fingerprint),
+            failure === 'missing-target' ? /recovery_target_unavailable/ : /invalid_recovery_target/);
+        } finally {
+          if (failure === 'missing-target') await rename(file + '.withheld', file);
+          else await writeFile(file, original);
+        }
+      }
+      assert.equal(result.read_only, true);
+      if (failure === 'counter-suppressed') {
+        const counter = host.config.memoryBudget!.countRequest;
+        let changed = false;
+        host.config.memoryBudget!.countRequest = request => {
+          if (!changed && JSON.stringify(request).includes('untrusted_read_only_recovery')) {
+            changed = true; suppress(view.evidence.find(item => item.phase === 'result')!.message_id);
+          }
+          return counter(request);
+        };
+        resumed = await host.ctx.agents.resume({ resumeSessionId: SessionId(result.target_session), agentOptions: { provider: 'synthetic', model: 'local-test' } });
+        resumed.agent.followup(user('review-counter-input', '只读讨论证据。'));
+        await resumed.agent.whenIdle();
+        assert.equal(changed, true);
+      }
+    }
+    assert.equal(adapter.requests.length, 1);
+    assert.equal(effects, 1);
+  } finally { release.resolve(); await resumed?.dispose(); await recovery.close(); await source.dispose(); await host.close(); }
+});
+
+test('independent service carries real dsh save recall search and survives adapter closure', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, true, true, { service: true });
+  t.after(() => host.close());
+  const reader = new MemoryClient(host.config); await reader.connect();
+  t.after(() => reader.close());
+  const first = await host.create('service-first'); t.after(() => first.dispose());
+  first.agent.followup(user('service-one', 'hello world'));
+  await first.agent.whenIdle();
+  const earlier = host.memory.status(SessionId('service-first')).latest_input!;
+  assert.equal((await reader.read(earlier.message_id)).event.text, 'hello world');
+  const found = await reader.call<{ hits: { message_id: string }[] }>('search',
+    { query: 'hello world', mode: 'exact' });
+  assert.ok(found.hits.some(hit => hit.message_id === earlier.message_id));
+  const second = await host.create('service-second'); t.after(() => second.dispose());
+  second.agent.followup(user('service-two', 'hello world'));
+  await second.agent.whenIdle();
+  const request = adapter.requests.at(-1)!;
+  assert.ok(JSON.stringify(request).includes(earlier.message_id));
+  assert.deepEqual(host.errors, []);
+  await host.memory.close();
+  const status = await reader.call<{ service: { independent: boolean } }>('status', {});
+  assert.equal(status.service.independent, true);
+  assert.equal((await reader.read(earlier.message_id)).event.text, 'hello world');
+});
+
+test('web service page corrects and suppresses evidence used by fresh native dsh sessions', async t => {
+  const adapter = new Synthetic();
+  const host = await boot(adapter, false, true, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  host.ctx.provide('connection', { fetch: { register: () => () => {} } });
+  const web = await installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' });
+  t.after(() => web.close());
+  const reader = new MemoryClient({ ...host.config, serviceRequired: true }); await reader.connect();
+  t.after(() => reader.close());
+  const first = await host.create('web-service-first'); t.after(() => first.dispose());
+  first.agent.followup(user('web-service-one', 'hello original world')); await first.agent.whenIdle();
+  const originalPage = await reader.call<{ hits: { message_id: string; role: string }[] }>('search',
+    { query: 'hello original world', mode: 'exact' });
+  const original = { hits: originalPage.hits.filter(hit => hit.role === 'user') };
+  assert.equal(original.hits.length, 1);
+  let csrf = '';
+  async function page(input: Record<string, unknown>) {
+    const response = await web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+      method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+        'content-type': 'application/json', ...(csrf ? { 'x-evernook-csrf': csrf } : {}) },
+      body: JSON.stringify(input) }));
+    const body = await response.json() as Record<string, any>;
+    assert.equal(response.status, 200, JSON.stringify(body));
+    return body;
+  }
+  const bootstrap = await page({ action: 'bootstrap' }); csrf = bootstrap.csrf;
+  async function confirm(operation: Record<string, unknown>) {
+    const preview = await page({ action: 'preview', operation });
+    return page({ action: 'confirm', proposal_id: preview.result.proposal_id, operation });
+  }
+  await confirm({ kind: 'source_correct', message_id: original.hits[0].message_id, text: 'hello changed world' });
+  const corrected = await reader.call<{ hits: { message_id: string }[] }>('search',
+    { query: 'hello changed world', mode: 'exact' });
+  assert.equal(corrected.hits.length, 1);
+  const second = await host.create('web-service-second'); t.after(() => second.dispose());
+  second.agent.followup(user('web-service-two', 'hello changed world')); await second.agent.whenIdle();
+  assert.ok(JSON.stringify(adapter.requests.at(-1)).includes(corrected.hits[0].message_id));
+  await confirm({ kind: 'source_suppress', message_id: corrected.hits[0].message_id });
+  const third = await host.create('web-service-third'); t.after(() => third.dispose());
+  third.agent.followup(user('web-service-three', 'hello changed world')); await third.agent.whenIdle();
+  assert.ok(!JSON.stringify(adapter.requests.at(-1)).includes(corrected.hits[0].message_id));
+  assert.deepEqual(host.errors, []);
+});
+
+test('web service startup rejects an ordinary identity missing capture', async t => {
+  const host = await boot(new Synthetic(), false, false, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  const owner = join(host.root, 'memory/mcp-access-owner.json');
+  execFileSync(python!, ['-B', '-m', 'evernook.cli', 'service-pair', '--config', host.config.config,
+    '--access', owner, '--client-id', 'synthetic-dsh', '--entry', 'dsh', '--scopes', 'recall'], { cwd: checkout });
+  await assert.rejects(installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: owner, entry: 'dsh', streamMode: 'durable_text' }),
+    /invalid_maintenance_identity/);
 });

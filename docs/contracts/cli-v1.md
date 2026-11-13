@@ -1,5 +1,7 @@
 # 本地 CLI v1
 
+`host-recovery --config <runtime.json> --access <maintenance-access.json>` 接收严格 JSON stdin，提供 `preview/confirm/cancel/complete` 的持久核对回执。仅可信宿主可调用，身份须 recall/maintain/accept；不作为模型工具，不自行执行工具或创建宿主会话。目标会话持久化由已打补丁的宿主完成，Core 的 confirmed/complete 分别表示授权与完成回执，不能混为同一事务。输入、幂等、取消和验证边界见[只读续接](../reports/dsh-tool-recovery.md)。
+
 对应 [Issue #30](https://github.com/destinyTaoTao/evernook/issues/30)。CLI 是可信本机操作端，复用 [Python 核心契约](python-text-v1.md)，不增加数据库、网络服务、保险库或自动采集/注入。仍只支持 Python 3.14、Windows 本机固定 NTFS。
 
 ## 安装与初始化
@@ -27,11 +29,29 @@ evernook pair --config E:\evernook-lab\synthetic-cli-data\runtime.json --client-
 | `capture-chunk` / `read-stream` | `--config --access`；stdin 为分块或来源分页参数 | [提交后可发布片段与明确未完成状态](durable-stream-v1.md) |
 | `status` | `--config --access` | 核心能力、账本数量、词法水位、消费者未运行状态 |
 | `refresh-index` / `rebuild-index` | `--config --access` | 一批最多 100 条的词法维护结果 |
+| `refresh-index-window` | `--config --access`；可选`--limit`（默认5000）、`--budget-seconds`（默认120） | maintain身份的显式有界补跑，返回实际全局LexicalStatus |
+| `prepare-search-acceleration` / `remove-search-acceleration` | `--config --access`；身份须 maintain | 显式创建/移除可选覆盖索引，返回 `{ "enabled": true/false }` |
+| `prepare-lexical-id-acceleration` / `remove-lexical-id-acceleration` | `--config --access`；身份须 maintain | 显式重建/反向恢复可选FTS ID索引，返回 `{ "enabled": true/false }` |
 | `recall` | `--config --access`；可选 `--embedding-config`；stdin 查询 JSON | [词法/语义融合与自适应近期证据](semantic-v1.md) |
 | `refresh-semantic` / `semantic-status` | `--config --access`；可选 `--embedding-config` | 当前模型空间的一批最多 16 个片段维护或覆盖状态 |
 | `backup-init/create/restore/retain` | 本地路径及必要归档身份；口令仅真实 TTY 隐藏输入 | [认证加密备份、受控恢复与保留](encrypted-backup-v1.md)，不自动注册计划 |
 
 `rebuild-index` 先重置派生索引，再处理首批；`pending_messages > 0` 时继续运行 `refresh-index`，不要反复执行重建。维护成功返回不等于全库已经追平，必须读取 `state/pending_messages`。操作期间原文仍遵守既有提交与过滤语义。
+
+Core0.1.10候选增加`refresh-index-window`：一次选取最多5000个候选ID，每组最多加载100条原文、复核后续组权限，仍逐条提交；复用候选选取并仅在结束时统计全局状态，减少大账本每100条重复扫描的开销。`--limit`范围1–5000；`--budget-seconds`为(0,120]的软预算，过期后不开始下一条写入，当前SQL/事务和最终统计可能超出。返回behind表示仍有缺口，应核对后再显式补跑；没有自动创建可选覆盖索引、清空原文或开放模型工具。原`refresh-index/rebuild-index`限制不变。
+
+Core0.1.11候选另增可选FTS ID加速，`status.result.lexical_id_acceleration`独立披露受支持的新格式。启停会在写事务内重建派生FTS，要求暂停采集的维护窗口和额外磁盘空间，保留rowid/内容/版本元数据与原文；失败后先核对状态，不自动重试。没有启动/查询自动迁移或新增MCP工具；旧库/未启用继续原路径。`rebuild-index`仍恢复原格式并清空派生覆盖，加速须之后再次显式启用；移除不保证文件缩小。冲突/参数错误与兼容边界见[词法契约](lexical-v1.md#可选fts消息id加速core0111候选)。
+
+```powershell
+evernook refresh-index-window --config E:\evernook-lab\synthetic-cli-data\runtime.json --access E:\evernook-lab\synthetic-cli-data\mcp-access-owner.json --limit 5000 --budget-seconds 120
+```
+
+Core0.1.7增加可选词法加速；`status.result.lexical_acceleration`披露是否识别到当前受支持的覆盖索引。旧库启动、普通查询和`refresh-index`均不自动创建该索引；只由可信本地维护命令显式启停，不作为MCP模型工具。创建可能暂时阻塞写入并增加数据库已用空间，建议在采集暂停的维护窗口执行。它不补建FTS、不改变存储版本5、原文、来源控制或准入门槛；索引存在时，查询在同一读快照内使用仅含ID/received的内存临时集合，连接关闭即销毁。缺失或不匹配时保留原路径；同名异构对象不会被覆盖或移除，而是报告`lexical_acceleration_conflict`。提交前SQL异常的回归核对DDL已回滚；真实存储错误应先读取status核对当前状态，不自动重试构建。移除索引不删除证据，也不承诺数据库文件自动缩小。
+
+```powershell
+evernook prepare-search-acceleration --config E:\evernook-lab\synthetic-cli-data\runtime.json --access E:\evernook-lab\synthetic-cli-data\mcp-access-owner.json
+evernook remove-search-acceleration --config E:\evernook-lab\synthetic-cli-data\runtime.json --access E:\evernook-lab\synthetic-cli-data\mcp-access-owner.json
+```
 
 保存与查询正文不接受命令行参数，使用 **严格 UTF-8 的 stdin 单个 JSON 对象并以 EOF 结束**；拒绝重复键、未知参数、错误类型和超过 8 MiB 的线上输入。核心仍限制单条文本最多 1 MiB UTF-8；线上上限为 JSON 转义预留空间，不放宽核心限制。stdin 不做换行归一化；原话中的换行、emoji、组合字符按 JSON 内容原样保存。
 
@@ -51,6 +71,8 @@ evernook status --config E:\evernook-lab\synthetic-cli-data\runtime.json --acces
 查询 stdin 形如 `{"query":"乌龙茶","mode":"exact","limit":10}`，可选 `since/until/offset` 同[词法契约](lexical-v1.md)。检索是字面匹配、按既有时间顺序分页，不是语义或最新/最相关排序。重复保存必须复用完全相同的来源和内容；不根据文本相同合并真实事件。
 
 成功 stdout 为一行 UTF-8 `{"contract_version":1,"ok":true,"result":...}`，退出码 0；失败为 `{"contract_version":1,"ok":false,"error":{"code":"..."}}`，退出码 1。帮助信息除外。错误不回显正文、命令参数、访问 token 或异常栈；未知本地异常为 `local_operation_failed`，参数/JSON 形状错误为 `invalid_arguments`，非法 UTF-8 为 `invalid_encoding`。核心错误码和未保存状态原样保留。
+
+可选覆盖检查点提供`prepare-search-checkpoint/remove-search-checkpoint`，以及`refresh-search-checkpoint --limit 1..5000`，均要求maintain且不作为模型工具。须先显式`prepare-lexical-id-acceleration`；构建/停用返回`enabled`，整理返回`processed`和当前有效状态。默认不创建派生结构；status新增`lexical_checkpoint`，只表示守卫有效，不表示已经解除触发器写入依赖或每次查询都使用加速。格式、失效回退、维护窗口和新增原文保存依赖见[词法检查点契约](lexical-v1.md#可选覆盖检查点core0113接入候选默认关闭)。
 
 ## 安全与接入边界
 

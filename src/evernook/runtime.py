@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -34,11 +35,26 @@ if TYPE_CHECKING:
 
 
 _RECALLABLE = "NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
-_LEXICAL_INDEXED = f"""SELECT d.message_id FROM lexical_docs d
-    JOIN messages original ON original.id=d.message_id
+_MEMORY_EVIDENCE = """NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id
+    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'
+    AND json_extract(generated.manifest,'$.kind')='tool_result')"""
+_LEXICAL_CURRENT = f"""d.normalization_version={NORMALIZATION_IDENTITY}
+      AND d.content_version=json_extract(messages.receipt,'$.content_version')"""
+_LEXICAL_VALID_ROWS = f"""FROM lexical_docs d
+    JOIN messages ON messages.id=d.message_id
     JOIN (SELECT DISTINCT message_id FROM lexical) tokens ON tokens.message_id=d.message_id
-    WHERE d.normalization_version={NORMALIZATION_IDENTITY}
-      AND d.content_version=json_extract(original.receipt,'$.content_version')"""
+    WHERE {_LEXICAL_CURRENT}"""
+_LEXICAL_INDEXED = f"SELECT d.message_id {_LEXICAL_VALID_ROWS}"
+_LEXICAL_ACCELERATION_INDEX = "evernook_message_cover_v1"
+_LEXICAL_ACCELERATION_SQL = (f"CREATE INDEX {_LEXICAL_ACCELERATION_INDEX} ON "
+    "messages(id,received,json_extract(receipt,'$.content_version'))")
+_LEXICAL_ACCELERATED_ROWS = f"""FROM lexical_docs d
+    JOIN messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX} ON messages.id=d.message_id
+    JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id
+    WHERE {_LEXICAL_CURRENT}"""
+_LEXICAL_ROWID_CACHE_LIMIT = 100_000
+_LEXICAL_QUERY_CANDIDATE_LIMIT = 4096
+_LEXICAL_ID_BUILD = "evernook_lexical_id_build_v1"
 
 
 def _json(value: object) -> str:
@@ -205,14 +221,14 @@ def _atomic_json(path: Path, value: object) -> None:
 
 
 def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: Path,
-                scopes: tuple[str, ...] | None = None) -> Access:
+                scopes: tuple[str, ...] | None = None, service_owner: bool = False) -> Access:
     """Trusted local provisioning only. This operation is never exposed as an MCP tool."""
     _identifier(client_id)
     _identifier(entry)
     if scopes is not None:
         if not isinstance(scopes, tuple) or any(not isinstance(item, str) or item not in SCOPES for item in scopes):
             raise MemoryFailure("invalid_scopes")
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     access_path = external(access_path)
     if access_path.parent != runtime.root or not access_path.name.startswith("mcp-access") or access_path.suffix != ".json":
         raise MemoryFailure("invalid_access_location")
@@ -268,9 +284,9 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
     return access
 
 
-def unlock_pairing(config_path: Path) -> dict[str, object]:
+def unlock_pairing(config_path: Path, *, service_owner: bool = False) -> dict[str, object]:
     """Trusted local reset of the pairing lockout; recorded in the audit log."""
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
         _pairing_schema(db)
@@ -280,10 +296,10 @@ def unlock_pairing(config_path: Path) -> dict[str, object]:
     return {"unlocked": True}
 
 
-def configure_lockout(config_path: Path, *, failure_limit: int) -> dict[str, object]:
+def configure_lockout(config_path: Path, *, failure_limit: int, service_owner: bool = False) -> dict[str, object]:
     if type(failure_limit) is not int or not 1 <= failure_limit <= 100:
         raise MemoryFailure("invalid_lockout_config")
-    runtime = MemoryRuntime(config_path)
+    runtime = MemoryRuntime(config_path, service_owner=service_owner)
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
         _pairing_schema(db)
@@ -345,11 +361,17 @@ def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: 
 
 
 class MemoryRuntime:
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, *, service_owner: bool = False):
+        self._service_owner = service_owner
         config_path = external(config_path)
         config = _load(config_path)
-        if set(config) != {"schema_version", "data_dir", "busy_timeout_ms"} or type(config["schema_version"]) is not int or config["schema_version"] != 1:
+        base_keys = {"schema_version", "data_dir", "busy_timeout_ms"}
+        if set(config) not in (base_keys, base_keys | {"service_mode"}) or type(config["schema_version"]) is not int or config["schema_version"] != 1:
             raise MemoryFailure("unsupported_config")
+        if "service_mode" in config and config["service_mode"] is not True:
+            raise MemoryFailure("unsupported_config")
+        if config.get("service_mode") and not service_owner:
+            raise MemoryFailure("service_required")
         if not isinstance(config["data_dir"], str) or type(config["busy_timeout_ms"]) is not int or not 0 <= config["busy_timeout_ms"] <= 30000:
             raise MemoryFailure("invalid_config")
         self.root = external(Path(config["data_dir"]))
@@ -383,6 +405,13 @@ class MemoryRuntime:
                 if stored_id is not None:
                     if not hmac.compare_digest(str(stored_id[0]), ledger_id):
                         raise MemoryFailure("ledger_identity_mismatch")
+                    if 'topic_view_clock_v1' in present:
+                        from .topic_view_clock import install as install_topic_clock, ready as topic_clock_ready
+                        if not topic_clock_ready(db):
+                            db.execute('ROLLBACK')
+                            db.execute('BEGIN IMMEDIATE')
+                            install_topic_clock(db)
+                            db.execute('COMMIT')
                     return
             db.execute("ROLLBACK")
             db.execute("PRAGMA journal_mode=WAL")
@@ -423,8 +452,15 @@ class MemoryRuntime:
             db.execute("COMMIT")
             from .durable_stream import install as install_streams
             install_streams(db)
+            # Archives omit executable SQL; active runtimes reinstall only our exact owned clock.
+            from .topic_view_clock import install as install_topic_clock
+            db.execute('BEGIN IMMEDIATE')
+            install_topic_clock(db)
+            db.execute('COMMIT')
 
     def _authorize(self, access: Access) -> _Identity:
+        if not self._service_owner and _load(self.root / "runtime.json").get("service_mode"):
+            raise MemoryFailure("service_required")
         if not isinstance(access, Access):
             raise MemoryFailure("unauthorized")
         if type(access.contract_version) is not int or access.contract_version != 1:
@@ -513,7 +549,17 @@ class MemoryRuntime:
         return access
 
     @contextmanager
-    def _connection(self, *, check: Callable[[], object] | None = None) -> Iterator[sqlite3.Connection]:
+    def _connection(self, *, check: Callable[[], float] | None = None,
+                    ownership_exclusive: bool = False) -> Iterator[sqlite3.Connection]:
+        from .service_gate import ownership_gate
+        with ownership_gate(self.root, exclusive=ownership_exclusive, timeout=self._timeout, check=check):
+            if not self._service_owner and _load(self.root / "runtime.json").get("service_mode"):
+                raise MemoryFailure("service_required")
+            with self._unguarded_connection(check=check) as connection:
+                yield connection
+
+    @contextmanager
+    def _unguarded_connection(self, *, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
         connection: sqlite3.Connection | None = None
         interrupted: list[MemoryFailure] = []
         try:
@@ -531,7 +577,22 @@ class MemoryRuntime:
                         return 1
                 connection.set_progress_handler(progress, 1000)
             connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute("PRAGMA synchronous=FULL")
+            setup_deadline = time.monotonic() + self._timeout
+            while True:
+                if check is not None:
+                    check()
+                try:
+                    connection.execute("PRAGMA synchronous=FULL")
+                    break
+                except sqlite3.OperationalError as error:
+                    # Cancellable readers use timeout=0. Even this connection-local
+                    # setting can meet a short WAL lock; wait only before yielding.
+                    if check is None or (error.sqlite_errorcode & 255) != sqlite3.SQLITE_BUSY:
+                        raise
+                    remaining = min(check(), setup_deadline - time.monotonic())
+                    if remaining <= 0:
+                        raise
+                    time.sleep(min(.01, remaining))
             yield connection
             if interrupted:
                 raise interrupted[0]
@@ -778,36 +839,41 @@ class MemoryRuntime:
             _identifier(value)
         if not request.reason.strip() or not isinstance(request.action, str) or request.action not in {"correct", "revoke", "suppress"}:
             raise MemoryFailure("invalid_change")
-        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT fingerprint,receipt FROM changes WHERE request_id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("change_conflict")
-                return MessageState(**json.loads(existing["receipt"]))
-            current = self._state(db, request.target_id)
-            if current.version != request.expected_version:
-                raise MemoryFailure("version_conflict")
-            if current.status == "purged":
-                # Phase-1 purge scope is frozen: no change may relabel a target already marked purged.
-                raise MemoryFailure("not_recallable")
-            evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
-            if evidence_row is None or request.evidence_id == request.target_id:
-                raise MemoryFailure("insufficient_evidence")
-            evidence = self._stored(evidence_row)
-            if (evidence.event.role != "user" or evidence.event.completion != "complete"
-                    or not evidence.event.text.strip() or not evidence.receipt.original_saved
-                    or self._state(db, request.evidence_id).status != "active"):
-                raise MemoryFailure("insufficient_evidence")
-            state = MessageState(current.message_id, current.version + 1,
-                {"correct": "corrected", "revoke": "revoked", "suppress": "suppressed"}[request.action],
-                request.evidence_id if request.action == "correct" else None, request.request_id)
-            db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (request.request_id, request.target_id,
-                request.evidence_id, fingerprint, _json(asdict(request)), _json(asdict(state)), datetime.now(timezone.utc).isoformat()))
-            db.execute("INSERT INTO visibility VALUES (?,?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET version=excluded.version, status=excluded.status, replacement_id=excluded.replacement_id, change_id=excluded.change_id",
-                       (state.message_id, state.version, state.status, state.replacement_id, state.change_id))
+            state = self._change(db, request)
             db.execute("COMMIT")
+        return state
+
+    def _change(self, db: sqlite3.Connection, request: Change) -> MessageState:
+        """Apply a validated change in the caller's transaction (also used by trusted UI confirmation)."""
+        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
+        existing = db.execute("SELECT fingerprint,receipt FROM changes WHERE request_id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("change_conflict")
+            return MessageState(**json.loads(existing["receipt"]))
+        current = self._state(db, request.target_id)
+        if current.version != request.expected_version:
+            raise MemoryFailure("version_conflict")
+        if current.status == "purged":
+            # Phase-1 purge scope is frozen: no change may relabel a target already marked purged.
+            raise MemoryFailure("not_recallable")
+        evidence_row = db.execute("SELECT event,receipt FROM messages WHERE id=?", (request.evidence_id,)).fetchone()
+        if evidence_row is None or request.evidence_id == request.target_id:
+            raise MemoryFailure("insufficient_evidence")
+        evidence = self._stored(evidence_row)
+        if (evidence.event.role != "user" or evidence.event.completion != "complete"
+                or not evidence.event.text.strip() or not evidence.receipt.original_saved
+                or self._state(db, request.evidence_id).status != "active"):
+            raise MemoryFailure("insufficient_evidence")
+        state = MessageState(current.message_id, current.version + 1,
+            {"correct": "corrected", "revoke": "revoked", "suppress": "suppressed"}[request.action],
+            request.evidence_id if request.action == "correct" else None, request.request_id)
+        db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (request.request_id, request.target_id,
+            request.evidence_id, fingerprint, _json(asdict(request)), _json(asdict(state)), datetime.now(timezone.utc).isoformat()))
+        db.execute("INSERT INTO visibility VALUES (?,?,?,?,?) ON CONFLICT(message_id) DO UPDATE SET version=excluded.version, status=excluded.status, replacement_id=excluded.replacement_id, change_id=excluded.change_id",
+                   (state.message_id, state.version, state.status, state.replacement_id, state.change_id))
         return state
 
     def review_archive(self, access: Access, message_id: str) -> ArchiveView:
@@ -1059,8 +1125,10 @@ class MemoryRuntime:
 
     def search(self, access: Access, query: str, *, mode: str = "lexical", since: str | None = None,
                until: str | None = None, limit: int = 10, offset: int = 0, timeout: float = 30,
-               cancel: threading.Event | None = None, current_input_id: str | None = None) -> SearchPage:
+               cancel: threading.Event | None = None, current_input_id: str | None = None, memory_evidence_only: bool = False) -> SearchPage:
         self._require_scope(access, "recall", "search")
+        if type(memory_evidence_only) is not bool:
+            raise MemoryFailure('invalid_arguments')
         if current_input_id is not None:
             _identifier(current_input_id)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
@@ -1091,21 +1159,71 @@ class MemoryRuntime:
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
             raise MemoryFailure("invalid_time_range")
+        recallable = _RECALLABLE + (' AND ' + _MEMORY_EVIDENCE if memory_evidence_only else '')
         with self._connection(check=budget) as db:
             db.execute("BEGIN")
-            status = self._lexical_status(db)
-            base = f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
-                FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {_RECALLABLE}
+            from .lexical_checkpoint import search_state
+            checkpoint = search_state(db, budget)
+            if checkpoint is None:
+                status, indexed_query = self._search_index(db, budget)
+            else:
+                status, indexed_query = checkpoint.status, checkpoint.valid_query
+            scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {recallable}
                   AND (? IS NULL OR messages.id<>?)"""
+            base = "SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version " + scope
             order = " ORDER BY occurred,received,messages.id"
             parameters: tuple[object, ...] = (start, start, end, end, current_input_id, current_input_id)
             used_index = status.state in {"ready", "behind"}
             reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
             try:
-                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR messages.id NOT IN ({_LEXICAL_INDEXED}))" if used_index else ""
-                hits = self._search_hits(db, base + condition + order,
-                    parameters + (query_expression(words),) if used_index else parameters, words, limit, offset, check=budget)
+                pending = (f"messages.id IN ({checkpoint.pending_query})" if checkpoint is not None
+                    else f"messages.id NOT IN ({indexed_query})")
+                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR {pending})" if used_index else ""
+                search_parameters = parameters + (query_expression(words),) if used_index else parameters
+                large_candidates = False
+                if status.state == "ready" or checkpoint is not None:
+                    # A small complete candidate set avoids scanning every source as pending.
+                    # Large matches retain the ordered-source path so popular queries can stop early.
+                    available = db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters)
+                    candidate_limit = min(_LEXICAL_QUERY_CANDIDATE_LIMIT,
+                        available // (2 if status.state != "ready" else 1))
+                    if candidate_limit > 0:
+                        candidates = []
+                        for row in db.execute("SELECT message_id FROM lexical WHERE lexical MATCH ? LIMIT ?",
+                                (query_expression(words), candidate_limit + 1)):
+                            budget()
+                            candidates.append(row[0])
+                        unindexed = []
+                        if checkpoint is not None and status.state != "ready":
+                            for row in db.execute(checkpoint.pending_query + " LIMIT ?", (candidate_limit + 1,)):
+                                budget()
+                                unindexed.append(row[0])
+                        if len(candidates) <= candidate_limit and len(unindexed) <= candidate_limit:
+                            ids = tuple(dict.fromkeys(candidates + unindexed))
+                            condition = " AND messages.id IN (" + ",".join("?" for _ in ids) + ")" if ids else " AND 0"
+                            search_parameters = parameters + ids
+                        else:
+                            large_candidates = True
+                hits = []
+                if checkpoint is not None and large_candidates:
+                    ordered_scope = scope.replace("FROM messages LEFT JOIN", "FROM messages INDEXED BY message_time LEFT JOIN", 1)
+                    probe = f"""WITH evernook_checkpoint_ordered AS MATERIALIZED (
+                        SELECT messages.id,messages.occurred,messages.received {ordered_scope}
+                        ORDER BY occurred,received,messages.id LIMIT 256)
+                        SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                        FROM evernook_checkpoint_ordered candidate JOIN messages ON messages.id=candidate.id
+                        LEFT JOIN visibility v ON v.message_id=messages.id WHERE
+                        (EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH
+                            ('message_id:"'||replace(messages.id,'"','""')||'" AND ('||?||')')
+                            AND message_id=messages.id) OR {pending})
+                        ORDER BY candidate.occurred,candidate.received,candidate.id"""
+                    hits = self._search_hits(db, probe, parameters + (query_expression(words),), words, limit, offset, check=budget)
+                # A bounded lookahead proves a page only when its next hit also exists.
+                # Inconclusive probes must read the complete original candidate range.
+                if len(hits) <= limit:
+                    hits = self._search_hits(db, base + condition + order,
+                        search_parameters, words, limit, offset, check=budget)
             except sqlite3.Error:
                 budget()
                 if not used_index:
@@ -1140,18 +1258,174 @@ class MemoryRuntime:
         return hits
 
     @staticmethod
-    def _lexical_status(db: sqlite3.Connection) -> LexicalStatus:
+    def _lexical_status(db: sqlite3.Connection, *, materialized: bool = False) -> LexicalStatus:
         counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE}").fetchone()
         source = int(counts[0])
         present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name IN ('lexical','lexical_docs')")}
         if len(present) != 2:
             return LexicalStatus("not_built", source, 0, source, counts[1], None)
         try:
-            indexed = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_RECALLABLE} AND id IN ({_LEXICAL_INDEXED})").fetchone()
+            if materialized:
+                indexed = db.execute("SELECT count(*),max(received) FROM temp.evernook_search_valid_v1").fetchone()
+            else:
+                indexed = None
+                if MemoryRuntime._lexical_acceleration_valid(db):
+                    try:
+                        indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_ACCELERATED_ROWS} AND {_RECALLABLE}").fetchone()
+                    except sqlite3.Error:
+                        if not db.in_transaction:
+                            raise
+                if indexed is None:
+                    indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
         except sqlite3.Error:
             return LexicalStatus("unavailable", source, 0, source, counts[1], None)
         covered = int(indexed[0])
         return LexicalStatus("ready" if covered == source else "behind", source, covered, source - covered, counts[1], indexed[1])
+
+    @staticmethod
+    def _lexical_acceleration_valid(db: sqlite3.Connection) -> bool:
+        row = db.execute("SELECT type,tbl_name,sql FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ACCELERATION_INDEX,)).fetchone()
+        return (row is not None and row[0] == "index" and row[1] == "messages"
+            and row[2] == _LEXICAL_ACCELERATION_SQL)
+
+    def lexical_acceleration_enabled(self, access: Access) -> bool:
+        self._authorize(access)
+        with self._connection() as db:
+            return self._lexical_acceleration_valid(db)
+
+    def configure_lexical_acceleration(self, access: Access, *, enabled: bool) -> bool:
+        self._require_scope(access, "maintain", "configure_lexical_acceleration")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_acceleration")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ACCELERATION_INDEX,)).fetchone()
+            if exists and not self._lexical_acceleration_valid(db):
+                raise MemoryFailure("lexical_acceleration_conflict")
+            if enabled and not exists:
+                db.execute(_LEXICAL_ACCELERATION_SQL)
+            elif not enabled and exists:
+                db.execute(f"DROP INDEX {_LEXICAL_ACCELERATION_INDEX}")
+            db.execute("COMMIT")
+        return enabled
+
+    @staticmethod
+    def _lexical_id_format(db: sqlite3.Connection) -> bool | None:
+        row = db.execute("SELECT type,tbl_name,sql FROM sqlite_master WHERE name='lexical' COLLATE NOCASE").fetchone()
+        if row is None or row[0] != "table" or row[1] != "lexical":
+            return None
+        # Accept only definitions emitted by our original CREATE or SQLite's
+        # RENAME. Unknown tokenizers/options must never enable the MATCH path.
+        for enabled in (False, True):
+            columns = "message_id,terms" if enabled else "message_id UNINDEXED,terms"
+            if row[2] in (f"CREATE VIRTUAL TABLE lexical USING fts5({columns})",
+                          f'CREATE VIRTUAL TABLE "lexical" USING fts5({columns})'):
+                return enabled
+        return None
+
+    def lexical_id_acceleration_enabled(self, access: Access) -> bool:
+        self._authorize(access)
+        with self._connection() as db:
+            return self._lexical_id_format(db) is True
+
+    def lexical_checkpoint_enabled(self, access: Access) -> bool:
+        from .lexical_checkpoint import enabled
+        self._authorize(access)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            return enabled(db)
+
+    def configure_lexical_checkpoint(self, access: Access, *, enabled: bool) -> bool:
+        from .lexical_checkpoint import configure
+        self._require_scope(access, "maintain", "configure_lexical_checkpoint")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_checkpoint")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            result = configure(db, active=enabled)
+            db.execute("COMMIT")
+            return result
+
+    def refresh_lexical_checkpoint(self, access: Access, *, limit: int = 5000) -> int:
+        from .lexical_checkpoint import refresh
+        self._require_scope(access, "maintain", "refresh_lexical_checkpoint")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            processed = refresh(db, limit=limit)
+            db.execute("COMMIT")
+            return processed
+
+    def _lexical_maintenance_status(self, access: Access) -> LexicalStatus:
+        from .lexical_checkpoint import enabled
+        with self._connection() as db:
+            db.execute("BEGIN")
+            active = enabled(db)
+        if active:
+            try:
+                self.refresh_lexical_checkpoint(access)
+            except MemoryFailure as failure:
+                # A peer may have removed/invalidated the optional structure after
+                # the read check. The original index status remains authoritative.
+                if failure.code != "lexical_checkpoint_invalid":
+                    raise
+        return self.lexical_status(access)
+
+    def configure_lexical_id_acceleration(self, access: Access, *, enabled: bool) -> bool:
+        self._require_scope(access, "maintain", "configure_lexical_id_acceleration")
+        if type(enabled) is not bool:
+            raise MemoryFailure("invalid_lexical_id_acceleration")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='lexical' COLLATE NOCASE").fetchone()
+            current = self._lexical_id_format(db)
+            if exists and current is None:
+                raise MemoryFailure("lexical_id_acceleration_conflict")
+            if not exists and enabled:
+                self._lexical_schema(db)
+                current = False
+            if current is not None and current is not enabled:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name=? COLLATE NOCASE", (_LEXICAL_ID_BUILD,)).fetchone():
+                    raise MemoryFailure("lexical_id_acceleration_conflict")
+                columns = "message_id,terms" if enabled else "message_id UNINDEXED,terms"
+                db.execute(f"CREATE VIRTUAL TABLE {_LEXICAL_ID_BUILD} USING fts5({columns})")
+                db.execute(f"INSERT INTO {_LEXICAL_ID_BUILD}(rowid,message_id,terms) SELECT rowid,message_id,terms FROM lexical")
+                db.execute(f"INSERT INTO {_LEXICAL_ID_BUILD}({_LEXICAL_ID_BUILD},rank) VALUES('integrity-check',1)")
+                db.execute("DROP TABLE lexical")
+                db.execute(f"ALTER TABLE {_LEXICAL_ID_BUILD} RENAME TO lexical")
+            db.execute("COMMIT")
+        return enabled
+
+    def _search_index(self, db: sqlite3.Connection, check: Callable[[], object]) -> tuple[LexicalStatus, str]:
+        if not self._lexical_acceleration_valid(db):
+            return self._lexical_status(db), _LEXICAL_INDEXED
+        present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name IN ('lexical','lexical_docs')")}
+        if len(present) != 2:
+            return self._lexical_status(db), _LEXICAL_INDEXED
+        saved = False
+        try:
+            db.execute("PRAGMA temp_store=MEMORY")
+            db.execute("SAVEPOINT evernook_search_acceleration")
+            saved = True
+            db.execute("CREATE TEMP TABLE evernook_search_docs_v1 (message_id TEXT PRIMARY KEY, content_version INTEGER, normalization_version INTEGER) WITHOUT ROWID")
+            db.execute("INSERT INTO temp.evernook_search_docs_v1 SELECT message_id,content_version,normalization_version FROM lexical_docs NOT INDEXED WHERE message_id IS NOT NULL")
+            db.execute("CREATE TEMP TABLE evernook_search_valid_v1 (message_id TEXT PRIMARY KEY, received TEXT NOT NULL)")
+            rows = _LEXICAL_ACCELERATED_ROWS.replace("FROM lexical_docs d", "FROM temp.evernook_search_docs_v1 d")
+            db.execute(f"INSERT INTO temp.evernook_search_valid_v1 SELECT d.message_id,messages.received "
+                f"{rows} AND {_RECALLABLE}")
+            check()
+            status = self._lexical_status(db, materialized=True)
+            db.execute("RELEASE evernook_search_acceleration")
+            return status, "SELECT message_id FROM temp.evernook_search_valid_v1"
+        except sqlite3.Error:
+            check()
+            if not db.in_transaction:
+                raise
+            if saved:
+                db.execute("ROLLBACK TO evernook_search_acceleration")
+                db.execute("RELEASE evernook_search_acceleration")
+            return self._lexical_status(db), _LEXICAL_INDEXED
 
     def lexical_status(self, access: Access) -> LexicalStatus:
         self._authorize(access)
@@ -1166,34 +1440,141 @@ class MemoryRuntime:
             message_id TEXT PRIMARY KEY REFERENCES messages(id), content_version INTEGER NOT NULL,
             normalization_version INTEGER NOT NULL)""")
 
+    @staticmethod
+    def _lexical_pending(db: sqlite3.Connection, limit: int, *, ids_only: bool = False) -> list[sqlite3.Row]:
+        # The caller holds one read snapshot across index validation and selection.
+        if MemoryRuntime._lexical_acceleration_valid(db):
+            try:
+                selected = f"""SELECT id FROM messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX}
+                    WHERE {_RECALLABLE} AND id NOT IN (SELECT d.message_id {_LEXICAL_ACCELERATED_ROWS})
+                    ORDER BY received,id LIMIT ?"""
+                if ids_only:
+                    return db.execute(selected, (limit,)).fetchall()
+                return db.execute(f"""SELECT event,receipt FROM messages JOIN (
+                    {selected}) selected ON messages.id=selected.id
+                    ORDER BY messages.received,messages.id""", (limit,)).fetchall()
+            except sqlite3.Error:
+                if not db.in_transaction:
+                    raise
+        projection = "id" if ids_only else "event,receipt"
+        return db.execute(f"""SELECT {projection} FROM messages
+            WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+
     def refresh_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
         self._require_scope(access, "maintain", "refresh_lexical")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
+        prepared = False
         try:
             with self._connection() as db:
                 db.execute("BEGIN IMMEDIATE")
                 self._lexical_schema(db)
                 db.execute("COMMIT")
-                rows = db.execute(f"""SELECT event,receipt FROM messages
-                    WHERE {_RECALLABLE} AND id NOT IN ({_LEXICAL_INDEXED}) ORDER BY received,id LIMIT ?""", (limit,)).fetchall()
+                db.execute("BEGIN")
+                rows = self._lexical_pending(db, limit)
+                db.execute("COMMIT")
+                prepared = True
+                self._refresh_lexical_rows(db, rows)
         except MemoryFailure as error:
-            if error.code != "storage_unavailable":
+            if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
-        for row in rows:
-            message = self._stored(row)
-            terms = index_terms(message.event.text)  # Derive outside the write transaction.
+        return self._lexical_maintenance_status(access)
+
+    def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120) -> LexicalStatus:
+        self._require_scope(access, "maintain", "refresh_lexical_window")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        if type(budget_seconds) not in (int, float) or not 0 < budget_seconds <= 120:
+            raise MemoryFailure("invalid_maintenance_budget")
+        deadline = time.monotonic() + budget_seconds
+        def expired() -> bool:
+            return time.monotonic() >= deadline
+        prepared = False
+        try:
             with self._connection() as db:
                 db.execute("BEGIN IMMEDIATE")
-                current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
-                if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
-                    continue
-                db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
-                db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
-                db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+                self._lexical_schema(db)
                 db.execute("COMMIT")
-        return self.lexical_status(access)
+                db.execute("BEGIN")
+                ids = [] if expired() else [row[0] for row in self._lexical_pending(db, limit, ids_only=True)]
+                db.execute("COMMIT")
+                prepared = True
+                for offset in range(0, len(ids), 100):
+                    if expired():
+                        break
+                    if offset:
+                        self._require_scope(access, "maintain", "refresh_lexical_window")
+                    selected = ids[offset:offset+100]
+                    rows = db.execute(f"SELECT event,receipt FROM messages WHERE id IN ({','.join('?' for _ in selected)}) "
+                        f"AND {_RECALLABLE} ORDER BY received,id", selected).fetchall()
+                    if not self._refresh_lexical_rows(db, rows, expired=expired):
+                        break
+        except MemoryFailure as error:
+            if prepared or error.code != "storage_unavailable":
+                raise
+            return replace(self.lexical_status(access), state="unavailable")
+        return self._lexical_maintenance_status(access)
+
+    def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None) -> bool:
+        # Sample before the lookup, and compare only on this same connection.
+        # A peer commit invalidates the optimization, including equal-version
+        # FTS replacements or a rebuild that reuses old rowids.
+        version = int(db.execute("PRAGMA data_version").fetchone()[0])
+        rowids = self._lexical_rowids(db, rows)
+        for row in rows:
+            if expired is not None and expired():
+                return False
+            message = self._stored(row)
+            terms = index_terms(message.event.text)  # No write transaction during derivation.
+            if expired is not None and expired():
+                return False
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(f"SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}", (message.receipt.message_id,)).fetchone()
+            if current is None or current["event"] != row["event"] or current["receipt"] != row["receipt"]:
+                db.execute("ROLLBACK")
+                continue
+            if rowids is not None and int(db.execute("PRAGMA data_version").fetchone()[0]) != version:
+                rowids = None
+            if rowids is None:
+                db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
+            else:
+                db.executemany("DELETE FROM lexical WHERE rowid=? AND message_id=?",
+                    ((rowid, message.receipt.message_id) for rowid in rowids.get(message.receipt.message_id, ())))
+            db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
+            db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+            db.execute("COMMIT")
+        return True
+
+    @staticmethod
+    def _lexical_rowids(db: sqlite3.Connection, rows: list[sqlite3.Row]) -> dict[str, list[int]] | None:
+        try:
+            ids = tuple(Receipt(**json.loads(row["receipt"])).message_id for row in rows)
+        except (KeyError, TypeError, ValueError):
+            # Preserve normal source-order failures rather than parsing later bad
+            # receipts before any earlier document has been processed.
+            return None
+        if not ids:
+            return {}
+        if any(type(message_id) is not str for message_id in ids):
+            return None
+        found: dict[str, list[int]] = {}
+        try:
+            condition = f"message_id IN ({','.join('?' for _ in ids)})"
+            parameters: tuple[object, ...] = ids
+            if (MemoryRuntime._lexical_id_format(db) is True
+                    and all(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value) for value in ids)):
+                expression = " OR ".join(f'"{value}"' for value in ids)
+                condition = f"message_id MATCH ? AND {condition}"
+                parameters = (expression, *ids)
+            with closing(db.execute(f"SELECT rowid,message_id FROM lexical WHERE {condition}", parameters)) as cursor:
+                for count, row in enumerate(cursor):
+                    if count >= _LEXICAL_ROWID_CACHE_LIMIT:
+                        return None
+                    found.setdefault(row[1], []).append(int(row[0]))
+        except sqlite3.Error:
+            return None
+        return found
 
     def rebuild_lexical(self, access: Access, *, limit: int = 100) -> LexicalStatus:
         self._require_scope(access, "maintain", "rebuild_lexical")

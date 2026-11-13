@@ -7,9 +7,10 @@ from dataclasses import asdict, is_dataclass
 import json
 from pathlib import Path
 import sys
+import threading
 from typing import Any, NoReturn
 
-from .models import Change, Event, ImportantMark, MemoryFailure, Source
+from .models import Access, Change, Event, ImportantMark, MemoryFailure, Source
 from .runtime import MemoryRuntime, initialize, pair_client
 from .embedding import LocalMiniLM
 from .semantic import SemanticRecall
@@ -96,6 +97,10 @@ def _parser() -> Parser:
     backup_retain.add_argument("--apply", action="store_true")
     for name, description in (
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
+        ("service-pair", "Pair a client through the service using an existing administrator"),
+        ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
+        ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
+        ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
         ("change", "Trusted source correction, suppression or revocation using JSON stdin"),
         ("search", "Search using a JSON object from UTF-8 stdin"),
@@ -105,8 +110,17 @@ def _parser() -> Parser:
         ("state", "Read evidence visibility and version"),
         ("status", "Report core and lexical processing status"),
         ("refresh-index", "Refresh the rebuildable lexical index"),
+        ("refresh-index-window", "Trusted bounded lexical catch-up with one pending-ID window"),
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
+        ("prepare-search-acceleration", "Trusted optional covering-index build; may temporarily block writers"),
+        ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
+        ("prepare-lexical-id-acceleration", "Trusted optional FTS ID rebuild; requires a writer maintenance window"),
+        ("remove-lexical-id-acceleration", "Trusted reverse rebuild of the optional FTS ID index"),
+        ("prepare-search-checkpoint", "Trusted explicit lexical coverage checkpoint build; requires FTS ID acceleration"),
+        ("remove-search-checkpoint", "Trusted removal of the optional coverage checkpoint and tracking triggers"),
+        ("refresh-search-checkpoint", "Trusted bounded reconciliation of changed checkpoint IDs"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
+        ("context", "Build the authorized host context through the independent service"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
         ("semantic-status", "Report semantic coverage for the configured model space"),
         ("fact-decide", "Trusted source-backed fact decision using JSON stdin; never a model tool"),
@@ -114,6 +128,30 @@ def _parser() -> Parser:
         ("candidate-list", "Read a completed candidate run for trusted review using JSON stdin"),
         ("extract", "Explicit experimental offline quote selection into candidates; no fact acceptance"),
         ("extract-preferences", "Explicit conservative offline preference drafts; no automatic acceptance"),
+        ("episode-propose", "Trusted source-bound cross-session excerpt candidate; review only"),
+        ("episode-read", "Read a source-validated episode candidate with provenance"),
+        ("episode-configure", "Configure optional review-only episode candidates in background batches"),
+        ("episode-status", "Read effective episode candidate policy"),
+        ("observation-propose", "Trusted source-backed derived observation candidate"),
+        ("observation-rebind", "Explicitly remap imported evidence to current raw IDs; review only"),
+        ("observation-read", "Trusted current observation and provenance"),
+        ("observation-decide", "Explicitly publish or withdraw an observation"),
+        ("observation-split", "Atomically split a reviewed observation"),
+        ("observation-related", "Maintenance deduplication independent of QA ranking"),
+        ("observation-query", "Read currently published observations for a topic"),
+        ("observation-configure", "Configure optional finite-rule review candidates"),
+        ("observation-status", "Observation processing policy and progress"),
+        ("observation-process", "Run a bounded observation maintenance batch"),
+        ("observation-evidence", "Page through active source atoms including quarantined topics"),
+        ("reflect", "Explicit temporary read-only memory reasoning"),
+        ("reflect-configure", "Trusted opt-in to reflection freshness clocks"),
+        ("topic-view-define", "Define or revise a user-selected memory topic"),
+        ("topic-view-read", "Read only a currently usable topic snapshot"),
+        ("topic-view-control", "Pause resume or delete a topic view"),
+        ("topic-view-status", "Topic definitions jobs and freshness clocks"),
+        ("topic-view-refresh", "Explicit bounded refresh of one topic view"),
+        ("topic-view-tick", "One coalesced background refresh"),
+        ("topic-view-edit", "Save an explicit user revision as raw evidence"),
         ("preference-clarify", "Trusted atomic preference dispute and profile pause"),
         ("preference-resolve", "Trusted user clarification as correction or real change"),
         ("preference-update-configure", "Narrow finite preference rules and explicitly admit their pinned identity"),
@@ -156,16 +194,34 @@ def _parser() -> Parser:
         command = commands.add_parser(name, help=description)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--access", type=Path, required=True)
-        if name in ("recall", "refresh-semantic", "semantic-status"):
+        command.add_argument("--require-service", action="store_true")
+        if name == "service-pair":
+            command.add_argument("--client-id", required=True)
+            command.add_argument("--entry", required=True)
+            command.add_argument("--scopes")
+        if name == "refresh-index-window":
+            command.add_argument("--limit", type=int, default=5000)
+            command.add_argument("--budget-seconds", type=float, default=120)
+        if name == "refresh-search-checkpoint":
+            command.add_argument("--limit", type=int, default=5000)
+        if name in ("recall", "refresh-semantic", "semantic-status") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
             command.add_argument("--extraction-config", type=Path, required=True)
+        if name in ('reflect', 'reflect-configure'):
+            command.add_argument('--reflection-config', type=Path)
+            command.add_argument('--embedding-config', type=Path)
         if name in ("read", "state"):
             command.add_argument("--message-id", required=True)
     return parser
 
 
-def _execute(args: argparse.Namespace) -> object:
+def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = None,
+             service_runtime: MemoryRuntime | None = None, service_access: Access | None = None,
+             service_cancel: threading.Event | None = None) -> object:
+    def read_input() -> dict[str, Any]:
+        return dict(input_value) if input_value is not None else _input()
+
     if args.command.startswith("vault-"):
         try:
             from .protected import ProtectedInbox, initialize_protected_inbox
@@ -194,7 +250,7 @@ def _execute(args: argparse.Namespace) -> object:
             return {"objects": [asdict(item) for item in inbox.pending(access)], "limit": 100}
         if args.command == "vault-reconcile":
             return inbox.reconcile(access, args.object_id)
-        value = _input()
+        value = read_input()
         source = Source(**value.pop("source"))
         return inbox.submit(access, Event(source=source, **value))
     if args.command.startswith("backup-"):
@@ -232,27 +288,62 @@ def _execute(args: argparse.Namespace) -> object:
         if args.command == "lockout-configure":
             return configure_lockout(args.config, failure_limit=args.failure_limit)
         return configure_audit(args.config, retention_days=args.retention_days)
-    runtime = MemoryRuntime(args.config)
-    access = runtime.access_from_file(args.access)
+    runtime = service_runtime if service_runtime is not None else MemoryRuntime(args.config)
+    access = service_access if service_access is not None else runtime.access_from_file(args.access)
+    if args.command == 'context':
+        raise MemoryFailure('service_unavailable')
+    if args.command in {'reflect', 'reflect-configure'}:
+        from .reflection_model import from_file
+        if args.reflection_config is None:
+            raise MemoryFailure('reflection_model_unconfigured')
+        backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
+        reflector = from_file(runtime, SemanticRecall(runtime, backend), args.reflection_config)
+        value = read_input()
+        if args.command == 'reflect-configure':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return reflector.configure(access)
+        if 'topic_view_ids' in value:
+            if not isinstance(value['topic_view_ids'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['topic_view_ids'] = tuple(value['topic_view_ids'])
+        return reflector.reflect(access, **value, cancel=service_cancel)
+    if args.command == "manage":
+        from .management import MemoryManagement
+        management = MemoryManagement(runtime)
+        value = read_input()
+        action = value.pop("action", None)
+        if action == "read":
+            return management.read(access, **value)
+        if action == "preview":
+            return management.preview(access, **value)
+        if action == "confirm":
+            return management.confirm(access, **value)
+        if action == "cancel":
+            return management.cancel(access, **value)
+        raise MemoryFailure("invalid_management_action")
+    if args.command == "host-recovery":
+        from .host_recovery import HostRecovery
+        return HostRecovery(runtime).run(access, read_input())
     if args.command == "capture-chunk":
-        value = _input()
+        value = read_input()
         event = value.pop("event")
         source = Source(**event.pop("source"))
         return runtime.append_stream(access, Event(source=source, **event), **value)
     if args.command == "read-stream":
-        value = _input()
+        value = read_input()
         return runtime.read_stream(access, Source(**value.pop("source")), **value)
     if args.command == "mark-important":
-        return runtime.mark_important(access, ImportantMark(**_input()))
+        return runtime.mark_important(access, ImportantMark(**read_input()))
     if args.command == "change":
-        return runtime.change(access, Change(**_input()))
+        return runtime.change(access, Change(**read_input()))
     if args.command == "candidate-list":
         from .candidates import CandidateWorkflow
-        return {"candidates": [asdict(candidate) for candidate in CandidateWorkflow(runtime).candidates(access, **_input())]}
+        return {"candidates": [asdict(candidate) for candidate in CandidateWorkflow(runtime).candidates(access, **read_input())]}
     if args.command in ("purge-preview", "purge"):
         from .purge import PurgeDecision, PurgeWorkflow
         purge_workflow = PurgeWorkflow(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "purge":
             return purge_workflow.purge(access, PurgeDecision(**value))
         if not isinstance(value.get("source_ids"), list):
@@ -263,7 +354,7 @@ def _execute(args: argparse.Namespace) -> object:
         from .candidates import EvidenceSpan
         from .experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry
         experiences = ExperienceRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "experience-read":
             return experiences.read(access, **value)
         if args.command == "experience-from-navigation":
@@ -278,7 +369,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("maintenance-") or args.command == "navigation-read":
         from .maintenance import MaintenanceBudget, NavigationMaintenance, NavigationPolicy
         maintenance = NavigationMaintenance(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "maintenance-configure":
             if "topics" in value:
                 if not isinstance(value["topics"], list):
@@ -293,10 +384,122 @@ def _execute(args: argparse.Namespace) -> object:
             return maintenance.read(access, **value)
         value["budget"] = MaintenanceBudget(**value["budget"])
         return maintenance.tick(access, **value)
+    if args.command.startswith('topic-view-'):
+        from .topic_views import TopicViewDefinition, TopicViews
+        from .topic_view_refresh import view_budget
+        backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
+        topic_views = TopicViews(runtime, SemanticRecall(runtime, backend))
+        value = read_input()
+        if args.command == 'topic-view-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return topic_views.status(access)
+        if args.command == 'topic-view-read':
+            budget = view_budget(value.pop('timeout', 10), service_cancel)
+            return topic_views.read(access, **value, check=budget)
+        if args.command == 'topic-view-refresh':
+            return topic_views.refresh(access, **value, cancel=service_cancel)
+        if args.command == 'topic-view-tick':
+            return topic_views.tick(access, **value, cancel=service_cancel)
+        if args.command == 'topic-view-control':
+            return topic_views.control(access, **value)
+        if args.command == 'topic-view-edit':
+            return topic_views.add_evidence(access, **value)
+        definition = value.get('definition')
+        if not isinstance(definition, dict):
+            raise MemoryFailure('invalid_arguments')
+        definition = dict(definition)
+        for name in ('entries', 'sessions', 'source_ids', 'observation_keys'):
+            if name in definition:
+                if not isinstance(definition[name], list):
+                    raise MemoryFailure('invalid_arguments')
+                definition[name] = tuple(tuple(item) for item in definition[name]) if name == 'sessions' else tuple(definition[name])
+        value['definition'] = TopicViewDefinition(**definition)
+        return topic_views.configure(access, **value)
+    if args.command.startswith('observation-'):
+        from .candidates import EvidenceSpan
+        from .observations import ObservationDraft, ObservationRegistry
+        from .observation_processing import ObservationProcessing
+        observations = ObservationRegistry(runtime)
+        value = read_input()
+        if args.command == 'observation-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return ObservationProcessing(runtime).status(access)
+        if args.command == 'observation-configure':
+            return ObservationProcessing(runtime).configure(access, **value)
+        if args.command == 'observation-process':
+            return ObservationProcessing(runtime).tick(access, **value, cancel=service_cancel)
+        import time
+        timeout = value.pop('timeout', 10)
+        if type(timeout) not in (int, float) or not 0 < timeout <= 120:
+            raise MemoryFailure('invalid_observation_budget')
+        deadline = time.monotonic() + float(timeout)
+        def observation_check() -> float:
+            if service_cancel is not None and service_cancel.is_set():
+                raise MemoryFailure('observation_canceled')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MemoryFailure('observation_timeout')
+            return remaining
+        if args.command == 'observation-read':
+            return observations.read(access, **value, check=observation_check)
+        if args.command == 'observation-evidence':
+            return ObservationProcessing(runtime).evidence(access, **value, check=observation_check)
+        if args.command == 'observation-related':
+            return observations.related(access, **value, check=observation_check)
+        if args.command == 'observation-query':
+            return observations.query(access, **value, check=observation_check)
+        if args.command == 'observation-decide':
+            return observations.decide(access, **value, check=observation_check)
+        def observation_draft(data: Any) -> ObservationDraft:
+            if not isinstance(data, dict):
+                raise MemoryFailure('invalid_arguments')
+            data = dict(data)
+            for name in ('support', 'counterevidence'):
+                if not isinstance(data.get(name), list):
+                    raise MemoryFailure('invalid_arguments')
+                data[name] = tuple(EvidenceSpan(**span) for span in data[name])
+            return ObservationDraft(**data)
+        if args.command == 'observation-split':
+            if not isinstance(value.get('drafts'), list):
+                raise MemoryFailure('invalid_arguments')
+            value['drafts'] = tuple(observation_draft(draft) for draft in value['drafts'])
+            return observations.split(access, **value, check=observation_check)
+        value['draft'] = observation_draft(value.get('draft'))
+        if args.command == 'observation-rebind':
+            return observations.rebind(access, **value, check=observation_check)
+        if 'parents' in value:
+            if not isinstance(value['parents'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['parents'] = tuple(value['parents'])
+        if 'source_remap' in value:
+            if not isinstance(value['source_remap'], list):
+                raise MemoryFailure('invalid_arguments')
+            value['source_remap'] = tuple(tuple(pair) for pair in value['source_remap'])
+        return observations.propose(access, **value, check=observation_check)
+    if args.command.startswith('episode-'):
+        from .episodes import Episodes
+        episodes = Episodes(runtime)
+        value = read_input()
+        if args.command == 'episode-status':
+            if value:
+                raise MemoryFailure('invalid_arguments')
+            return {'enabled': episodes.enabled(access), 'publication': 'review_only'}
+        if args.command == 'episode-configure':
+            return episodes.configure(access, **value)
+        if args.command == 'episode-read':
+            return episodes.read(access, **value)
+        for key in ('source_ids', 'entities'):
+            if key in value:
+                if not isinstance(value[key], list):
+                    raise MemoryFailure('invalid_arguments')
+                value[key] = tuple(value[key])
+        return episodes.propose(access, **value, cancel=service_cancel)
     if args.command.startswith('preference-update-'):
         from .automatic_preferences import PreferenceUpdates
         preferences = PreferenceUpdates(runtime)
-        value = _input()
+        value = read_input()
         if args.command == 'preference-update-status':
             return preferences.status(access, **value)
         if args.command == 'preference-update-configure':
@@ -308,16 +511,16 @@ def _execute(args: argparse.Namespace) -> object:
         if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
             raise MemoryFailure('invalid_arguments')
         value['source_ids'] = tuple(value['source_ids'])
-        return preferences.process(access, **value)
+        return preferences.process(access, **value, cancel=service_cancel)
     if args.command in ("preference-clarify", "preference-resolve"):
         from .preference_clarifications import OpenClarification, PreferenceClarifications, ResolveClarification
         clarifications = PreferenceClarifications(runtime)
         if args.command == "preference-clarify":
-            return clarifications.open(access, OpenClarification(**_input()))
-        return clarifications.resolve(access, ResolveClarification(**_input()))
+            return clarifications.open(access, OpenClarification(**read_input()))
+        return clarifications.resolve(access, ResolveClarification(**read_input()))
     if args.command in ("extract", "extract-preferences"):
         from .extraction import ExtractionProcessor, LocalQwen
-        value = _input()
+        value = read_input()
         if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
@@ -329,7 +532,7 @@ def _execute(args: argparse.Namespace) -> object:
         from .candidates import EvidenceSpan
         from .profile import ProfileDecision, ProfileDraft, ProfileRegistry
         profiles = ProfileRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "profile-decide":
             draft = value.get("draft")
             if draft is not None:
@@ -348,7 +551,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("persona-"):
         from .persona import PersonaRegistry, PersonaRollback, PersonaSet
         personas = PersonaRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "persona-set":
             return personas.set(access, PersonaSet(**value))
         if args.command == "persona-rollback":
@@ -359,7 +562,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command in ("fact-decide", "fact-query"):
         from .facts import FactDecision, FactRegistry
         registry = FactRegistry(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "fact-query":
             return registry.query(access, **value)
         if "resolves" in value:
@@ -371,23 +574,23 @@ def _execute(args: argparse.Namespace) -> object:
         backend = LocalMiniLM.from_file(args.embedding_config) if args.embedding_config else None
         workflow = SemanticRecall(runtime, backend)
         if args.command == "recall":
-            return workflow.recall(access, **_input())
+            return workflow.recall(access, **read_input())
         if args.command == "refresh-semantic":
             return workflow.refresh(access)
         return workflow.status(access)
     if args.command == "remember":
-        event = _input()
+        event = read_input()
         source = Source(**event.pop("source"))
         return runtime.submit(access, Event(source=source, **event))
     if args.command == "search":
-        return runtime.search(access, **_input())
+        return runtime.search(access, **read_input())
     if args.command == "audit-query":
-        return runtime.audit_query(access, **_input())
+        return runtime.audit_query(access, **read_input())
     if args.command.startswith("consolidation-"):
         from .candidates import EvidenceSpan
         from .consolidation import ConsolidationDraft, ConsolidationWorkflow
         consolidation = ConsolidationWorkflow(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "consolidation-begin":
             if not isinstance(value.get("source_ids"), list):
                 raise MemoryFailure("invalid_arguments")
@@ -418,7 +621,7 @@ def _execute(args: argparse.Namespace) -> object:
     if args.command.startswith("scheduler-"):
         from .scheduler import ConsolidationScheduler
         scheduler = ConsolidationScheduler(runtime)
-        value = _input()
+        value = read_input()
         if args.command == "scheduler-foreground":
             return scheduler.foreground(access, **value)
         if args.command == "scheduler-configure":
@@ -432,7 +635,7 @@ def _execute(args: argparse.Namespace) -> object:
         return scheduler.trigger(access, **value)
     if args.command.startswith("preset-"):
         from .preset import apply_preset, show_preset
-        value = _input()
+        value = read_input()
         if args.command == "preset-apply":
             return apply_preset(access, runtime, **value)
         return show_preset(access, runtime, **value)
@@ -445,17 +648,57 @@ def _execute(args: argparse.Namespace) -> object:
         return runtime.state(access, args.message_id)
     if args.command == "refresh-index":
         return runtime.refresh_lexical(access)
+    if args.command == "refresh-index-window":
+        return runtime.refresh_lexical_window(access, limit=args.limit, budget_seconds=args.budget_seconds)
     if args.command == "rebuild-index":
         return runtime.rebuild_lexical(access)
+    if args.command in ("prepare-search-acceleration", "remove-search-acceleration"):
+        return {"enabled": runtime.configure_lexical_acceleration(access,
+            enabled=args.command == "prepare-search-acceleration")}
+    if args.command in ("prepare-lexical-id-acceleration", "remove-lexical-id-acceleration"):
+        return {"enabled": runtime.configure_lexical_id_acceleration(access,
+            enabled=args.command == "prepare-lexical-id-acceleration")}
+    if args.command in ("prepare-search-checkpoint", "remove-search-checkpoint"):
+        return {"enabled": runtime.configure_lexical_checkpoint(access,
+            enabled=args.command == "prepare-search-checkpoint")}
+    if args.command == "refresh-search-checkpoint":
+        return {"processed": runtime.refresh_lexical_checkpoint(access, limit=args.limit),
+                "enabled": runtime.lexical_checkpoint_enabled(access)}
     return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
-            "lexical": asdict(runtime.lexical_status(access)), "consumer_running": False}
+            "lexical": asdict(runtime.lexical_status(access)),
+            "lexical_acceleration": runtime.lexical_acceleration_enabled(access),
+            "lexical_id_acceleration": runtime.lexical_id_acceleration_enabled(access),
+            "lexical_checkpoint": runtime.lexical_checkpoint_enabled(access), "consumer_running": False}
 
 
 def main() -> None:
     try:
-        result = _execute(_parser().parse_args())
-        if is_dataclass(result) and not isinstance(result, type):
-            result = asdict(result)
+        args = _parser().parse_args()
+        from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient, client_access
+        from .runtime import _load
+        required = getattr(args, "require_service", False)
+        configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
+        if configured:
+            required = True
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock"):
+            raise MemoryFailure("service_unavailable")
+        if args.command == "service-pair":
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, "pair-client", {"client_id": args.client_id,
+                "entry": args.entry, "scopes": args.scopes.split(",") if args.scopes else None})
+        elif args.command == "service-pair-unlock":
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, "pair-unlock", {})
+        elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
+            access = client_access(args.config, args.access)
+            value = {} if args.command == "status" else (
+                {"message_id": args.message_id} if args.command in ("read", "state") else _input())
+            result = ServiceClient(args.config).call(access, "cli",
+                {"command": args.command, "input": value}, timeout=130 if args.command == "reflect" else 30)
+        else:
+            result = _execute(args)
+        from .serialization import result_value
+        result = result_value(result)
         payload: dict[str, object] = {"contract_version": 1, "ok": True, "result": result}
         code = 0
     except MemoryFailure as error:
