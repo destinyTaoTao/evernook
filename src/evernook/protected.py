@@ -220,9 +220,17 @@ class ProtectedInbox:
                       "key_id": self.public["key_id"], "envelope_sha256": hashlib.sha256(envelope.encode()).hexdigest()})
 
     def stage(self, access: Access, event: Event) -> ProtectedReceipt:
-        identity = self.runtime._authorize(access)
+        from .service_gate import ownership_gate
+        self.runtime._require_scope(access, 'capture', 'protected_stage')
+        with ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout):
+            identity = self.runtime._authorize(access)
+            if 'capture' not in identity.scopes:
+                raise MemoryFailure('permission_denied')
+            return self._stage_authorized(identity.entry, event)
+
+    def _stage_authorized(self, entry: str, event: Event) -> ProtectedReceipt:
         self.runtime._validate_event(event)
-        if event.source.entry != identity.entry:
+        if event.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
         fingerprint = hmac.digest(self.runtime._fingerprint_key, b"protected-event-v1" + _json(asdict(event)).encode(), hashlib.sha256)
         source = _json(asdict(event.source))
@@ -252,7 +260,7 @@ class ProtectedInbox:
         return result
 
     def reconcile(self, access: Access, object_id: str) -> ProtectedReceipt:
-        identity = self.runtime._authorize(access)
+        identity = self.runtime._require_scope(access, 'capture', 'protected_reconcile')
         try:
             if str(UUID(object_id)) != object_id:
                 raise ValueError()

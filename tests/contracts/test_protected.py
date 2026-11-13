@@ -309,6 +309,17 @@ class ProtectedTests(unittest.TestCase):
             other.submit(other_access, self.event)
         self.assertEqual(self.runtime.status(self.access).messages, 0)
 
+    def test_protected_stage_and_reconcile_require_capture_scope(self) -> None:
+        reader_path = self.config.parent / 'mcp-access-reader.json'
+        reader = pair_client(self.config, client_id='reader', entry='reader', access_path=reader_path,
+                             scopes=('recall',))
+        reader_event = replace(self.event, source=Source('reader', 's', 'main', '1'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.stage(reader, reader_event)
+        pending = self.inbox.stage(self.access, self.event)
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.reconcile(reader, pending.object_id)
+
     def test_encryption_failure_and_missing_sender_material_never_fall_back_to_plaintext(self) -> None:
         with patch("evernook.protected.SealedBox.encrypt", side_effect=RuntimeError("synthetic secret diagnostic")):
             with self.assertRaisesRegex(MemoryFailure, "^protected_encryption_failed$"):

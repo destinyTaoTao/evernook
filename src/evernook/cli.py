@@ -102,6 +102,7 @@ def _parser() -> Parser:
         ("remember", "Save one Event JSON object from UTF-8 stdin"),
         ("service-pair", "Pair a client through the service using an existing administrator"),
         ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
+        ('service-protected-receive', 'Trusted local private Event from stdin; service configuration required'),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
@@ -695,7 +696,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock"):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -704,6 +705,9 @@ def main() -> None:
         elif args.command == "service-pair-unlock":
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).call(access, "pair-unlock", {})
+        elif args.command == 'service-protected-receive':
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, 'protected-receive', {'event': _input()})
         elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
             access = client_access(args.config, args.access)
             value = {} if args.command == "status" else (

@@ -25,7 +25,12 @@ original_connection = runtime._connection
 def exit_after_core_commit() -> Iterator[sqlite3.Connection]:
     with original_connection() as db:
         yield db
-    os._exit(72)
+        exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
+        committed = exists and db.execute("""SELECT 1 FROM protected_links_v1 l JOIN messages m ON m.id=l.message_id
+            WHERE json_extract(m.source, '$.entry')='synthetic' AND json_extract(m.source, '$.session')='crash'
+            AND json_extract(m.source, '$.event')=?""", (sys.argv[5],)).fetchone()
+    if committed:
+        os._exit(72)
 
 
 with patch.object(runtime, "_connection", exit_after_core_commit):

@@ -14,7 +14,7 @@ import socketserver
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .models import Access, Event, MemoryFailure, Source
 from .paths import external, verify_private_directory
@@ -22,6 +22,9 @@ from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identi
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
 from .service_transport import authenticate_client, authenticate_server, receive_json, send_json
+
+if TYPE_CHECKING:
+    from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
@@ -48,6 +51,12 @@ def client_access(config: Path, access_path: Path) -> Access:
 
 
 class ServiceClient:
+    def protected_receive(self, access: Access, event: Event, *, timeout: float = 30) -> dict[str, Any]:
+        value = self.call(access, 'protected-receive', {'event': asdict(event)}, timeout=timeout)
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
     def context(self, access: Access, query: str, *, model_id: str, max_tokens: int, as_of: str,
                 mode: str = 'normal', timeout: float = 30, current_input_id: str | None = None,
                 query_intent: str | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
@@ -105,7 +114,8 @@ class ServiceClient:
 
 
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
-             context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None) -> object:
+             context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
+             protected_inbox: ProtectedInbox | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -114,6 +124,19 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     runtime.handshake(access)
     arguments = request["arguments"]
     operation = request["operation"]
+    if operation == 'protected-receive':
+        if protected_inbox is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        if set(arguments) != {'event'} or not isinstance(arguments['event'], dict):
+            raise MemoryFailure('invalid_arguments')
+        value = dict(arguments['event'])
+        if value.get('sensitive') is not True:
+            raise MemoryFailure('protected_explicit_mark_required')
+        source = Source(**value.pop('source'))
+        private_event = Event(source=source, **value)
+        if private_event.completion != 'complete':
+            raise MemoryFailure('protected_incomplete_unsupported')
+        return protected_inbox.submit(access, private_event)
     if operation in ("pair-unlock", "pair-configure"):
         from .runtime import unlock_pairing, configure_lockout
         runtime._require_scope(access, "admin", "service_pair_control")
@@ -237,6 +260,7 @@ class _Server(socketserver.ThreadingTCPServer):
         self.runtime = runtime
         self.key = key
         self.single_writer = False
+        self.protected_inbox: ProtectedInbox | None = None
         self.context_config = context_config
         self.embedding_config = embedding_config
         self.reflector: ReflectionEngine | None = None
@@ -305,7 +329,8 @@ class _Handler(socketserver.BaseRequestHandler):
             watcher.start()
             try:
                 result = dispatch(server.runtime, request, cancel=cancel,
-                    context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector)
+                    context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
+                    protected_inbox=server.protected_inbox)
             finally:
                 done.set()
                 watcher.join()
@@ -313,6 +338,7 @@ class _Handler(socketserver.BaseRequestHandler):
                 request.get("operation") == "mcp" and request.get("arguments", {}).get("name") == "evernook_v1_status")
             if is_status and isinstance(result, dict):
                 result["service"] = {"independent": True, "single_writer": server.single_writer,
+                    "protected_capture": server.protected_inbox is not None,
                     "maintenance": server.maintenance_status()}
                 if isinstance(result.get("processing"), dict):
                     result["processing"]["consumer_running"] = server.maintenance is not None
@@ -334,9 +360,12 @@ class _Handler(socketserver.BaseRequestHandler):
 def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
-          allow_legacy_shared: bool = False) -> None:
+          allow_legacy_shared: bool = False, protected_root: Path | None = None,
+          protected_keys: Path | None = None) -> None:
     if type(allow_legacy_shared) is not bool or (activate_owner is not None and allow_legacy_shared):
         raise MemoryFailure('invalid_service_mode')
+    if (protected_root is None) != (protected_keys is None) or (protected_root is not None and allow_legacy_shared):
+        raise MemoryFailure('invalid_protected_service_config')
     runtime = MemoryRuntime(config, service_owner=True)
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
@@ -352,6 +381,12 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
         try:
             key = secrets.token_bytes(32)
             with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config) as server:
+                if protected_root is not None and protected_keys is not None:
+                    try:
+                        from .protected import ProtectedInbox
+                    except ImportError:
+                        raise MemoryFailure('vault_dependency_missing') from None
+                    server.protected_inbox = ProtectedInbox(runtime, protected_root, protected_keys)
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
@@ -363,6 +398,10 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
                                 and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
                             raise MemoryFailure("protected_cutover_requires_migration")
+                        if server.protected_inbox is not None:
+                            with server.protected_inbox._connection() as inbox:
+                                if inbox.execute('SELECT 1 FROM objects LIMIT 1').fetchone():
+                                    raise MemoryFailure('protected_cutover_requires_migration')
                         db.execute("BEGIN EXCLUSIVE")
                         value = _load(config)
                         _atomic_json(config, {**value, "service_mode": True})
@@ -404,12 +443,15 @@ def main() -> None:
     parser.add_argument("--navigation-policy", action="append", default=[])
     parser.add_argument("--activate-owner", type=Path)
     parser.add_argument("--allow-legacy-shared", action="store_true")
+    parser.add_argument("--protected-inbox", type=Path)
+    parser.add_argument("--protected-keys", type=Path)
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
-            allow_legacy_shared=args.allow_legacy_shared)
+            allow_legacy_shared=args.allow_legacy_shared, protected_root=args.protected_inbox,
+            protected_keys=args.protected_keys)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:
