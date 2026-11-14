@@ -36,11 +36,11 @@ class ServiceTests(unittest.TestCase):
             if process.stderr:
                 process.stderr.close()
 
-    def start(self) -> subprocess.Popen[bytes]:
+    def start(self, extra: list[str] | None = None) -> subprocess.Popen[bytes]:
         endpoint = self.config.parent / "memory-service.json"
         previous = endpoint.read_bytes() if endpoint.exists() else None
         process = subprocess.Popen([sys.executable, "-B", "-m", "evernook.service",
-            "--config", str(self.config), "--allow-legacy-shared"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            "--config", str(self.config), *(extra if extra is not None else ["--allow-legacy-shared"])], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         self.processes.append(process)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -57,6 +57,39 @@ class ServiceTests(unittest.TestCase):
     def event(self) -> dict[str, object]:
         return asdict(Event(Source("test", "s", "main", "1"), "user", 1,
             None, "complete", "合成：我喜欢在湿地观察白鹭。"))
+
+    def test_embedding_config_failure_does_not_block_mcp_capture_or_discovery(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        model_config = Path(self.temporary.name) / 'synthetic-embedding.json'
+        model_config.write_text(json.dumps({'schema_version': 2, 'provider': 'local-minilm',
+            'node': str(Path(self.temporary.name) / 'node'), 'transformers_dir': str(Path(self.temporary.name) / 'deps'),
+            'model_dir': str(Path(self.temporary.name) / 'model')}), encoding='utf-8')
+        self.start(['--activate-owner', str(owner), '--embedding-config', str(model_config)])
+        from evernook.embedding import LocalMiniLM
+        status = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
+        self.assertEqual(status['semantic']['space_id'], LocalMiniLM.space.key)
+        model_config.write_text('{', encoding='utf-8')
+        status = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
+        self.assertEqual(status['semantic']['state'], 'unavailable')
+        self.assertEqual(status['semantic']['error_code'], 'invalid_config')
+        listing = self.client.call(self.access, 'mcp-list', {'profile': 'trusted-host'})
+        self.assertTrue(any(item['name'] == 'evernook_v1_remember' for item in listing['tools']))
+        saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_remember',
+            'arguments': {'event': self.event()}})
+        self.assertTrue(saved['original_saved'])
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message_id']})['event'], self.event())
+        captured_event = {**self.event(), 'source': {'entry': 'test', 'session': 's', 'branch': 'main', 'event': '2'},
+                          'sequence': 2, 'text': '合成：第二条原始对话'}
+        captured = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_capture',
+            'arguments': {'event': captured_event, 'kind': 'message'}})
+        self.assertTrue(captured['complete'])
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': captured['message']['message_id']})['event'], captured_event)
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_recall',
+                'arguments': {'query': '合成'}})
 
     def test_two_clients_receipts_conflict_and_restart(self) -> None:
         self.assertFalse(self.client.call(self.access, 'status', {})['service']['single_writer'])

@@ -253,7 +253,19 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         expected = {"profile"} if operation == "mcp-list" else {"name", "arguments", "profile"}
         if set(arguments) != expected:
             raise MemoryFailure("invalid_arguments")
-        backend = load_embedding(embedding_config) if embedding_config is not None else None
+        # Discovery and raw capture do not use semantic vectors. A damaged
+        # optional model config must not prevent saving original conversation.
+        semantic_tools = {'evernook_v1_recall', 'evernook_v1_context', 'evernook_v1_status'}
+        needs_embedding = operation == 'mcp' and arguments.get('name') in semantic_tools
+        backend = None
+        embedding_error = None
+        if needs_embedding and embedding_config is not None:
+            try:
+                backend = load_embedding(embedding_config)
+            except MemoryFailure as failure:
+                if arguments.get('name') != 'evernook_v1_status':
+                    raise
+                embedding_error = failure.code
         operations, context, restricted = build_operations(runtime, access, profile=arguments["profile"],
             backend=backend, context_config=context_config, reflector=reflector)
         if operation == "mcp-list":
@@ -272,6 +284,13 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             value = parsed.model_dump()
             value['topic_view_ids'] = tuple(value['topic_view_ids'])
             return reflector.reflect(access, **value, cancel=cancel)
+        if name == 'evernook_v1_status' and embedding_error is not None:
+            status_result = invoke(parsed)
+            assert isinstance(status_result, dict)
+            status_result['semantic'] = {'state': 'unavailable', 'space_id': None, 'source_messages': None,
+                'indexed_messages': None, 'pending_messages': None, 'source_watermark': None,
+                'error_code': embedding_error, 'failed_chunks': None, 'stored_vectors': None}
+            return status_result
         return invoke(parsed)
     if operation == "cli":
         from .cli import _execute, _parser
