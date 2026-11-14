@@ -166,6 +166,74 @@ class SecureNtfsTests(unittest.TestCase):
                 finally:
                     kernel.CloseHandle(handle)
 
+    def test_concurrent_reparse_toggle_does_not_redirect_create(self):
+        # Isolate a potentially stuck kernel call and its handles from the test runner.
+        if os.environ.get('EVERNOOK_NTFS_RACE_CHILD') != '1':
+            environment = dict(os.environ, EVERNOOK_NTFS_RACE_CHILD='1')
+            result = subprocess.run([sys.executable, '-m', 'unittest',
+                'test_secure_ntfs.SecureNtfsTests.test_concurrent_reparse_toggle_does_not_redirect_create'],
+                env=environment, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+            return
+        target = self.root / 'target'
+        target.mkdir()
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.DeviceIoControl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                           ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+        kernel.DeviceIoControl.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        substitute = ('\\??\\' + str(target)).encode('utf-16-le')
+        display = str(target).encode('utf-16-le')
+        body = (struct.pack('<HHHH', 0, len(substitute), len(substitute) + 2, len(display))
+                + substitute + b'\0\0' + display + b'\0\0')
+        setup = ctypes.create_string_buffer(struct.pack('<IHH', 0xA0000003, len(body), 0) + body)
+        remove = ctypes.create_string_buffer(struct.pack('<IHH', 0xA0000003, 0, 0))
+        for index in range(12):
+            with self.subTest(index=index), PrivateTree(self.root) as root:
+                child = root.mkdir(f'race-{index}')
+                path = self.root / f'race-{index}'
+                handle = kernel.CreateFileW(str(path), 0x40000000, 7, None, 3, 0x02200000, None)
+                self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
+                ready, stop = threading.Event(), threading.Event()
+                errors = []
+                def attacker():
+                    returned = wintypes.DWORD()
+                    installed = False
+                    try:
+                        while not stop.is_set():
+                            if kernel.DeviceIoControl(handle, 0x900A4, setup, len(setup) - 1, None, 0,
+                                                      ctypes.byref(returned), None):
+                                installed = True
+                                ready.set()
+                                if not kernel.DeviceIoControl(handle, 0x900AC, remove, len(remove) - 1, None, 0,
+                                                              ctypes.byref(returned), None):
+                                    errors.append(ctypes.get_last_error())
+                                    break
+                                installed = False
+                    finally:
+                        if installed and not kernel.DeviceIoControl(handle, 0x900AC, remove, len(remove) - 1, None, 0,
+                                                                     ctypes.byref(returned), None):
+                            errors.append(ctypes.get_last_error())
+                worker = threading.Thread(target=attacker, daemon=True)
+                worker.start()
+                try:
+                    self.assertTrue(ready.wait(5), 'could not set up synthetic junction race')
+                    try:
+                        child.mkdir('created')
+                    except MemoryFailure as error:
+                        self.assertEqual(error.code, 'secure_creation_refused')
+                finally:
+                    stop.set()
+                    worker.join(5)
+                    if not worker.is_alive():
+                        kernel.CloseHandle(handle)
+                self.assertFalse(worker.is_alive())
+                self.assertFalse(errors, errors)
+                self.assertFalse((target / 'created').exists())
+
     def test_acl_validation_failure_releases_handle_and_writes_no_data(self):
         native = _shared_native()
         with PrivateTree(self.root) as root:
