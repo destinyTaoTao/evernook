@@ -29,3 +29,11 @@ handler. The checks are bounded polling, not push or instant revocation: an
 already delivered value cannot be taken back, and a suspended event loop cannot
 clear it until execution resumes. The graph is page-local, does not show
 one-off reflection paths, and does not change daily admission.
+
+#184 adds simulated clock and event-loop checks for a pause longer than the
+lease: pending timers clear both the visible page and an open source when they
+resume. A separate case advances wall time while monotonic time is stationary
+and delivers an in-flight matching fingerprint before the delayed timeout; the
+expired page stays hidden. The same component check passed against the installed
+preview.47 client with the source-matching hash. This does not verify physical
+sleep, screen lock, browser scheduling guarantees or multiple windows.

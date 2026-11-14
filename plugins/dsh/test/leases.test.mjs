@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 test('visible projections clear on change, timeout and background; late responses stay hidden', async () => {
-  let plugin, page, cursor = 0, now = 0, nextTimer = 0, version = 'a', sourceVersion = 'c', historyVersion = 'e', hang = false, forceMismatch = false, malformed = false, resolveLate;
+  let plugin, page, cursor = 0, now = 0, wallOffset = 0, nextTimer = 0, version = 'a', sourceVersion = 'c', historyVersion = 'e', hang = false, forceMismatch = false, malformed = false, resolveLate;
   const state = [], refs = [], effects = [], timers = new Map(), listeners = new Map(), batches = [];
   const React = {
     Fragment: Symbol('fragment'), createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
@@ -20,11 +20,11 @@ test('visible projections clear on change, timeout and background; late response
     __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => React); } } };
   const fakeTimeout = (fn, delay) => { const id = ++nextTimer; timers.set(id, { at: now + delay, fn }); return id; };
   const fakeClear = id => timers.delete(id);
-  class FakeDate extends Date { static now() { return now; } }
+  class FakeDate extends Date { static now() { return now + wallOffset; } }
   const settle = () => new Promise(resolve => setImmediate(resolve));
   const advance = async amount => { const target = now + amount;
     while (true) { const due = [...timers.entries()].filter(([, t]) => t.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
-      if (!due) break; now = due[1].at; timers.delete(due[0]); due[1].fn(); await settle(); }
+      if (!due) break; now = Math.max(now, due[1].at); timers.delete(due[0]); due[1].fn(); await settle(); }
     now = target; await settle();
   };
   const fetch = async (_url, options) => {
@@ -39,7 +39,7 @@ test('visible projections clear on change, timeout and background; late response
       items: [{ tag_id: 'p', revision: 1, state: 'confirmed', draft: { category: 'interest', label: '合成画像' + version, sources: [{ message_id: 's' }] } }] } } });
     throw new Error('unexpected request');
   };
-  vm.runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'),
+  vm.runInNewContext(readFileSync(process.env.EVERNOOK_TEST_CLIENT_JS ?? new URL('../client.js', import.meta.url), 'utf8'),
     { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date: FakeDate, performance: { now: () => now }, setTimeout: fakeTimeout, clearTimeout: fakeClear });
   const ctx = { locale: { register: () => () => {}, bind: () => key => key },
     slots: { inject: (_name, callback) => callback(), register: (options, render) => { if (options.name === 'main') page = render; return () => {}; } },
@@ -75,6 +75,17 @@ test('visible projections clear on change, timeout and background; late response
   hang = false; listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   document.visibilityState = 'hidden'; listeners.get('visibilitychange')(); tree = render(); assert.ok(!contains(tree, '合成画像b'));
   document.visibilityState = 'visible'; listeners.get('visibilitychange')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
+  // Simulate a suspended event loop: both clocks move past the lease before any timer runs.
+  find(tree, node => node.type === 'button' && node.children.includes('source 1')).props.onClick(); await settle(); tree = render();
+  assert.ok(find(tree, node => node.props?.title === 'raw'));
+  now += 13000; await advance(0); tree = render();
+  assert.ok(!contains(tree, '合成画像b')); assert.equal(find(tree, node => node.props?.title === 'raw'), undefined);
+  listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
+  // Wall time may advance while the monotonic clock does not; a response may win the timeout race.
+  hang = true; await advance(3000); wallOffset += 13000;
+  resolveLate(Response.json({ result: { tokens: [version.repeat(64)] } })); await settle(); tree = render();
+  assert.ok(!contains(tree, '合成画像b'));
+  await advance(0); hang = false; listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   malformed = true; await advance(3000); tree = render(); assert.ok(!contains(tree, '合成画像b'));
   malformed = false; listeners.get('focus')(); tree = render(); await flush(); tree = render(); assert.ok(contains(tree, '合成画像b'));
   forceMismatch = true;
