@@ -31,10 +31,11 @@ export class PrivateWindow {
     this.result = { state: 'requested', session_id: session, event_id: event };
     let child: ChildProcess;
     try {
-      child = spawn(this.config.python, ['-B', '-m', 'evernook.cli', 'service-private-window',
+      child = spawn(this.config.python, ['-B', '-m', 'evernook.worker', 'service-private-window',
         '--config', this.config.config, '--access', this.config.access, '--entry', this.config.entry,
         '--session-id', session, '--event-id', event],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } });
     } catch {
       this.result = retry ? { state: 'outcome_unknown', session_id: session, event_id: event } : { state: 'launch_failed' };
       throw new Error('evernook:private_window_unavailable');

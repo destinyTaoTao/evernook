@@ -23,7 +23,7 @@ test('private window uses only trusted launch arguments, rejects concurrent star
     await window.open();
     const initial = window.status();
     assert.equal(initial.state, 'requested');
-    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.cli', 'service-private-window', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh', '--session-id', initial.session_id, '--event-id', initial.event_id], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }]);
+    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.worker', 'service-private-window', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh', '--session-id', initial.session_id, '--event-id', initial.event_id], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } }]);
     await assert.rejects(window.open(), /private_window_unavailable/);
     children[0].emit('close', 1);
     assert.equal(window.status().state, 'outcome_unknown');

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 from ctypes import wintypes
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -64,6 +65,14 @@ class WorkerLifetimeTests(unittest.TestCase):
                 "--config", str(config), "--access", str(access)], capture_output=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(json.loads(result.stdout)["ok"])
+
+    def test_private_window_refuses_to_start_when_owner_guard_is_unavailable(self) -> None:
+        for operation in ("service-private-window", "service-private-session"):
+            with self.subTest(operation=operation):
+                result = subprocess.run([str(Path(sys.prefix) / "Scripts/python.exe"), "-m", "evernook.worker", operation],
+                    env={**os.environ, "EVERNOOK_WORKER_PARENT_PID": "invalid"}, capture_output=True, timeout=20)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["error"]["code"], "worker_lifetime_unavailable")
 
 
 if __name__ == "__main__":

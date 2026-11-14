@@ -24,7 +24,7 @@ test('private session handles bounded receipts, retries, crashes and hostile out
     const event = '00000000-0000-4000-8000-000000000002';
     await window.open();
     assert.equal(window.blocksOtherWindow(), true);
-    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.cli', 'service-private-session', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }]);
+    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.worker', 'service-private-session', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } }]);
     await assert.rejects(window.open(), /private_window_unavailable/);
     children[0].stdout.write(JSON.stringify({ contract_version: 1, ok: true, result: { state: 'outcome_unknown', saved_count: 2, session_id: session, pending_event_id: event, sequence: 2 } }));
     children[0].emit('close', 0);

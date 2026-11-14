@@ -24,13 +24,14 @@ export class PrivateSessionWindow {
     const previous = this.result;
     if (retry && (previous.state !== 'outcome_unknown' || !previous.session_id || !previous.pending_event_id
         || !Number.isSafeInteger(previous.sequence))) throw new Error('evernook:private_window_unavailable');
-    const args = ['-B', '-m', 'evernook.cli', 'service-private-session', '--config', this.config.config,
+    const args = ['-B', '-m', 'evernook.worker', 'service-private-session', '--config', this.config.config,
       '--access', this.config.access, '--entry', this.config.entry];
     if (retry) args.push('--session-id', previous.session_id!, '--event-id', previous.pending_event_id!, '--sequence', String(previous.sequence));
     this.result = { state: 'requested' };
     let child: ChildProcess;
     try {
-      child = spawn(this.config.python, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      child = spawn(this.config.python, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } });
     } catch {
       this.result = retry ? previous : { state: 'launch_failed' };
       throw new Error('evernook:private_window_unavailable');
