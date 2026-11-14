@@ -5,10 +5,12 @@ from collections.abc import Callable
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
+from functools import lru_cache
 import threading
 import time
 import tkinter as tk
 from uuid import uuid4
+from typing import Any
 
 from .models import Access, MemoryFailure
 from .protected import ProtectedInbox
@@ -16,23 +18,40 @@ from .runtime import _identifier, _json
 from .vault_crypto import _decrypt_event, _unlock
 
 
-def input_desktop_available() -> bool:
-    """Conservative input-desktop guard, not a secure-desktop or session-lock proof."""
-    user = ctypes.WinDLL("user32", use_last_error=True)
+@lru_cache(maxsize=1)
+def _load_user32() -> Any:
+    return ctypes.WinDLL("user32", use_last_error=True)
+
+
+@lru_cache(maxsize=1)
+def _user32() -> Any:
+    user = _load_user32()
     user.OpenInputDesktop.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     user.OpenInputDesktop.restype = wintypes.HANDLE
     user.GetUserObjectInformationW.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
     user.GetUserObjectInformationW.restype = wintypes.BOOL
     user.CloseDesktop.argtypes = (wintypes.HANDLE,)
     user.CloseDesktop.restype = wintypes.BOOL
-    handle = user.OpenInputDesktop(0, False, 1)  # DESKTOP_READOBJECTS
-    if not handle:
+    return user
+
+
+def input_desktop_available() -> bool:
+    """Conservative session and input-desktop guard, not physical identity proof."""
+    from .windows_session import current_session_unlocked
+    if not current_session_unlocked():
         return False
     try:
-        name, required = ctypes.create_unicode_buffer(256), wintypes.DWORD()
-        return bool(user.GetUserObjectInformationW(handle, 2, name, ctypes.sizeof(name), ctypes.byref(required))) and name.value == "Default"
-    finally:
-        user.CloseDesktop(handle)
+        user = _user32()
+        handle = user.OpenInputDesktop(0, False, 1)  # DESKTOP_READOBJECTS
+        if not handle:
+            return False
+        try:
+            name, required = ctypes.create_unicode_buffer(256), wintypes.DWORD()
+            return bool(user.GetUserObjectInformationW(handle, 2, name, ctypes.sizeof(name), ctypes.byref(required))) and name.value == "Default"
+        finally:
+            user.CloseDesktop(handle)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
 
 
 class LocalDisplayRequest:

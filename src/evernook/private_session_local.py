@@ -110,6 +110,9 @@ class LocalPrivateSessionWindow:
     def _submit(self) -> None:
         if self.closed:
             return
+        if not input_desktop_available():
+            self.close()
+            return
         text = self.text.get('1.0', 'end-1c')
         if not text.strip():
             self.status.configure(text='请输入要加密保存的内容。')

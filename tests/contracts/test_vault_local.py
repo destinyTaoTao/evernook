@@ -36,6 +36,19 @@ class LocalVaultTests(unittest.TestCase):
     def request(self) -> LocalDisplayRequest:
         return LocalDisplayRequest(self.inbox, self.access, self.receipt.object_id, "合成本地核对", clock=lambda: self.now[0], desktop=lambda: self.desktop[0])
 
+    def test_hidden_display_window_closes_when_session_check_fails(self) -> None:
+        root = tk.Tk()
+        root.withdraw()
+        request = self.request()
+        view = LocalVaultWindow(root, request)
+        self.desktop[0] = False
+        with patch.object(view.password, 'delete', wraps=view.password.delete) as clear:
+            view._poll()
+            self.assertTrue(view._closed)
+            clear.assert_called_with(0, tk.END)
+        with self.assertRaisesRegex(MemoryFailure, 'local_display_expired'):
+            request.display_once(self.password, lambda _: self.fail('closed request delivered'))
+
     def test_real_hidden_tk_password_control_only_displays_after_local_button_and_clears_on_close(self) -> None:
         root = tk.Tk()
         root.withdraw()

@@ -14,7 +14,11 @@ ACL检查、主口令派生、密文解密与授权尝试审计发生在普通�
 
 成功后最长展示30秒；窗口关闭、失去顶层焦点或输入桌面检查失败会清除控件并销毁请求。 helper定时检查 Windows input desktop，查询失败或非Default桌面时关闭；实现使用 [OpenInputDesktop](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openinputdesktop) 和 [GetUserObjectInformationW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getuserobjectinformationw)，关闭取得的句柄。
 
-该桌面检查是保守护栏，**不等于已完成锁屏/断开会话联动验收**；官方API特别说明断开会话可能返回恢复连接后使用的桌面。尚无WTS事件联动、远程会话验收或安全桌面。Python内存释放不保证所有口令/私钥/明文副本清零；Tk窗口也不隔离同账户恶意程序或截图。
+Core 0.1.80 的桌面检查还查询当前进程所属 Windows 会话，只接受 WTS 活动且解锁状态；查询失败、会话不匹配、断连、未知状态和非 64 位进程均拒绝。Windows 7／Server 2008 R2 的锁定标志存在反转，当前实现对 Windows 8 之前的版本拒绝而不猜测。状态语义见 [Microsoft WTSINFOEX 文档](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w)。
+
+该检查是轮询护栏，**不等于已完成锁屏/断开会话联动验收**：状态检查和提交／展示不是原子的，事件循环阻塞会延后清空，短暂锁定后解锁也可能错过；现无 WTS 事件联动、远程会话验收或安全桌面。Python 内存释放不保证所有口令/私钥/明文副本清零；Tk 窗口也不隔离同账户恶意程序或截图。
+
+Core 0.1.80（#221）最终源码和非 editable wheel 各通过 31 项合成回归，包含 WTS 状态／短缓冲／API 失败和释放、32 位拒绝、输入前及隐藏窗口清空、既有单次查看与服务保存；相关 5 个文件 strict mypy 通过。独立审查复现轮询重复加载 DLL 的引用计数累积，已分别缓存成功加载的系统库并覆盖后续初始化失败的重试。当前环境做了不改变状态的只读会话探测，审查核对了官方标志语义；没有锁定用户电脑，也没有验证真实锁屏、断电或物理本人身份。
 
 直接访问模式中，`LocalDisplayRequest` 为可信窗口和测试提供单次交付对象；服务模式中，由独立服务持有该对象并通过匿名管道向其本机窗口子进程交接。受认证、加密的服务请求只启动本地窗口并返回关闭回执，普通查询和 MCP 不交付原文。两种模式的目的地均固定本地，没有 harness 明文授权或字段级授予，因此不关闭完整 T23，也不启用日常凭证能力。
 
