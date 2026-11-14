@@ -80,6 +80,8 @@ class SemanticRecall:
             assert backend is not None
             has_documents = hasattr(backend, 'embed_documents')
             has_query = hasattr(backend, 'embed_query')
+            if not has_documents and not has_query and space.encoding.startswith('asymmetric-'):
+                raise MemoryFailure('invalid_embedding_backend')
             if has_documents or has_query:
                 documents = getattr(backend, 'embed_documents', None)
                 query = getattr(backend, 'embed_query', None)

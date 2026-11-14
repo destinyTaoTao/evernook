@@ -233,6 +233,16 @@ class SemanticTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, 'invalid_embedding_backend'):
             SemanticRecall(self.runtime, backend)
 
+    def test_symmetric_backend_cannot_claim_role_aware_vector_space(self) -> None:
+        self.save('合成：喜欢辛辣')
+        symmetric = SyntheticEmbedding()
+        symmetric.space = RoleEmbedding.space
+        self.assertEqual(symmetric.space.key, RoleEmbedding.space.key)
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_embedding_backend'):
+            SemanticRecall(self.runtime, symmetric)
+        role_aware = SemanticRecall(self.runtime, RoleEmbedding())
+        self.assertEqual(role_aware.status(self.access).indexed_messages, 0)
+
     def test_role_aware_document_cancellation_cannot_publish_stale_vectors(self) -> None:
         self.save('合成辛辣')
         backend = RoleEmbedding()
