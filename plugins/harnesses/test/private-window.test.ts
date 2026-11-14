@@ -8,11 +8,11 @@ import { PrivateWindow } from '../src/private-window.ts';
 
 test('private window uses only trusted launch arguments, rejects concurrent starts and stops on close', async () => {
   const original = childProcess.spawn;
-  const children: (EventEmitter & { stdout: PassThrough; kill: () => boolean })[] = [];
+  const children: (EventEmitter & { stdin: PassThrough; stdout: PassThrough; kill: () => boolean })[] = [];
   let args: unknown[] = [];
   childProcess.spawn = ((...values: unknown[]) => {
     args = values;
-    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => { child.emit('close', null); return true; } });
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => { child.emit('close', null); return true; } });
     children.push(child);
     queueMicrotask(() => child.emit('spawn'));
     return child as unknown as ChildProcess;
@@ -23,7 +23,7 @@ test('private window uses only trusted launch arguments, rejects concurrent star
     await window.open();
     const initial = window.status();
     assert.equal(initial.state, 'requested');
-    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.worker', 'service-private-window', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh', '--session-id', initial.session_id, '--event-id', initial.event_id], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } }]);
+    assert.deepEqual(args, ['trusted-python', ['-B', '-m', 'evernook.private_window_worker', 'service-private-window', '--config', 'trusted-config', '--access', 'trusted-access', '--entry', 'dsh', '--session-id', initial.session_id, '--event-id', initial.event_id], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid), EVERNOOK_WORKER_LIFETIME_PIPE: '1' } }]);
     await assert.rejects(window.open(), /private_window_unavailable/);
     children[0].emit('close', 1);
     assert.equal(window.status().state, 'outcome_unknown');
@@ -62,9 +62,9 @@ test('spawn failure fails closed and allows a later retry', async () => {
 
 test('a process error after launch preserves the unknown source for retry', async () => {
   const original = childProcess.spawn;
-  let child: EventEmitter & { stdout: PassThrough; kill: () => boolean };
+  let child: EventEmitter & { stdin: PassThrough; stdout: PassThrough; kill: () => boolean };
   childProcess.spawn = (() => {
-    child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+    child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => true });
     queueMicrotask(() => child.emit('spawn'));
     return child as unknown as ChildProcess;
   }) as unknown as typeof childProcess.spawn;

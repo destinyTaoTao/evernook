@@ -6,13 +6,19 @@ import subprocess
 import sys
 import time
 
-if sys.argv[1] == "owner":
+if sys.argv[1] in ("owner", "pipe-owner"):
     environment = {**os.environ, "EVERNOOK_WORKER_PARENT_PID": str(os.getpid())}
+    if sys.argv[1] == 'pipe-owner':
+        environment['EVERNOOK_WORKER_LIFETIME_PIPE'] = '1'
     worker = subprocess.Popen([sys.executable, str(Path(__file__)), "worker"], stdout=subprocess.PIPE,
-        env=environment, creationflags=subprocess.CREATE_NO_WINDOW)
+        stdin=subprocess.PIPE if sys.argv[1] == 'pipe-owner' else None, env=environment, creationflags=subprocess.CREATE_NO_WINDOW)
     assert worker.stdout is not None
     identities = json.loads(worker.stdout.readline())
     print(json.dumps(identities), flush=True)
+    if sys.argv[1] == 'pipe-owner':
+        sys.stdin.buffer.read(1)
+        assert worker.stdin is not None
+        worker.stdin.close()
 else:
     from evernook.worker import protect_parent_lifetime
     protect_parent_lifetime()

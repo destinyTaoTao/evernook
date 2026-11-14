@@ -54,6 +54,23 @@ def protect_parent_lifetime() -> None:
     kernel.WaitForMultipleObjects.argtypes = (wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE), wintypes.BOOL, wintypes.DWORD)
     kernel.WaitForMultipleObjects.restype = wintypes.DWORD
     kernel.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    pipe_handle: int | None = None
+    if os.environ.get('EVERNOOK_WORKER_LIFETIME_PIPE') == '1':
+        try:
+            import msvcrt
+            pipe_handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+            kernel.GetFileType.argtypes = (wintypes.HANDLE,)
+            kernel.GetFileType.restype = wintypes.DWORD
+            kernel.PeekNamedPipe.argtypes = (wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+            kernel.PeekNamedPipe.restype = wintypes.BOOL
+            available = wintypes.DWORD()
+            if (kernel.GetFileType(pipe_handle) != 3
+                    or not kernel.PeekNamedPipe(pipe_handle, None, 0, None, ctypes.byref(available), None)
+                    or available.value):
+                raise ValueError()
+        except (OSError, ValueError, AttributeError):
+            raise MemoryFailure('worker_lifetime_unavailable') from None
     parents: list[int] = []
     job: int | None = None
     try:
@@ -82,6 +99,22 @@ def protect_parent_lifetime() -> None:
         kernel.WaitForMultipleObjects(len(parents), handles, False, 0xFFFFFFFF)
         kernel.TerminateJobObject(job, 1)
     threading.Thread(target=owner_exited, name="evernook-worker-owner", daemon=True).start()
+    if pipe_handle is not None:
+        def pipe_closed() -> None:
+            # A pending synchronous pipe read can block another process that
+            # inherits the same pipe. Poll without consuming input instead.
+            wake = threading.Event()
+            try:
+                while not wake.wait(0.05):
+                    available = wintypes.DWORD()
+                    if (not kernel.PeekNamedPipe(pipe_handle, None, 0, None, ctypes.byref(available), None)
+                            or available.value):
+                        break
+            except Exception:
+                pass
+            if not kernel.TerminateJobObject(job, 1):
+                os._exit(1)  # Closing this process's job handle also terminates its job.
+        threading.Thread(target=pipe_closed, name='evernook-worker-pipe', daemon=True).start()
 
 
 def main() -> None:

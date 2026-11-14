@@ -31,16 +31,17 @@ export class PrivateWindow {
     this.result = { state: 'requested', session_id: session, event_id: event };
     let child: ChildProcess;
     try {
-      child = spawn(this.config.python, ['-B', '-m', 'evernook.worker', 'service-private-window',
+      child = spawn(this.config.python, ['-B', '-m', 'evernook.private_window_worker', 'service-private-window',
         '--config', this.config.config, '--access', this.config.access, '--entry', this.config.entry,
         '--session-id', session, '--event-id', event],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
-        env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid) } });
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+        env: { ...process.env, EVERNOOK_WORKER_PARENT_PID: String(process.pid), EVERNOOK_WORKER_LIFETIME_PIPE: '1' } });
     } catch {
       this.result = retry ? { state: 'outcome_unknown', session_id: session, event_id: event } : { state: 'launch_failed' };
       throw new Error('evernook:private_window_unavailable');
     }
     this.child = child;
+    child.stdin!.on('error', () => { child.kill(); });
     let chunks: Buffer[] = []; let bytes = 0; let oversized = false;
     child.stdout!.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
