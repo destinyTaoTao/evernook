@@ -205,6 +205,124 @@ class ServiceCutoverTests(unittest.TestCase):
             else:
                 self.assertEqual(future.result(timeout=15).state, 'protected_linked')
 
+    def test_registered_pending_inbox_blocks_unbound_activation(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        pending = inbox.stage(self.access, Event(Source('test', 'synthetic-vault', 'main', 'pending-known'),
+            'user', 2, None, 'complete', 'synthetic-known-vault-secret'))
+        result = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path)], capture_output=True, timeout=8)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', result.stderr)
+        self.assertNotIn('service_mode', json.loads(self.config.read_text(encoding='utf-8')))
+        self.assertEqual(inbox.pending(self.access)[0].object_id, pending.object_id)
+
+    def test_stage_registration_and_ciphertext_commit_share_cutover_gate(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        from evernook.service_gate import ownership_gate
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        reached_writer, release = threading.Event(), threading.Event()
+        writer = inbox._writer
+        def paused_writer() -> Any:
+            reached_writer.set()
+            if not release.wait(15):
+                raise RuntimeError('synthetic stage timeout')
+            return writer()
+        event = Event(Source('test', 'synthetic-vault', 'main', 'pending-race'), 'user', 2, None,
+            'complete', 'synthetic-pending-race-secret')
+        process: subprocess.Popen[bytes] | None = None
+        with patch.object(inbox, '_writer', side_effect=paused_writer), ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(inbox.stage, self.access, event)
+            try:
+                self.assertTrue(reached_writer.wait(10))
+                with self.assertRaisesRegex(MemoryFailure, 'storage_busy'):
+                    with ownership_gate(self.runtime.root, exclusive=True, timeout=0.1):
+                        pass
+                process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+                    '--activate-owner', str(self.access_path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.process = process
+                time.sleep(.4)
+                self.assertIsNone(process.poll())
+                self.assertFalse((self.config.parent / 'memory-service.json').exists())
+            finally:
+                release.set()
+            self.assertEqual(future.result(timeout=15).state, 'protected_pending_link')
+        assert process is not None
+        _, stderr = process.communicate(timeout=15)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', stderr)
+        self.assertNotIn('service_mode', json.loads(self.config.read_text(encoding='utf-8')))
+
+    def test_crash_after_registration_blocks_unbound_but_allows_matching_empty_inbox(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        script = '''import os,sys\nfrom pathlib import Path\nfrom evernook import Event,MemoryRuntime,Source\nfrom evernook.protected import ProtectedInbox\nr=MemoryRuntime(Path(sys.argv[1])); a=r.access_from_file(Path(sys.argv[2])); i=ProtectedInbox(r,Path(sys.argv[3]),Path(sys.argv[4]))\ni._writer=lambda: os._exit(73)\ni.stage(a,Event(Source("test","synthetic-vault","main","crash"),"user",2,None,"complete","synthetic-private-data"))\n'''
+        crashed = subprocess.run([sys.executable, '-B', '-c', script, str(self.config), str(self.access_path),
+            str(self.root / 'inbox'), str(self.root / 'keys')], capture_output=True, timeout=20)
+        self.assertEqual(crashed.returncode, 73, crashed.stderr)
+        with self.runtime._connection() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM protected_inbox_registry_v1').fetchone()[0], 1)
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM objects').fetchone()[0], 0)
+        unbound = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path)], capture_output=True, timeout=15)
+        self.assertNotEqual(unbound.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', unbound.stderr)
+        self.process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path), '--protected-inbox', str(self.root / 'inbox'),
+            '--protected-keys', str(self.root / 'keys')], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        deadline = time.monotonic() + 15
+        while not (self.config.parent / 'memory-service.json').exists():
+            self.assertIsNone(self.process.poll())
+            if time.monotonic() >= deadline:
+                self.fail('matching empty inbox service did not start')
+            time.sleep(.05)
+        self.assertTrue(ServiceClient(self.config).call(self.access, 'status', {})['service']['protected_capture'])
+
+    def test_explicit_legacy_registration_prevents_unbound_cutover(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        pending = inbox.stage(self.access, Event(Source('test', 'synthetic-vault', 'main', 'legacy-pending'),
+            'user', 2, None, 'complete', 'synthetic-legacy-vault-secret'))
+        # Synthesize an older ledger which predates the registry.
+        with self.runtime._connection() as db:
+            db.execute('DELETE FROM protected_inbox_registry_v1')
+        register = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', 'vault-register', '--config', str(self.config),
+            '--access', str(self.access_path), '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys')],
+            capture_output=True, timeout=20)
+        self.assertEqual(register.returncode, 0, register.stdout)
+        self.assertNotIn(b'synthetic-legacy-vault-secret', register.stdout + register.stderr)
+        refused = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path)], capture_output=True, timeout=15)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', refused.stderr)
+        self.assertEqual(inbox.pending(self.access)[0].object_id, pending.object_id)
+
+    def test_multiple_registered_inboxes_cannot_be_cut_over_as_one(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        first = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        second = initialize_protected_inbox(self.runtime, self.root / 'inbox2', self.root / 'keys2', b'synthetic-gate-test-password')
+        first.register(self.access); second.register(self.access)
+        refused = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path), '--protected-inbox', str(self.root / 'inbox'),
+            '--protected-keys', str(self.root / 'keys')], capture_output=True, timeout=15)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', refused.stderr)
+        self.assertNotIn('service_mode', json.loads(self.config.read_text(encoding='utf-8')))
+
+    def test_registered_key_mismatch_blocks_even_matching_inbox_id(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        inbox.register(self.access)
+        with self.runtime._connection() as db:
+            db.execute('UPDATE protected_inbox_registry_v1 SET key_id=? WHERE inbox_id=?', ('0' * 64, inbox.inbox_id))
+        refused = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.access_path), '--protected-inbox', str(self.root / 'inbox'),
+            '--protected-keys', str(self.root / 'keys')], capture_output=True, timeout=15)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b'protected_cutover_requires_migration', refused.stderr)
+        self.assertNotIn('service_mode', json.loads(self.config.read_text(encoding='utf-8')))
+
     def test_service_pairing_can_recover_after_lockout_with_admin(self) -> None:
         from evernook.service import client_access
         self.start()

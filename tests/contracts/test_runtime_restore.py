@@ -131,6 +131,29 @@ class RuntimeRestoreTests(unittest.TestCase):
             self.assertEqual(_control_head(db, b'synthetic-legacy-control-head-key'),
                 '0153022613cc5617fd4c998dfb1e765f1a77a98a718a1c4c5803c112f8913150')
 
+    def test_restore_requires_current_protected_inbox_registration(self) -> None:
+        from evernook.protected import initialize_protected_inbox, known_inboxes
+        from evernook.runtime_restore import publish_replayed_runtime
+
+        self.runtime.export_archive(self.access, self.root / 'old')
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys',
+                                          b'synthetic recovery password 123')
+        inbox.stage(self.access, Event(Source('test', 'session', 'main', '1'), 'user', 1, None,
+                                       'complete', 'synthetic private sentinel'))
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        with self.assertRaisesRegex(MemoryFailure, 'archive_control_incomplete'):
+            replay_archive_controls(self.runtime, self.access, self.root / 'old', self.root / 'old-review',
+                                    checkpoint=checkpoint)
+        self.assertFalse((self.root / 'old-review').exists())
+
+        self.runtime.export_archive(self.access, self.root / 'fresh')
+        replay_archive_controls(self.runtime, self.access, self.root / 'fresh', self.root / 'fresh-review',
+                                checkpoint=checkpoint)
+        config, owner = publish_replayed_runtime(self.runtime, self.access, self.root / 'fresh-review',
+                                                  self.root / 'restored', checkpoint=checkpoint,
+                                                  client_id='restored', entry='test')
+        self.assertEqual(known_inboxes(MemoryRuntime(config), owner), known_inboxes(self.runtime, self.access))
+
     def test_revoked_automatic_processor_cannot_return_through_an_older_snapshot(self) -> None:
         from evernook.automatic_preferences import PreferenceUpdates
         from evernook.runtime_restore import publish_replayed_runtime

@@ -285,11 +285,11 @@ def _control_head(db: sqlite3.Connection, key: bytes) -> str:
                   "fact_heads_v1", "fact_decisions_v1", "fact_tombstones_v1", "profile_events_v1",
                   "profile_approvals_v1", "experience_events_v1", "experience_approvals_v1", "continuation_checkpoints_v1",
                   "preference_updates_settings_v1", "management_previews_v1",
-                  "host_recovery_previews_v1", "host_recovery_operations_v1", *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES):
+                  "host_recovery_previews_v1", "host_recovery_operations_v1", "protected_inbox_registry_v1", *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES):
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()
         # Preserve older control-head identities when this optional feature was never used.
         if table in {'continuation_checkpoints_v1', 'preference_updates_settings_v1', 'management_previews_v1',
-                       'host_recovery_previews_v1', 'host_recovery_operations_v1', *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES} and not exists:
+                       'host_recovery_previews_v1', 'host_recovery_operations_v1', 'protected_inbox_registry_v1', *OBSERVATION_TABLES, *TOPIC_VIEW_TABLES} and not exists:
             continue
         digest.update(table.encode() + b"\0")
         if exists:
@@ -404,6 +404,11 @@ def replay_archive_controls(runtime: MemoryRuntime, access: Access, source: Path
                 archived_ledger = copy.execute("SELECT ledger_id FROM ledger_identity_v1 WHERE id=1").fetchone()
                 if archived_ledger is None or not hmac.compare_digest(str(archived_ledger[0]), checkpoint.ledger_id):
                     raise MemoryFailure("archive_control_incomplete")
+                def registered(db: sqlite3.Connection) -> set[tuple[object, ...]]:
+                    exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_inbox_registry_v1'").fetchone()
+                    return {tuple(row) for row in db.execute('SELECT inbox_id,key_id FROM protected_inbox_registry_v1')} if exists else set()
+                if registered(copy) != registered(live):
+                    raise MemoryFailure('archive_control_incomplete')
                 old_ids = {str(row[0]) for row in copy.execute("SELECT id FROM messages")}
                 for old_message in copy.execute("SELECT * FROM messages"):
                     current = live.execute("SELECT * FROM messages WHERE id=?", (old_message["id"],)).fetchone()

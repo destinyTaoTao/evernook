@@ -64,6 +64,43 @@ class ProtectedTests(unittest.TestCase):
             with self.subTest(invalid_limit=invalid_limit), self.assertRaisesRegex(MemoryFailure, 'invalid_page'):
                 self.inbox.inventory(self.access, limit=invalid_limit)
 
+    def test_explicit_registration_is_admin_only_idempotent_and_metadata_only(self) -> None:
+        from evernook.protected import known_inboxes
+        reader = pair_client(self.config, client_id='registry-reader', entry='registry-reader',
+            access_path=self.config.parent / 'mcp-access-registry-reader.json', scopes=('recall',))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.register(reader)
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            known_inboxes(self.runtime, reader)
+        first = self.inbox.register(self.access)
+        self.assertEqual(first, self.inbox.register(self.access))
+        self.assertEqual(first, {'inbox_id': self.inbox.inbox_id, 'registered': True})
+        with self.runtime._connection() as db:
+            rows = db.execute('SELECT inbox_id,key_id FROM protected_inbox_registry_v1').fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['inbox_id'], self.inbox.inbox_id)
+            self.assertNotIn(str(self.root), json.dumps(dict(rows[0])))
+        result = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', 'vault-register',
+            '--config', str(self.config), '--access', str(self.access_path), '--inbox-dir', str(self.root / 'inbox'),
+            '--key-dir', str(self.root / 'keys')], capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads(result.stdout)['result'], first)
+        self.assertNotIn(self.password, result.stdout + result.stderr)
+        second = initialize_protected_inbox(self.runtime, self.root / 'inbox2', self.root / 'keys2', self.password)
+        second.register(self.access)
+        page = known_inboxes(self.runtime, self.access, limit=1)
+        self.assertEqual(len(page['inboxes']), 1)
+        self.assertIsNotNone(page['next_cursor'])
+        last = known_inboxes(self.runtime, self.access, after=page['next_cursor'], limit=1)
+        self.assertEqual({page['inboxes'][0]['inbox_id'], last['inboxes'][0]['inbox_id']}, {self.inbox.inbox_id, second.inbox_id})
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
+            known_inboxes(self.runtime, self.access, after='invalid')
+        cli = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', 'vault-known',
+            '--config', str(self.config), '--access', str(self.access_path)], capture_output=True, timeout=20)
+        self.assertEqual(cli.returncode, 0, cli.stdout)
+        self.assertEqual(len(json.loads(cli.stdout)['result']['inboxes']), 2)
+        self.assertNotIn(str(self.root).encode(), cli.stdout + cli.stderr)
+
     def test_admin_inventory_rejects_tampered_envelopes_and_missing_links(self) -> None:
         linked = self.inbox.submit(self.access, self.event)
         assert linked.message is not None
@@ -406,6 +443,28 @@ class ProtectedTests(unittest.TestCase):
         with self.assertRaises(MemoryFailure):
             self.inbox.submit(self.access, self.event)
         self.assertEqual(self.runtime.status(self.access).messages, 0)
+
+    def test_registration_write_failure_never_claims_ciphertext_was_saved(self) -> None:
+        with patch.object(self.inbox, '_register_known', side_effect=MemoryFailure('storage_busy')):
+            with self.assertRaisesRegex(MemoryFailure, 'storage_busy'):
+                self.inbox.stage(self.access, self.event)
+        self.assertEqual(self.inbox.pending(self.access), ())
+        with self.runtime._connection() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone())
+        saved = self.inbox.stage(self.access, self.event)
+        self.assertEqual(saved.state, 'protected_pending_link')
+
+    def test_registry_rejects_same_inbox_id_with_different_key(self) -> None:
+        self.inbox.register(self.access)
+        initialize_protected_inbox(self.runtime, self.root / 'inbox2', self.root / 'keys2', self.password)
+        with closing(sqlite3.connect(self.root / 'inbox2/inbox.sqlite3')) as db:
+            db.execute('UPDATE settings SET inbox_id=?', (self.inbox.inbox_id,))
+            db.commit()
+        exchanged = ProtectedInbox(self.runtime, self.root / 'inbox2', self.root / 'keys2')
+        with self.assertRaisesRegex(MemoryFailure, 'protected_binding_mismatch'):
+            exchanged.stage(self.access, self.event)
+        with closing(sqlite3.connect(self.root / 'inbox2/inbox.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM objects').fetchone()[0], 0)
 
     def test_linked_status_revalidates_ordinary_reference_and_reconcile_repairs_missing_link(self) -> None:
         receipt = self.inbox.submit(self.access, self.event)

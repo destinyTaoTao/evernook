@@ -54,6 +54,29 @@ class ProtectedLinkInventoryPage:
     next_cursor: str | None
 
 
+def known_inboxes(runtime: MemoryRuntime, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
+    """List known IDs only; never claim this enumerates all filesystem inboxes."""
+    runtime._require_scope(access, 'admin', 'protected_known_inboxes')
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise MemoryFailure('invalid_page')
+    if after is not None:
+        try:
+            if str(UUID(after)) != after:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise MemoryFailure('invalid_protected_id') from None
+    with runtime._connection() as db:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone():
+            rows = db.execute('SELECT inbox_id,key_id FROM protected_inbox_registry_v1 WHERE (? IS NULL OR inbox_id>?) ORDER BY inbox_id LIMIT ?',
+                              (after, after, limit + 1)).fetchall()
+        else:
+            rows = []
+        result = [{'inbox_id': row['inbox_id'], 'key_id': row['key_id']} for row in rows[:limit]]
+        cursor = str(rows[limit - 1]['inbox_id']) if len(rows) > limit else None
+    runtime._require_scope(access, 'admin', 'protected_known_inboxes')
+    return {'inboxes': result, 'next_cursor': cursor}
+
+
 def _write(path: Path, value: bytes) -> None:
     with path.open("xb") as output:
         output.write(value)
@@ -219,6 +242,32 @@ class ProtectedInbox:
         return _json({"inbox_id": self.inbox_id, "object_id": object_id, "version": 1,
                       "key_id": self.public["key_id"], "envelope_sha256": hashlib.sha256(envelope.encode()).hexdigest()})
 
+    def _register_known(self) -> None:
+        try:
+            if str(UUID(self.inbox_id)) != self.inbox_id:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise MemoryFailure('protected_binding_mismatch') from None
+        with self.runtime._connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('CREATE TABLE IF NOT EXISTS protected_inbox_registry_v1 (inbox_id TEXT NOT NULL PRIMARY KEY, key_id TEXT NOT NULL)')
+            db.execute('INSERT OR IGNORE INTO protected_inbox_registry_v1 VALUES (?,?)', (self.inbox_id, self.public['key_id']))
+            row = db.execute('SELECT key_id FROM protected_inbox_registry_v1 WHERE inbox_id=?', (self.inbox_id,)).fetchone()
+            if row is None or row['key_id'] != self.public['key_id']:
+                raise MemoryFailure('protected_binding_mismatch')
+            db.execute('COMMIT')
+
+    def register(self, access: Access) -> dict[str, object]:
+        """Explicitly register one already-existing inbox before service cutover."""
+        from .service_gate import ownership_gate
+        self.runtime._require_scope(access, 'admin', 'protected_register')
+        with ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout):
+            identity = self.runtime._authorize(access)
+            if 'admin' not in identity.scopes:
+                raise MemoryFailure('permission_denied')
+            self._register_known()
+        return {'inbox_id': self.inbox_id, 'registered': True}
+
     def stage(self, access: Access, event: Event) -> ProtectedReceipt:
         from .service_gate import ownership_gate
         self.runtime._require_scope(access, 'capture', 'protected_stage')
@@ -232,6 +281,9 @@ class ProtectedInbox:
         self.runtime._validate_event(event)
         if event.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
+        # Durable registration precedes any ciphertext commit. The enclosing
+        # shared gate prevents activation between these two durable writes.
+        self._register_known()
         fingerprint = hmac.digest(self.runtime._fingerprint_key, b"protected-event-v1" + _json(asdict(event)).encode(), hashlib.sha256)
         source = _json(asdict(event.source))
         sender = self._writer()
@@ -284,6 +336,7 @@ class ProtectedInbox:
             fingerprint = bytes(row["fingerprint"])
         if projection.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
+        self._register_known()
         reference = self._reference(object_id, envelope)
         with self.runtime._connection() as core:
             core.execute("BEGIN IMMEDIATE")

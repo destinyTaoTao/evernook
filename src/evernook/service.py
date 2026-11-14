@@ -491,6 +491,14 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     owner = runtime.access_from_file(activate_owner)
                     runtime._require_scope(owner, "admin", "activate_service")
                     with runtime._connection(ownership_exclusive=True) as db:
+                        if db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone():
+                            if server.protected_inbox is None:
+                                unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()
+                            else:
+                                unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 WHERE inbox_id IS NOT ? OR key_id IS NOT ? LIMIT 1',
+                                    (server.protected_inbox.inbox_id, server.protected_inbox.public['key_id'])).fetchone()
+                            if unknown:
+                                raise MemoryFailure('protected_cutover_requires_migration')
                         if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
                                 and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
                             raise MemoryFailure("protected_cutover_requires_migration")

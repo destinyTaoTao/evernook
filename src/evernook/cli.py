@@ -69,7 +69,7 @@ def _parser() -> Parser:
     audit_config = commands.add_parser("audit-configure", help="Configure audit log retention in days")
     audit_config.add_argument("--config", type=Path, required=True)
     audit_config.add_argument("--retention-days", type=int, required=True)
-    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-links", "vault-reconcile", "vault-show"):
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-links", "vault-register", "vault-reconcile", "vault-show"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
         vault.add_argument("--access", type=Path, required=True)
@@ -82,6 +82,11 @@ def _parser() -> Parser:
             vault.add_argument("--limit", type=int, default=100)
         if name == "vault-show":
             vault.add_argument("--purpose", required=True)
+    vault_known = commands.add_parser('vault-known', help='List registered inbox IDs; not a filesystem discovery')
+    vault_known.add_argument('--config', type=Path, required=True)
+    vault_known.add_argument('--access', type=Path, required=True)
+    vault_known.add_argument('--after')
+    vault_known.add_argument('--limit', type=int, default=100)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
     backup_init.add_argument("--key-dir", type=Path, required=True)
     backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
@@ -243,11 +248,13 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
 
     if args.command.startswith("vault-"):
         try:
-            from .protected import ProtectedInbox, initialize_protected_inbox
+            from .protected import ProtectedInbox, initialize_protected_inbox, known_inboxes
         except ImportError:
             raise MemoryFailure("vault_dependency_missing") from None
         memory = MemoryRuntime(args.config)
         access = memory.access_from_file(args.access)
+        if args.command == 'vault-known':
+            return known_inboxes(memory, access, after=args.after, limit=args.limit)
         if args.command == "vault-init":
             if not sys.stdin.isatty():
                 raise MemoryFailure("interactive_vault_initialization_required")
@@ -273,6 +280,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return inbox.inventory_links(access, after=args.after, limit=args.limit)
         if args.command == "vault-reconcile":
             return inbox.reconcile(access, args.object_id)
+        if args.command == "vault-register":
+            return inbox.register(access)
         value = read_input()
         source = Source(**value.pop("source"))
         return inbox.submit(access, Event(source=source, **value))
