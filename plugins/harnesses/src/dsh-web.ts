@@ -8,6 +8,7 @@ import { MemoryClient } from './client.ts';
 import ToolRuntime from '@deepseek-ai/dsh-tools';
 import { createRecovery } from './dsh-recovery.ts';
 import { PrivateWindow } from './private-window.ts';
+import { PrivateSessionWindow } from './private-session-window.ts';
 import { FingerprintBridge } from './fingerprint-bridge.ts';
 
 export const name = 'dsh-evernook';
@@ -50,6 +51,7 @@ export async function installWeb(ctx: Context, config: Config) {
   const csrf = randomBytes(32).toString('hex');
   const configured = [config.python, config.config, config.access, config.maintenanceAccess].every(Boolean);
   const privateWindow = configured && config.privateCapture ? new PrivateWindow(config) : undefined;
+  const privateSession = configured && config.privateCapture ? new PrivateSessionWindow(config) : undefined;
   const fingerprintBridge = configured && config.fingerprintBridge ? new FingerprintBridge({ ...config, access: config.maintenanceAccess }) : undefined;
   if (!configured && [config.python, config.config, config.access, config.maintenanceAccess].some(Boolean)) {
     throw new Error('evernook:incomplete_web_config');
@@ -140,7 +142,16 @@ export async function installWeb(ctx: Context, config: Config) {
         if (!privateWindow) throw new Error('evernook:private_window_unavailable');
         if (input.action === 'private_status') return json({ result: privateWindow.status() });
         if (input.action === 'private_abandon') { privateWindow.abandon(); return json({ result: privateWindow.status() }); }
+        if (privateSession?.blocksOtherWindow()) throw new Error('evernook:private_window_unavailable');
         await privateWindow.open(input.action === 'private_retry');
+        return json({ result: { requested: true } });
+      }
+      if (typeof input.action === 'string' && ['private_session_open', 'private_session_retry', 'private_session_status', 'private_session_abandon'].includes(input.action) && Object.keys(input).length === 1) {
+        if (!privateSession) throw new Error('evernook:private_window_unavailable');
+        if (input.action === 'private_session_status') return json({ result: privateSession.status() });
+        if (input.action === 'private_session_abandon') { privateSession.abandon(); return json({ result: privateSession.status() }); }
+        if (privateWindow?.blocksOtherWindow()) throw new Error('evernook:private_window_unavailable');
+        await privateSession.open(input.action === 'private_session_retry');
         return json({ result: { requested: true } });
       }
       if (input.action === 'topic_define' || input.action === 'topic_control') {
@@ -196,7 +207,7 @@ export async function installWeb(ctx: Context, config: Config) {
   } catch (error) { lifetime.abort(); fingerprintBridge?.close(); await recovery?.close(); await memory?.close(); throw error; }
   return { handle, async close() {
     if (closed) return;
-    closed = true; unregister?.(); lifetime.abort(); privateWindow?.close(); fingerprintBridge?.close();
+    closed = true; unregister?.(); lifetime.abort(); privateWindow?.close(); privateSession?.close(); fingerprintBridge?.close();
     await recovery?.close();
     await Promise.allSettled([...running]);
     await memory?.close();

@@ -10,6 +10,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let validation = { embedding: 'valid', context: 'invalid', reflection: 'valid', extraction: 'valid' };
   let modelIdentity = { embedding: { provider: 'local-minilm', model: 'paraphrase-multilingual-minilm-l12-v2', version: 'b'.repeat(64) } };
   let protectedState = 'restored_missing';
+  let privateSessionState = { state: 'outcome_unknown', saved_count: 1,
+    session_id: '12345678-1234-4123-8123-123456789abc', pending_event_id: '87654321-4321-4321-8321-cba987654321', sequence: 1 };
   let dailyBudget = { state: 'ready', utc_day: '2030-01-02', reserved_micro_usd: 120000, remaining_micro_usd: 380000, limit_micro_usd: 500000 };
   let graphRole = 'assistant';
   let graphConfirmation = 'not_recorded';
@@ -56,6 +58,9 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.action === 'private_status') return Response.json({ result: { state: 'outcome_unknown',
       session_id: '12345678-1234-4123-8123-123456789abc', event_id: '87654321-4321-4321-8321-cba987654321' } });
     if (body.action === 'private_retry') return Response.json({ result: { requested: true } });
+    if (['private_session_open', 'private_session_retry'].includes(body.action)) return Response.json({ result: { requested: true } });
+    if (body.action === 'private_session_status') return Response.json({ result: privateSessionState });
+    if (body.action === 'private_session_abandon') return Response.json({ result: { state: 'not_started' } });
     if (body.action === 'topic_define') {
       topics = [{ view_id: body.view_id, revision: body.expected_revision + 1, state: 'pending', definition: body.definition }];
       return Response.json({ result: { view_id: body.view_id, revision: body.expected_revision + 1, state: 'pending' } });
@@ -156,6 +161,20 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('privateRetry')).props.onClick();
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
   assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_retry' })));
+  find(tree, node => node.type === 'button' && node.children.includes('privateSessionOpen')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_session_open' })));
+  find(tree, node => node.type === 'button' && node.children.includes('privateSessionCheck')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('privateSessionCount: 1')));
+  find(tree, node => node.type === 'button' && node.children.includes('privateRetry')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_session_retry' })));
+  privateSessionState = { state: 'outcome_unknown' };
+  find(tree, node => node.type === 'button' && node.children.includes('privateSessionCheck')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('privateSessionNoId')));
+  assert.equal(find(tree, node => node.type === 'button' && node.children.includes('privateRetry')), undefined);
   assert.ok(find(tree, node => node.children?.includes('diagnostics')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticPrivate: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));

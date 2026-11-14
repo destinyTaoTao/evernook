@@ -35,6 +35,8 @@ test('web preview rejects cross-site, missing origin, missing CSRF, oversized an
   assert.equal((await web.handle(request({ action: 'read', view: 'status' }, { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
   assert.equal((await web.handle(request({ action: 'private_open' }))).status, 403);
   assert.equal((await web.handle(request({ action: 'private_open' }, { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
+  assert.equal((await web.handle(request({ action: 'private_session_open' }))).status, 403);
+  assert.equal((await web.handle(request({ action: 'private_session_open' }, { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
   assert.equal((await web.handle(request({ action: 'bootstrap', context_mode: 'target_tokenizer' },
     { 'x-evernook-csrf': bootstrap.csrf }))).status, 409);
   assert.equal((await web.handle(request({ action: 'bootstrap', huge: 'a'.repeat(140000) }))).status, 413);

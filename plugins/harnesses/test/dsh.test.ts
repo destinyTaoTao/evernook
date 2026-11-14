@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, mkdir, readFile, readdir, writeFile, rename } from 'node:fs/promises';
@@ -2313,6 +2314,45 @@ for (const failure of ['protected', 'stale', 'canceled', 'active', 'counter-supp
     assert.equal(adapter.requests.length, 1);
     assert.equal(effects, 1);
   } finally { release.resolve(); await resumed?.dispose(); await recovery.close(); await source.dispose(); await host.close(); }
+});
+
+test('private session route fences both window types and never accepts secret fields', async t => {
+  const host = await boot(new Synthetic(), false, true, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  host.ctx.provide('connection', { fetch: { register: () => () => {} } });
+  const web = await installWeb(host.ctx, { python: python!, config: host.config.config, access: host.config.access,
+    maintenanceAccess: join(host.root, 'memory/mcp-access-owner.json'), entry: 'dsh', streamMode: 'durable_text', privateCapture: true });
+  t.after(() => web.close());
+  let csrf = '';
+  const page = async (input: Record<string, unknown>) => web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+    method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+      'content-type': 'application/json', ...(csrf ? { 'x-evernook-csrf': csrf } : {}) }, body: JSON.stringify(input) }));
+  csrf = (await (await page({ action: 'bootstrap' })).json() as { csrf: string }).csrf;
+  const original = childProcess.spawn;
+  const children: (EventEmitter & { stdout: PassThrough; kill: () => boolean })[] = [];
+  childProcess.spawn = (() => {
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => { child.emit('close', null); return true; } });
+    children.push(child);
+    queueMicrotask(() => child.emit('spawn'));
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as unknown as typeof childProcess.spawn;
+  syncBuiltinESMExports();
+  try {
+    assert.equal((await page({ action: 'private_session_open', text: 'synthetic-secret-not-accepted' })).status, 400);
+    assert.equal(children.length, 0);
+    assert.equal((await page({ action: 'private_session_open' })).status, 200);
+    assert.equal((await page({ action: 'private_open' })).status, 400);
+    children[0].emit('close', 1);
+    const unknown = await (await page({ action: 'private_session_status' })).json() as { result: Record<string, unknown> };
+    assert.deepEqual(unknown.result, { state: 'outcome_unknown' });
+    assert.equal((await page({ action: 'private_session_retry' })).status, 400);
+    assert.equal((await page({ action: 'private_open' })).status, 400);
+    assert.equal((await page({ action: 'private_session_abandon' })).status, 200);
+    assert.equal((await page({ action: 'private_open' })).status, 200);
+    assert.equal((await page({ action: 'private_session_open' })).status, 400);
+    children[1].emit('close', 1);
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test('independent service carries real dsh save recall search and survives adapter closure', async t => {

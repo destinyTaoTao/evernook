@@ -15,6 +15,8 @@ export class PrivateWindow {
 
   status(): Status { return { ...this.result }; }
 
+  blocksOtherWindow(): boolean { return Boolean(this.child) || this.result.state === 'outcome_unknown'; }
+
   abandon(): void {
     if (this.child || this.result.state !== 'outcome_unknown') throw new Error('evernook:private_window_unavailable');
     this.result = { state: 'not_started' };
