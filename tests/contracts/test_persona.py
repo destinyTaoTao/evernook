@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize
 from evernook.persona import PERSONA_BLOCKS, PersonaRegistry, PersonaRollback, PersonaSet
@@ -96,6 +97,32 @@ class PersonaTests(unittest.TestCase):
         self.assertEqual(self.personas.view(self.access).blocks["identity"].text, "合成身份A")  # type: ignore[union-attr]
         with self.assertRaisesRegex(MemoryFailure, "persona_revision_conflict"):
             self.set_block("identity", "合成身份C", expected=2)
+
+    def test_persona_writes_recheck_accept_after_initial_authorization(self) -> None:
+        from evernook import pair_client
+        evidence = self.evidence('合成：设置人设。')
+        initial = self.set_block('tone', '合成初始语气', evidence=evidence)
+        path = self.config.parent / 'mcp-access-persona-editor.json'
+        editor = pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                             scopes=('recall', 'accept'))
+        original = self.runtime._require_scope
+        def revoke_after_authorize(access: object, scope: str, action: str, target: str = '') -> object:
+            identity = original(access, scope, action, target)
+            pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
+            return identity
+        actions = (
+            lambda: self.personas.set(editor, PersonaSet('revoked-set', 'tone', '合成新语气', evidence, '合成确认', 1)),
+            lambda: self.personas.rollback(editor, PersonaRollback('revoked-rollback', initial.seq, initial.seq, evidence, '合成确认')),
+        )
+        for action in actions:
+            with patch.object(self.runtime, '_require_scope', side_effect=revoke_after_authorize):
+                with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                    action()
+            pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                        scopes=('recall', 'accept'))
+        current = self.personas.view(self.access)
+        self.assertEqual(current.head_seq, initial.seq)
+        self.assertEqual(current.blocks['tone'].text, '合成初始语气')
 
     def test_evidence_and_content_validation_reject_nonuser_and_sensitive_input(self) -> None:
         with self.assertRaisesRegex(MemoryFailure, "persona_user_confirmation_required"):

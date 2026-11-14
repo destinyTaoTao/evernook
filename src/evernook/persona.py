@@ -142,6 +142,16 @@ class PersonaRegistry:
     def set(self, access: Access, request: PersonaSet) -> PersonaBlockRecord:
         """Trusted local boundary: the caller must establish the user's actual confirmation."""
         self.runtime._require_scope(access, "accept", "persona_set")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if 'accept' not in self.runtime._authorize(access).scopes:
+                raise MemoryFailure('permission_denied')
+            result = self._set(db, request)
+            db.execute("COMMIT")
+        return result
+
+    def _set(self, db: sqlite3.Connection, request: PersonaSet) -> PersonaBlockRecord:
+        """Apply one validated decision inside the caller's existing write transaction."""
         if not isinstance(request, PersonaSet) or type(request.expected_revision) is not int or request.expected_revision < 0:
             raise MemoryFailure("invalid_persona")
         if request.block not in PERSONA_BLOCKS:
@@ -149,33 +159,29 @@ class PersonaRegistry:
         self._validate_text(request.text)
         self._validate_frame(request.request_id, request.evidence_id, request.reason)
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
-        with self.runtime._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._schema(db)
-            existing = db.execute("SELECT fingerprint,response FROM persona_requests_v1 WHERE request_id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("persona_request_conflict")
-                db.execute("COMMIT")
-                value = _decode_response(existing["response"])
-                assert isinstance(value, PersonaBlockRecord)
-                return value
-            head = self._latest(db, request.block)
-            if (0 if head is None else head.revision) != request.expected_revision:
-                raise MemoryFailure("persona_revision_conflict")
-            evidence_version = self._evidence(db, request.evidence_id)
-            now = datetime.now(timezone.utc).isoformat()
-            record = PersonaBlockRecord(request.block, 1 if head is None else head.revision + 1, 0, "set",
-                request.text, request.evidence_id, evidence_version, request.reason, request.request_id, None, now)
-            db.execute("""INSERT INTO persona_versions_v1
-                (block,revision,request_id,action,evidence_id,evidence_version,reason,text,restored_from,recorded_at)
-                VALUES (?,?,?,?,?,?,?,?,NULL,?)""",
-                (record.block, record.revision, record.request_id, record.action, record.evidence_id,
-                 record.evidence_version, record.reason, record.text, record.recorded_at))
-            record = replace_seq(record, db)
-            db.execute("INSERT INTO persona_requests_v1 VALUES (?,?,?,?)",
-                (request.request_id, fingerprint, _encode_response(record), record.recorded_at))
-            db.execute("COMMIT")
+        self._schema(db)
+        existing = db.execute("SELECT fingerprint,response FROM persona_requests_v1 WHERE request_id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("persona_request_conflict")
+            value = _decode_response(existing["response"])
+            assert isinstance(value, PersonaBlockRecord)
+            return value
+        head = self._latest(db, request.block)
+        if (0 if head is None else head.revision) != request.expected_revision:
+            raise MemoryFailure("persona_revision_conflict")
+        evidence_version = self._evidence(db, request.evidence_id)
+        now = datetime.now(timezone.utc).isoformat()
+        record = PersonaBlockRecord(request.block, 1 if head is None else head.revision + 1, 0, "set",
+            request.text, request.evidence_id, evidence_version, request.reason, request.request_id, None, now)
+        db.execute("""INSERT INTO persona_versions_v1
+            (block,revision,request_id,action,evidence_id,evidence_version,reason,text,restored_from,recorded_at)
+            VALUES (?,?,?,?,?,?,?,?,NULL,?)""",
+            (record.block, record.revision, record.request_id, record.action, record.evidence_id,
+             record.evidence_version, record.reason, record.text, record.recorded_at))
+        record = replace_seq(record, db)
+        db.execute("INSERT INTO persona_requests_v1 VALUES (?,?,?,?)",
+            (request.request_id, fingerprint, _encode_response(record), record.recorded_at))
         return record
 
     def rollback(self, access: Access, request: PersonaRollback) -> PersonaRollbackResult:
@@ -188,6 +194,8 @@ class PersonaRegistry:
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if 'accept' not in self.runtime._authorize(access).scopes:
+                raise MemoryFailure('permission_denied')
             self._schema(db)
             existing = db.execute("SELECT fingerprint,response FROM persona_requests_v1 WHERE request_id=?", (request.request_id,)).fetchone()
             if existing is not None:

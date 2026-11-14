@@ -37,6 +37,13 @@ class MemoryManagement:
             raise MemoryFailure("permission_denied")
         return identity
 
+    def _authorize_locked(self, access: Access) -> Any:
+        # Pairing updates serialize on the same write lock; recheck after acquiring it.
+        identity = self.runtime._authorize(access)
+        if not {'recall', 'maintain', 'accept'}.issubset(identity.scopes):
+            raise MemoryFailure('permission_denied')
+        return identity
+
     @staticmethod
     def _schema(db: sqlite3.Connection) -> None:
         # Only keyed fingerprints and IDs: previews/receipts must not retain a second
@@ -376,6 +383,14 @@ class MemoryManagement:
         kind = operation["kind"]
         if kind not in _OPERATIONS:
             raise MemoryFailure("invalid_management_operation")
+        if kind == 'persona_set':
+            from .persona import PERSONA_BLOCKS, PersonaRegistry
+            if set(operation) != {'kind', 'block', 'text'} or operation['block'] not in PERSONA_BLOCKS:
+                raise MemoryFailure('invalid_management_operation')
+            PersonaRegistry._validate_text(operation['text'])
+            if operation['text'] and not operation['text'].strip():
+                raise MemoryFailure('invalid_management_text')
+            return
         target = "message_id" if kind.startswith("source_") else "tag_id"
         extra = {"text"} if kind == "source_correct" else {"label"} if kind == "profile_revise" else set()
         if set(operation) != {"kind", target} | extra:
@@ -396,6 +411,13 @@ class MemoryManagement:
         snapshot: dict[str, Any] = {"sources": []}
         details: dict[str, Any] = {"sources": []}
         confirmation_source: str | None = None
+        if kind == 'persona_set':
+            from .persona import PersonaRegistry
+            current_persona = PersonaRegistry._latest(db, operation['block'])
+            snapshot['persona'] = [operation['block'], 0 if current_persona is None else current_persona.revision]
+            details['previous'] = None if current_persona is None else {
+                'block': current_persona.block, 'revision': current_persona.revision, 'text': current_persona.text}
+            return snapshot, details
         if kind.startswith("source_"):
             source_ids = [operation["message_id"]]
             snapshot["dependencies"] = self._dependencies(db, operation["message_id"])
@@ -482,6 +504,7 @@ class MemoryManagement:
         self._operation(operation)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            identity = self._authorize_locked(access)
             self._schema(db)
             # Expired unconsumed previews contain no evidence and need no permanent retention.
             db.execute("DELETE FROM management_previews_v1 WHERE outcome IS NULL AND expires<?", (time.time(),))
@@ -503,6 +526,7 @@ class MemoryManagement:
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(operation).encode(), hashlib.sha256)
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            identity = self._authorize_locked(access)
             self._schema(db)
             row = db.execute("SELECT * FROM management_previews_v1 WHERE id=?", (proposal_id,)).fetchone()
             if row is None or row["client_id"] != identity.client_id or not hmac.compare_digest(bytes(row["fingerprint"]), fingerprint):
@@ -527,8 +551,15 @@ class MemoryManagement:
                 return self.runtime._persist_event(db, event, event, digest).message_id
 
             kind = operation["kind"]
-            target: str = operation["message_id"] if kind.startswith("source_") else operation["tag_id"]
-            if kind.startswith("source_"):
+            target: str = operation['block'] if kind == 'persona_set' else operation["message_id"] if kind.startswith("source_") else operation["tag_id"]
+            if kind == 'persona_set':
+                from .persona import PersonaRegistry, PersonaSet
+                text = operation['text']
+                confirmation_id = evidence(text if text else '管理页面确认清空人设 ' + target, ':persona')
+                result_persona = PersonaRegistry(self.runtime)._set(db, PersonaSet(proposal_id, target, text,
+                    confirmation_id, 'Trusted management page confirmed ' + proposal_id, snapshot['persona'][1]))
+                revision, state = result_persona.revision, 'set' if text else 'cleared'
+            elif kind.startswith("source_"):
                 text = operation.get("text", "管理页面确认停止召回来源 " + target)
                 confirmation_id = evidence(text, ":source")
                 change = Change(proposal_id, target, snapshot["sources"][0][1],
@@ -563,6 +594,7 @@ class MemoryManagement:
         _identifier(proposal_id)
         with self.runtime._connection() as db:
             db.execute('BEGIN IMMEDIATE')
+            identity = self._authorize_locked(access)
             self._schema(db)
             row = db.execute('SELECT * FROM management_previews_v1 WHERE id=?', (proposal_id,)).fetchone()
             if row is None or row['client_id'] != identity.client_id:
@@ -575,4 +607,4 @@ class MemoryManagement:
             return outcome
 
 
-_OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise", "profile_reopen"}
+_OPERATIONS = {"source_suppress", "source_correct", "profile_confirm", "profile_reject", "profile_suppress", "profile_revise", "profile_reopen", "persona_set"}

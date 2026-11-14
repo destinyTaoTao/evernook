@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -67,6 +69,120 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(current['text'], '合成：温和')
         self.assertIsNone(current['evidence_id'])
         self.assertNotEqual(old, self.ui.fingerprint(self.access, view='persona', query='温和')['token'])
+
+    def test_persona_preview_confirm_stale_cancel_clear_and_authority(self) -> None:
+        from evernook.persona import PersonaRegistry
+        operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成：温和语气'}
+        preview = self.ui.preview(self.access, operation)
+        stale = self.ui.preview(self.access, {**operation, 'text': '合成：活泼语气'})
+        with self.runtime._connection() as db:
+            stored = db.execute('SELECT snapshot FROM management_previews_v1 WHERE id=?', (preview['proposal_id'],)).fetchone()[0]
+        self.assertNotIn(operation['text'], stored)
+        with self.assertRaisesRegex(MemoryFailure, 'management_preview_mismatch'):
+            self.ui.confirm(self.access, preview['proposal_id'], {**operation, 'text': '合成：擅自改变'})
+        outcome = self.ui.confirm(self.access, preview['proposal_id'], operation)
+        self.assertEqual(outcome['revision'], 1)
+        self.assertEqual(self.ui.confirm(self.access, preview['proposal_id'], operation), outcome)
+        self.assertEqual(PersonaRegistry(self.runtime).view(self.access).blocks['tone'].text, operation['text'])
+        original = self.runtime.read(self.access, outcome['confirmation_id'])
+        self.assertEqual(original.event.text, operation['text'])
+        self.assertEqual(original.event.role, 'user')
+        with self.assertRaisesRegex(MemoryFailure, 'management_preview_stale'):
+            self.ui.confirm(self.access, stale['proposal_id'], {**operation, 'text': '合成：活泼语气'})
+        cancel = self.ui.preview(self.access, operation)
+        self.ui.cancel(self.access, cancel['proposal_id'])
+        with self.assertRaisesRegex(MemoryFailure, 'management_preview_canceled'):
+            self.ui.confirm(self.access, cancel['proposal_id'], operation)
+        for invalid in ({**operation, 'block': 'unknown'}, {**operation, 'text': 'password=synthetic-secret-123'},
+                        {**operation, 'text': '   '},
+                        {**operation, 'approved': True}):
+            with self.subTest(invalid=invalid), self.assertRaises(MemoryFailure):
+                self.ui.preview(self.access, invalid)
+        ordinary = pair_client(self.config, client_id='persona-writer', entry='persona-writer',
+            access_path=self.config.parent / 'mcp-access-persona-writer.json', scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.ui.preview(ordinary, operation)
+        clearing = {**operation, 'text': ''}
+        clear_preview = self.ui.preview(self.access, clearing)
+        cleared = self.ui.confirm(self.access, clear_preview['proposal_id'], clearing)
+        self.assertEqual(cleared['revision'], 2)
+        self.assertEqual(PersonaRegistry(self.runtime).view(self.access).blocks['tone'].text, '')
+        self.assertTrue(self.runtime.read(self.access, cleared['confirmation_id']).event.text)
+
+    def test_persona_confirmation_rolls_back_evidence_and_revision_on_failure(self) -> None:
+        from evernook.persona import PersonaRegistry
+        operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成：原子提交'}
+        preview = self.ui.preview(self.access, operation)
+        before = self.runtime.status(self.access).messages
+        real_set = PersonaRegistry._set
+        def fail_after_write(registry: object, db: object, request: object) -> object:
+            real_set(registry, db, request)
+            raise RuntimeError('synthetic interrupted commit')
+        with patch.object(PersonaRegistry, '_set', autospec=True, side_effect=fail_after_write):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic interrupted commit'):
+                self.ui.confirm(self.access, preview['proposal_id'], operation)
+        self.assertEqual(self.runtime.status(self.access).messages, before)
+        self.assertIsNone(PersonaRegistry(self.runtime).view(self.access).blocks['tone'])
+        outcome = self.ui.confirm(self.access, preview['proposal_id'], operation)
+        self.assertEqual(outcome['revision'], 1)
+        self.assertEqual(self.runtime.status(self.access).messages, before + 1)
+
+    def test_concurrent_persona_confirmations_cannot_both_write_same_revision(self) -> None:
+        operations = [{'kind': 'persona_set', 'block': 'tone', 'text': f'合成语气{index}'} for index in (1, 2)]
+        proposals = [self.ui.preview(self.access, operation)['proposal_id'] for operation in operations]
+        barrier = threading.Barrier(2)
+        def confirm(index: int) -> str:
+            barrier.wait(timeout=10)
+            try:
+                result = self.ui.confirm(self.access, proposals[index], operations[index])
+                return 'saved-' + str(result['revision'])
+            except MemoryFailure as error:
+                return error.code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(confirm, (0, 1)))
+        self.assertCountEqual(outcomes, ['saved-1', 'management_preview_stale'])
+
+    def test_persona_confirmation_rechecks_permissions_after_initial_authorization(self) -> None:
+        from evernook.persona import PersonaRegistry
+        path = self.config.parent / 'mcp-access-persona-editor.json'
+        editor = pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                             scopes=('recall', 'maintain', 'accept'))
+        operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成撤权测试'}
+        preview = self.ui.preview(editor, operation)
+        original_authorize = self.ui._authorize
+        def revoke_after_authorize(access: object) -> object:
+            identity = original_authorize(access)
+            pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
+            return identity
+        with patch.object(self.ui, '_authorize', side_effect=revoke_after_authorize):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.ui.confirm(editor, preview['proposal_id'], operation)
+        self.assertIsNone(PersonaRegistry(self.runtime).view(self.access).blocks['tone'])
+        pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                    scopes=('recall', 'maintain', 'accept'))
+        self.assertEqual(self.ui.confirm(editor, preview['proposal_id'], operation)['revision'], 1)
+
+    def test_persona_preview_and_cancel_recheck_permissions_under_write_lock(self) -> None:
+        path = self.config.parent / 'mcp-access-persona-editor.json'
+        editor = pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                             scopes=('recall', 'maintain', 'accept'))
+        operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成撤权测试'}
+        existing = self.ui.preview(editor, operation)
+        original_authorize = self.ui._authorize
+        def revoke_after_authorize(access: object) -> object:
+            identity = original_authorize(access)
+            pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
+            return identity
+        for action in ('preview', 'cancel'):
+            with self.subTest(action=action), patch.object(self.ui, '_authorize', side_effect=revoke_after_authorize):
+                with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                    if action == 'preview':
+                        self.ui.preview(editor, operation)
+                    else:
+                        self.ui.cancel(editor, existing['proposal_id'])
+            pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
+                        scopes=('recall', 'maintain', 'accept'))
+        self.assertEqual(self.ui.confirm(editor, existing['proposal_id'], operation)['revision'], 1)
 
     def test_topic_settings_projection_tracks_versions_and_never_returns_snapshot_text(self) -> None:
         from evernook.topic_views import TopicViewDefinition, TopicViews

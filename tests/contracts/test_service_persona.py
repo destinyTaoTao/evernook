@@ -122,6 +122,23 @@ class ServicePersonaTests(unittest.TestCase):
             results = list(pool.map(change, (1, 2)))
         self.assertCountEqual(results, ['saved-1', 'persona_revision_conflict'])
 
+    def test_trusted_service_persona_preview_confirm_and_source_are_atomic(self) -> None:
+        client = self.start(activate=True)
+        operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成服务确认的人设'}
+        def manage(payload: dict[str, object]) -> object:
+            return client.call(self.owner, 'cli', {'command': 'manage', 'input': payload})
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.call(self.ordinary, 'cli', {'command': 'manage', 'input': {'action': 'preview', 'operation': operation}})
+        preview = manage({'action': 'preview', 'operation': operation})
+        outcome = manage({'action': 'confirm', 'proposal_id': preview['proposal_id'], 'operation': operation})
+        self.assertEqual(outcome['revision'], 1)
+        self.assertEqual(manage({'action': 'confirm', 'proposal_id': preview['proposal_id'], 'operation': operation}), outcome)
+        source = client.call(self.owner, 'read', {'message_id': outcome['confirmation_id']})
+        self.assertEqual(source['event']['role'], 'user')
+        self.assertEqual(source['event']['text'], operation['text'])
+        persona = manage({'action': 'read', 'view': 'persona'})
+        self.assertEqual(persona['items'][0]['text'], operation['text'])
+
 
 if __name__ == '__main__':
     unittest.main()
