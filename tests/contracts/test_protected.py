@@ -38,6 +38,68 @@ class ProtectedTests(unittest.TestCase):
         self.event = Event(Source("synthetic", "session", "main", "1"), "user", 1, None,
                            "complete", "合成🙂\r\npassword=synthetic-protected-sentinel-123")
 
+    def test_stream_provenance_survives_interrupted_link_and_rejects_mismatch(self) -> None:
+        from evernook.vault_crypto import _decrypt_event, _unlock
+        event = replace(self.event, sensitive=True)
+        staged = self.inbox.stage(self.access, event, stream_provenance=True)
+        self.assertEqual(staged.version, 2)
+        self.assertEqual(staged.state, 'protected_pending_link')
+        with self.assertRaisesRegex(MemoryFailure, 'source_conflict'):
+            self.inbox.stage(self.access, event)
+        linked = self.inbox.submit(self.access, event, stream_provenance=True)
+        self.assertEqual(linked.object_id, staged.object_id)
+        self.assertEqual(linked.state, 'protected_linked')
+        private = _unlock(self.inbox, self.password)
+        with self.inbox._connection() as db:
+            row = db.execute('SELECT * FROM objects WHERE id=?', (linked.object_id,)).fetchone()
+            value, _ = self.inbox._verified(row)
+            clear = json.loads(SealedBox(private).decrypt(bytes.fromhex(value['ciphertext'])))
+            self.assertEqual(clear['provenance'], {'format': 'buffered_text_stream',
+                'gaps': ['private_stream_boundaries_not_saved']})
+            self.assertEqual(_decrypt_event(self.inbox, row, private), event)
+            value['bound']['version'] = 1
+            db.execute('UPDATE objects SET envelope=? WHERE id=?', (json.dumps(value), linked.object_id))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            self.inbox.status(self.access, linked.object_id)
+
+    def test_legacy_stream_retry_recovers_v1_without_fabricating_provenance(self) -> None:
+        event = replace(self.event, sensitive=True)
+        legacy = self.inbox.stage(self.access, event)
+        recovered = self.inbox.submit(self.access, event, stream_provenance=True)
+        self.assertEqual(recovered.object_id, legacy.object_id)
+        self.assertEqual(recovered.version, 1)
+        self.assertEqual(recovered.state, 'protected_linked')
+        with self.assertRaisesRegex(MemoryFailure, 'source_conflict'):
+            self.inbox.submit(self.access, replace(event, text='different'), stream_provenance=True)
+
+    def test_stream_provenance_rejects_incomplete_or_unmarked_events(self) -> None:
+        valid = replace(self.event, sensitive=True)
+        for event in (self.event, replace(valid, completion='partial'), replace(valid, completion='canceled'),
+                      replace(valid, completion='failed'), replace(valid, role='tool')):
+            with self.subTest(event=event), self.assertRaisesRegex(MemoryFailure, 'invalid_protected_provenance'):
+                self.inbox.stage(self.access, event, stream_provenance=True)
+        self.assertEqual(self.inbox.inventory(self.access).objects, ())
+
+    def test_signed_ciphertext_with_missing_stream_manifest_is_rejected_on_unlock(self) -> None:
+        from evernook.vault_crypto import _decrypt_event, _unlock
+        event = replace(self.event, sensitive=True)
+        staged = self.inbox.stage(self.access, event, stream_provenance=True)
+        private = _unlock(self.inbox, self.password)
+        with self.inbox._connection() as db:
+            row = db.execute('SELECT * FROM objects WHERE id=?', (staged.object_id,)).fetchone()
+            value, _ = self.inbox._verified(row)
+            clear = json.loads(SealedBox(private).decrypt(bytes.fromhex(value['ciphertext'])))
+            del clear['provenance']
+            value['ciphertext'] = SealedBox(self.inbox.recipient).encrypt(json.dumps(clear).encode()).hex()
+            from evernook.runtime import _json
+            unsigned = {'bound': value['bound'], 'ciphertext': value['ciphertext']}
+            value['signature'] = self.inbox._writer().sign(_json(unsigned).encode()).signature.hex()
+            db.execute('UPDATE objects SET envelope=? WHERE id=?', (_json(value), staged.object_id))
+            changed = db.execute('SELECT * FROM objects WHERE id=?', (staged.object_id,)).fetchone()
+            self.inbox._verified(changed)
+            with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+                _decrypt_event(self.inbox, changed, private)
+
     def test_admin_inventory_pages_verified_linked_and_pending_objects_without_plaintext(self) -> None:
         linked = self.inbox.submit(self.access, self.event)
         other_path = self.config.parent / 'mcp-access-other.json'
@@ -318,6 +380,22 @@ class ProtectedTests(unittest.TestCase):
             self.assertEqual(receipt.state, "protected_linked")
             self.assertEqual(self.inbox.reconcile(self.access, receipt.object_id), receipt)
         self.assertEqual(self.runtime.status(self.access).messages, 2)
+
+    def test_stream_process_crashes_recover_signed_version_after_both_commits(self) -> None:
+        from evernook.vault_crypto import _decrypt_event, _unlock
+        for phase, code in (('before-link', 71), ('after-core', 72)):
+            completed = subprocess.run([sys.executable, str(Path(__file__).with_name('protected_worker.py')), str(self.config),
+                str(self.access_path), str(self.root / 'inbox'), str(self.root / 'keys'), phase, 'stream'],
+                capture_output=True, timeout=30)
+            self.assertEqual(completed.returncode, code, completed.stderr.decode())
+            pending = self.inbox.pending(self.access)
+            self.assertEqual(len(pending), 1)
+            linked = self.inbox.reconcile(self.access, pending[0].object_id)
+            self.assertEqual(linked.version, 2)
+            with self.inbox._connection() as db:
+                row = db.execute('SELECT * FROM objects WHERE id=?', (linked.object_id,)).fetchone()
+                self.assertEqual(_decrypt_event(self.inbox, row, _unlock(self.inbox, self.password)).text,
+                                 'password=synthetic-crash-inbox-sentinel-123')
 
     def test_ciphertext_tamper_and_object_exchange_are_rejected_before_ordinary_link(self) -> None:
         one = self.inbox.stage(self.access, self.event)

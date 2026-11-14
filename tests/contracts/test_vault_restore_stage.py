@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -87,6 +88,31 @@ class VaultRestoreStageTests(unittest.TestCase):
         self.assertNotIn(self.private.text.encode(), b''.join(p.read_bytes() for p in (self.root / 'staged-vault').rglob('*') if p.is_file()))
         client = self.start()
         self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'restored_missing')
+
+    def test_stream_provenance_survives_backup_restore_and_attach(self) -> None:
+        event = replace(self.private, source=replace(self.private.source, event='stream'))
+        stream = self.inbox.submit(self.owner, event, stream_provenance=True)
+        create_backup(self.runtime, self.owner, self.root / 'backup-with-stream', self.root / 'backup-keys')
+        self.destination = self.root / 'restored-with-stream'
+        with OfflineRecovery(self.root / 'backup-with-stream', self.destination, Path(self.keys.recovery_file), self.password) as review:
+            review.publish(ACKNOWLEDGEMENT)
+        self.new_owner = MemoryRuntime(self.destination / 'runtime.json').access_from_file(self.destination / 'mcp-access-owner.json')
+        self.prepare_stage()
+        self.assertEqual(self.restore().protected_objects, 2)
+        container = self.root / 'staged-vault'
+        entry_access = pair_client(self.destination / 'runtime.json', client_id='synthetic-stream-entry', entry='owner',
+                                   access_path=self.destination / 'mcp-access-stream-entry.json', service_owner=True)
+        self.assertEqual(attach(self.destination / 'runtime.json', self.new_owner, container,
+                                b'synthetic-vault-password-212').protected_objects, 2)
+        restored = ProtectedInbox(MemoryRuntime(self.destination / 'runtime.json', service_owner=True),
+                                  container / 'inbox', container / 'keys')
+        with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
+            LocalDisplayRequest(restored, self.new_owner, stream.object_id, 'synthetic', desktop=lambda: True)
+        request = LocalDisplayRequest(restored, entry_access, stream.object_id, 'synthetic', desktop=lambda: True)
+        self.assertEqual(request.version, 2)
+        displayed: list[str] = []
+        request.display_once(b'synthetic-vault-password-212', displayed.append)
+        self.assertEqual(displayed, [event.text])
 
     def test_wrong_password_and_cancel_never_publish(self) -> None:
         self.prepare_stage()

@@ -152,7 +152,8 @@ class LocalVaultWindow:
         self._closed = False
         root.title("EverNook — 本地单次查看")
         root.resizable(False, False)
-        description = (f"调用端：{request.access.client_id}\n对象：{request.object_id}\n凭证版本：{request.version}\n"
+        provenance = ('来源分片与时序未归档。' if request.version == 2 else '旧版来源完整性未知。')
+        description = (f"调用端：{request.access.client_id}\n对象：{request.object_id}\n凭证版本：{request.version}\n{provenance}\n"
                        f"操作：仅本窗口展示\n用途：{request.purpose}\n明文不会交给 harness。关闭后需重新确认。")
         tk.Label(root, text=description, justify="left", wraplength=520).pack(padx=20, pady=12)
         self.password = tk.Entry(root, show="*", exportselection=False, width=48)

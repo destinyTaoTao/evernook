@@ -36,6 +36,26 @@ class LocalVaultTests(unittest.TestCase):
     def request(self) -> LocalDisplayRequest:
         return LocalDisplayRequest(self.inbox, self.access, self.receipt.object_id, "合成本地核对", clock=lambda: self.now[0], desktop=lambda: self.desktop[0])
 
+    def test_stream_version_still_requires_one_time_local_authorization(self) -> None:
+        event = replace(self.event, source=replace(self.event.source, event='stream'), sensitive=True)
+        receipt = self.inbox.submit(self.access, event, stream_provenance=True)
+        request = LocalDisplayRequest(self.inbox, self.access, receipt.object_id, 'synthetic',
+                                      clock=lambda: self.now[0], desktop=lambda: self.desktop[0])
+        self.assertEqual(request.version, 2)
+        result: list[str] = []
+        with self.assertRaises(MemoryFailure):
+            request.display_once(b'synthetic-wrong-password', result.append)
+        with self.assertRaises(MemoryFailure):
+            request.display_once(self.password, result.append)
+        self.assertEqual(result, [])
+        assert receipt.message is not None
+        control = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event='control-stream'),
+                                                          text='synthetic suppression', sensitive=False))
+        self.runtime.change(self.access, Change('synthetic-stream-suppress', receipt.message.message_id, 1,
+                                                'suppress', control.message_id, 'synthetic'))
+        with self.assertRaisesRegex(MemoryFailure, 'vault_source_unavailable'):
+            LocalDisplayRequest(self.inbox, self.access, receipt.object_id, 'synthetic', desktop=lambda: True)
+
     def test_hidden_display_window_closes_when_session_check_fails(self) -> None:
         root = tk.Tk()
         root.withdraw()

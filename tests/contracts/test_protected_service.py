@@ -165,11 +165,42 @@ class ProtectedServiceTests(unittest.TestCase):
         private = _unlock(inbox, b'synthetic service password')
         with inbox._connection() as db:
             row = db.execute('SELECT * FROM objects WHERE id=?', (receipt['object_id'],)).fetchone()
+            self.assertEqual(inbox._receipt(row).version, 2)
             self.assertEqual(_decrypt_event(inbox, row, private).text, '合成🙂\r\nsynthetic-private-stream-223')
         contents = b''.join(path.read_bytes() for root in (self.root / 'ordinary', self.root / 'inbox')
                             for path in root.rglob('*') if path.is_file() and not path.name.endswith('.lock'))
         self.assertNotIn(b'synthetic-private-stream-223', contents)
         self.assertNotIn(b'synthetic-private-cli-stream-223', contents)
+
+    def test_legacy_buffered_retry_reports_unknown_provenance(self) -> None:
+        from evernook import Capture
+        client = self.start(configured=True)
+        legacy = client.protected_receive(self.owner, self.event)
+        request = Capture(replace(self.event, text=''), 'message', text_chunks=(self.event.text,))
+        result = client.protected_capture(self.owner, request)
+        self.assertEqual(result['object_id'], legacy['object_id'])
+        self.assertEqual(result['status'], 'saved')
+        self.assertEqual(result['provenance_status'], 'legacy_unknown')
+        self.assertEqual(result['gaps'], ['private_stream_boundaries_not_saved'])
+
+    @unittest.skipUnless(os.environ.get('EVERNOOK_TEST_082_PYTHON'), 'Core 0.1.82 not supplied')
+    def test_new_stream_client_fails_closed_against_082_service(self) -> None:
+        from evernook import Capture
+        endpoint = self.config.parent / 'memory-service.json'
+        self.process = subprocess.Popen([os.environ['EVERNOOK_TEST_082_PYTHON'], '-B', '-m', 'evernook.service',
+            '--config', str(self.config), '--activate-owner', str(self.owner_path),
+            '--protected-inbox', str(self.root / 'inbox'), '--protected-keys', str(self.root / 'keys')],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=dict(os.environ, PYTHONPATH=''))
+        deadline = time.monotonic() + 20
+        while not endpoint.exists():
+            if self.process.poll() is not None or time.monotonic() >= deadline:
+                self.fail('synthetic Core 0.1.82 service did not start')
+            time.sleep(.05)
+        client = ServiceClient(self.config)
+        request = Capture(replace(self.event, text=''), 'message', text_chunks=(self.event.text,))
+        self.assertEqual(client.protected_capture(self.owner, request)['status'], 'outcome_unknown')
+        self.assertEqual(client.protected_inventory(self.owner)['objects'], [])
+        self.assertEqual(client.protected_receive(self.owner, self.event)['version'], 1)
 
     def test_private_session_cli_rejects_invalid_resume_before_window(self) -> None:
         self.start(configured=True)

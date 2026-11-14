@@ -67,11 +67,15 @@ def capture(client: _Client, access: Access, request: Capture, *, timeout: float
     if cancel is not None and cancel.is_set():
         return {'status': 'not_submitted', 'gaps': ['canceled_before_submission'], 'protected_original_saved': False}
     try:
-        result = client.call(access, 'protected-receive', {'event': asdict(event)}, timeout=timeout, cancel=cancel)
+        arguments: dict[str, Any] = {'event': asdict(event)}
+        if stream_gap:
+            arguments['stream_provenance'] = True
+        result = client.call(access, 'protected-receive', arguments, timeout=timeout, cancel=cancel)
         message = result.get('message') if isinstance(result, dict) else None
         if (not isinstance(result, dict) or result.get('state') != 'protected_linked'
                 or result.get('encrypted_original_saved') is not True or not isinstance(message, dict)
-                or type(result.get('version')) is not int or result['version'] != 1
+                or type(result.get('version')) is not int
+                or result['version'] not in ((1, 2) if stream_gap else (1,))
                 or not isinstance(result.get('key_id'), str) or not re.fullmatch(r'[0-9a-f]{64}', result['key_id'])
                 or message.get('status') != 'projection_only' or type(message.get('content_version')) is not int
                 or message['content_version'] != 1 or not isinstance(message.get('received_at'), str)
@@ -83,7 +87,10 @@ def capture(client: _Client, access: Access, request: Capture, *, timeout: float
         identifiers = [result.get('inbox_id'), result.get('object_id'), message.get('message_id')]
         if any(not isinstance(value, str) or str(UUID(value)) != value for value in identifiers):
             raise ValueError()
-        return {'status': 'saved', 'gaps': stream_gap, 'protected_original_saved': True,
+        receipt: dict[str, Any] = {'status': 'saved', 'gaps': stream_gap, 'protected_original_saved': True,
                 'inbox_id': identifiers[0], 'object_id': identifiers[1], 'message_id': identifiers[2]}
+        if stream_gap:
+            receipt['provenance_status'] = 'authenticated' if result['version'] == 2 else 'legacy_unknown'
+        return receipt
     except Exception:
         return {'status': 'outcome_unknown', 'gaps': ['write_not_confirmed', *stream_gap], 'protected_original_saved': None}

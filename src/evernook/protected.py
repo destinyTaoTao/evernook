@@ -231,7 +231,7 @@ class ProtectedInbox:
             bound = value["bound"]
             if (set(bound) != {"inbox_id", "object_id", "key_id", "version", "projection", "fingerprint"}
                     or bound["inbox_id"] != self.inbox_id or bound["object_id"] != row["id"]
-                    or bound["key_id"] != self.public["key_id"] or type(bound["version"]) is not int or bound["version"] != 1
+                    or bound["key_id"] != self.public["key_id"] or type(bound["version"]) is not int or bound["version"] not in (1, 2)
                     or bound["fingerprint"] != bytes(row["fingerprint"]).hex()):
                 raise ValueError()
             cipher = bytes.fromhex(value["ciphertext"])
@@ -250,7 +250,7 @@ class ProtectedInbox:
             raise MemoryFailure("protected_object_corrupt") from None
 
     def _receipt(self, row: sqlite3.Row) -> ProtectedReceipt:
-        self._verified(row)
+        value, _ = self._verified(row)
         if (row["state"] not in {"protected_pending_link", "protected_linked"}
                 or (row["state"] == "protected_linked") != (row["receipt"] is not None)):
             raise MemoryFailure("protected_object_corrupt")
@@ -267,7 +267,7 @@ class ProtectedInbox:
                         or saved["reference"] != self._reference(str(row["id"]), str(row["envelope"]))):
                     raise MemoryFailure("protected_link_unavailable")
                 message = Receipt(**json.loads(saved["receipt"]))
-        return ProtectedReceipt(self.inbox_id, str(row["id"]), str(self.public["key_id"]), 1, str(row["state"]),
+        return ProtectedReceipt(self.inbox_id, str(row["id"]), str(self.public["key_id"]), int(value['bound']['version']), str(row["state"]),
                                 message)
 
     def _reference(self, object_id: str, envelope: str) -> str:
@@ -301,8 +301,10 @@ class ProtectedInbox:
             self._register_known()
         return {'inbox_id': self.inbox_id, 'registered': True}
 
-    def stage(self, access: Access, event: Event) -> ProtectedReceipt:
+    def stage(self, access: Access, event: Event, *, stream_provenance: bool = False) -> ProtectedReceipt:
         from .service_gate import ownership_gate
+        if type(stream_provenance) is not bool:
+            raise MemoryFailure('invalid_protected_provenance')
         self.runtime._require_scope(access, 'capture', 'protected_stage')
         with ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout):
             identity = self.runtime._authorize(access)
@@ -319,15 +321,21 @@ class ProtectedInbox:
                 identity = self.runtime._authorize(access)
                 if 'capture' not in identity.scopes:
                     raise MemoryFailure('permission_denied')
-                result = self._stage_authorized(identity.entry, event)
+                result = (self._stage_authorized(identity.entry, event, stream_provenance=True)
+                          if stream_provenance else self._stage_authorized(identity.entry, event))
                 core.execute('COMMIT')
                 return result
 
-    def _stage_authorized(self, entry: str, event: Event) -> ProtectedReceipt:
+    def _stage_authorized(self, entry: str, event: Event, *, stream_provenance: bool = False) -> ProtectedReceipt:
         self.runtime._validate_event(event)
+        if type(stream_provenance) is not bool:
+            raise MemoryFailure('invalid_protected_provenance')
+        if stream_provenance and (event.sensitive is not True or event.completion != 'complete' or event.role == 'tool'):
+            raise MemoryFailure('invalid_protected_provenance')
         if event.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
-        fingerprint = hmac.digest(self.runtime._fingerprint_key, b"protected-event-v1" + _json(asdict(event)).encode(), hashlib.sha256)
+        provenance = {'format': 'buffered_text_stream', 'gaps': ['private_stream_boundaries_not_saved']} if stream_provenance else None
+        fingerprint = hmac.digest(self.runtime._fingerprint_key, (b'protected-event-v2' + _json({'event': asdict(event), 'provenance': provenance}).encode()) if provenance else (b'protected-event-v1' + _json(asdict(event)).encode()), hashlib.sha256)
         source = _json(asdict(event.source))
         sender = self._writer()
         with self._connection() as db:
@@ -335,14 +343,24 @@ class ProtectedInbox:
             previous = db.execute("SELECT * FROM objects WHERE source=?", (source,)).fetchone()
             if previous is not None:
                 if not hmac.compare_digest(bytes(previous["fingerprint"]), fingerprint):
-                    raise MemoryFailure("source_conflict")
+                    # Before v2, buffered streams and ordinary text used the same
+                    # fingerprint. An exact retry can recover the old receipt, but
+                    # cannot reconstruct whether stream boundaries existed.
+                    legacy = hmac.digest(self.runtime._fingerprint_key, b'protected-event-v1' + _json(asdict(event)).encode(), hashlib.sha256)
+                    value, _ = self._verified(previous)
+                    if not (stream_provenance and value['bound']['version'] == 1
+                            and hmac.compare_digest(bytes(previous['fingerprint']), legacy)):
+                        raise MemoryFailure("source_conflict")
                 return self._receipt(previous)
             object_id = str(uuid4())
             projection = replace(event, text="[PROTECTED:ENCRYPTED_ORIGINAL]", protected_source=True)
-            bound = {"inbox_id": self.inbox_id, "object_id": object_id, "key_id": self.public["key_id"], "version": 1,
+            bound = {"inbox_id": self.inbox_id, "object_id": object_id, "key_id": self.public["key_id"], "version": 2 if provenance else 1,
                      "projection": asdict(projection), "fingerprint": fingerprint.hex()}
             try:
-                cipher = SealedBox(self.recipient).encrypt(_json({"bound": bound, "event": asdict(event)}).encode())
+                clear = {"bound": bound, "event": asdict(event)}
+                if provenance:
+                    clear['provenance'] = provenance
+                cipher = SealedBox(self.recipient).encrypt(_json(clear).encode())
                 unsigned = {"bound": bound, "ciphertext": cipher.hex()}
                 envelope = {**unsigned, "signature": sender.sign(_json(unsigned).encode()).signature.hex()}
             except Exception:
@@ -406,8 +424,8 @@ class ProtectedInbox:
             db.execute("COMMIT")
         return result
 
-    def submit(self, access: Access, event: Event) -> ProtectedReceipt:
-        staged = self.stage(access, event)
+    def submit(self, access: Access, event: Event, *, stream_provenance: bool = False) -> ProtectedReceipt:
+        staged = self.stage(access, event, stream_provenance=stream_provenance)
         return self.reconcile(access, staged.object_id)
 
     def status(self, access: Access, object_id: str) -> ProtectedReceipt:

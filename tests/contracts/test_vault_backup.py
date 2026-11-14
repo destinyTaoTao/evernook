@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from evernook import Change, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook import Capture, Change, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.backup import _decrypt, _unlock, initialize_backup_keys
 from evernook.paths import provision_private_directory
 from evernook.protected import ProtectedInbox, initialize_protected_inbox
@@ -67,9 +67,12 @@ class VaultBackupTests(unittest.TestCase):
     def test_service_package_is_encrypted_bound_and_independently_decryptable(self) -> None:
         client = self.start()
         received = client.protected_receive(self.owner, self.event)
+        stream_event = replace(self.event, source=replace(self.event.source, event='stream'), text='')
+        stream = client.protected_capture(self.owner, Capture(stream_event, 'message', text_chunks=('合成', 'stream-224')))
+        self.assertEqual(stream['status'], 'saved')
         destination = self.root / 'encrypted-package'
         status = client.protected_backup(self.owner, destination, self.root / 'backup-keys')
-        self.assertEqual(status['protected_objects'], 1)
+        self.assertEqual(status['protected_objects'], 2)
         self.assertEqual(status['verification'], 'signature_and_links_only')
         self.assertFalse(status['recovery_tested'])
         self.assertNotIn(self.event.text, json.dumps(status))
@@ -90,7 +93,7 @@ class VaultBackupTests(unittest.TestCase):
             decoded[name] = output.getvalue()
         self.assertEqual(set(decoded), {'binding', 'receiving', 'writer', 'recovery', 'inbox'})
         binding = json.loads(decoded['binding'])
-        self.assertEqual(binding['objects'], 1)
+        self.assertEqual(binding['objects'], 2)
         self.assertEqual(len(binding['link_digest']), 64)
         self.assertEqual(decoded['recovery'], (self.root / 'vault-keys' / 'recovery.json').read_bytes())
         # Reconstruct only a disposable synthetic copy and prove the second, separate vault password works.
@@ -106,6 +109,10 @@ class VaultBackupTests(unittest.TestCase):
         with copied._connection() as db:
             row = db.execute('SELECT * FROM objects WHERE id=?', (received['object_id'],)).fetchone()
             self.assertEqual(_decrypt_event(copied, row, vault_private), self.event)
+            stream_row = db.execute('SELECT * FROM objects WHERE id=?', (stream['object_id'],)).fetchone()
+            value, _ = copied._verified(stream_row)
+            self.assertEqual(value['bound']['version'], 2)
+            self.assertEqual(_decrypt_event(copied, stream_row, vault_private).text, '合成stream-224')
 
     def test_unconfigured_service_refuses_backup(self) -> None:
         client = self.start(configured=False)

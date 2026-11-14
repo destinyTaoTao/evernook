@@ -236,7 +236,9 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     if operation == 'protected-receive':
         if protected_inbox is None:
             raise MemoryFailure('protected_service_unconfigured')
-        if set(arguments) != {'event'} or not isinstance(arguments['event'], dict):
+        if (set(arguments) not in ({'event'}, {'event', 'stream_provenance'})
+                or not isinstance(arguments['event'], dict)
+                or ('stream_provenance' in arguments and arguments['stream_provenance'] is not True)):
             raise MemoryFailure('invalid_arguments')
         value = dict(arguments['event'])
         if value.get('sensitive') is not True:
@@ -245,7 +247,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         private_event = Event(source=source, **value)
         if private_event.completion != 'complete':
             raise MemoryFailure('protected_incomplete_unsupported')
-        return protected_inbox.submit(access, private_event)
+        return protected_inbox.submit(access, private_event, stream_provenance=arguments.get('stream_provenance', False))
     if operation == 'protected-backup':
         runtime._require_scope(access, 'admin', 'vault_backup')
         if protected_inbox is None:

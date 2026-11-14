@@ -69,13 +69,21 @@ def _decrypt_event(inbox: ProtectedInbox, row: sqlite3.Row, private: PrivateKey,
         raise MemoryFailure('vault_request_changed')
     try:
         clear = json.loads(SealedBox(private).decrypt(bytes.fromhex(value['ciphertext'])), object_pairs_hook=_unique_object)
-        if not isinstance(clear, dict) or set(clear) != {'bound', 'event'} or _json(clear['bound']) != bound:
+        version = value['bound']['version']
+        expected_fields = {'bound', 'event', 'provenance'} if version == 2 else {'bound', 'event'}
+        provenance = {'format': 'buffered_text_stream', 'gaps': ['private_stream_boundaries_not_saved']}
+        if (not isinstance(clear, dict) or set(clear) != expected_fields or _json(clear['bound']) != bound
+                or (version == 2 and clear['provenance'] != provenance)):
             raise ValueError()
         event_value = dict(clear['event'])
         event_value['source'] = Source(**event_value['source'])
         event = Event(**event_value)
         inbox.runtime._validate_event(event)
-        actual = hmac.digest(inbox.runtime._fingerprint_key, b'protected-event-v1' + _json(asdict(event)).encode(), hashlib.sha256)
+        if version == 2 and (event.sensitive is not True or event.completion != 'complete' or event.role == 'tool'):
+            raise ValueError()
+        fingerprint_data = (b'protected-event-v2' + _json({'event': asdict(event), 'provenance': provenance}).encode()
+                            if version == 2 else b'protected-event-v1' + _json(asdict(event)).encode())
+        actual = hmac.digest(inbox.runtime._fingerprint_key, fingerprint_data, hashlib.sha256)
         if (not hmac.compare_digest(actual, bytes(row['fingerprint']))
                 or replace(event, text='[PROTECTED:ENCRYPTED_ORIGINAL]', protected_source=True) != projection):
             raise ValueError()

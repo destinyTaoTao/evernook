@@ -13,10 +13,11 @@ from evernook.protected import ProtectedInbox
 runtime = MemoryRuntime(Path(sys.argv[1]))
 access = runtime.access_from_file(Path(sys.argv[2]))
 inbox = ProtectedInbox(runtime, Path(sys.argv[3]), Path(sys.argv[4]))
+stream = len(sys.argv) > 6 and sys.argv[6] == 'stream'
 event = Event(Source("synthetic", "crash", "main", sys.argv[5]), "user", 1, None,
-              "complete", "password=synthetic-crash-inbox-sentinel-123")
+              "complete", "password=synthetic-crash-inbox-sentinel-123", sensitive=stream)
 if sys.argv[5] == "before-link":
-    inbox.stage(access, event)
+    inbox.stage(access, event, stream_provenance=stream)
     os._exit(71)
 original_connection = runtime._connection
 
@@ -34,5 +35,5 @@ def exit_after_core_commit() -> Iterator[sqlite3.Connection]:
 
 
 with patch.object(runtime, "_connection", exit_after_core_commit):
-    inbox.submit(access, event)
+    inbox.submit(access, event, stream_provenance=stream)
 raise AssertionError("crash window was not reached")

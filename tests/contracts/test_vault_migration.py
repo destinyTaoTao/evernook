@@ -71,8 +71,10 @@ class VaultMigrationTests(unittest.TestCase):
 
     def test_complete_single_inbox_cutover_preserves_decryptability_and_old_writer_fence(self) -> None:
         original = self.inbox.submit(self.owner, self.event)
+        stream_event = replace(self.event, source=Source('owner', 'private', 'main', 'stream'))
+        stream = self.inbox.submit(self.owner, stream_event, stream_provenance=True)
         proof = prepare(self.runtime, self.inbox, self.owner, self.password)
-        self.assertEqual(proof['verified_objects'], 1)
+        self.assertEqual(proof['verified_objects'], 2)
         self.assertFalse(proof['migration_completed'])
         raw = (self.runtime.root / PROOF_NAME).read_bytes()
         self.assertNotIn('link_digest', json.loads(raw)['snapshot'])
@@ -98,7 +100,7 @@ class VaultMigrationTests(unittest.TestCase):
         from evernook.vault_local import LocalDisplayRequest
         service_runtime = MemoryRuntime(self.config, service_owner=True)
         restored = ProtectedInbox(service_runtime, self.root / 'inbox', self.root / 'keys')
-        for object_id in (original.object_id, added['object_id']):
+        for object_id in (original.object_id, stream.object_id, added['object_id']):
             displayed: list[str] = []
             LocalDisplayRequest(restored, self.owner, object_id, 'synthetic', desktop=lambda: True).display_once(self.password, displayed.append)
             self.assertEqual(displayed, [self.event.text])
