@@ -6,10 +6,15 @@ import unittest
 import zipfile
 
 from evernook import MemoryFailure
-from evernook.vault_stage_check import _bound_directory
+from evernook.vault_stage_check import _ValidatedBundle, _bound_directory
+from nacl.public import PrivateKey
 
 
 class StageDirectoryBoundsTests(unittest.TestCase):
+    def test_validated_bundle_repr_does_not_expose_key(self) -> None:
+        private = PrivateKey.generate()
+        validated = _ValidatedBundle(None, private, {}, {}, [], {})  # type: ignore[arg-type]
+        self.assertNotIn(bytes(private).hex(), repr(validated))
     def test_normal_directory_and_oversized_entry_count(self) -> None:
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w', compression=zipfile.ZIP_STORED) as archive:

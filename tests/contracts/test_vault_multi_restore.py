@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import closing
 import hashlib
 import hmac
 import json
 from pathlib import Path
 import subprocess
+import sqlite3
 import sys
 import threading
 import time
@@ -19,7 +21,8 @@ from evernook.offline_recovery import ACKNOWLEDGEMENT, OfflineRecovery
 from evernook.service import ServiceClient
 from evernook.runtime import _json
 from evernook.vault_multi_restore import restore_stage
-from evernook.vault_stage_check import check_stage
+from evernook.vault_stage_check import _locked_read, _verified_locked, check_stage
+from evernook.vault_restore import _stopped_service
 from evernook.vault_workspace import cleanup_workspaces, list_workspaces
 from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
 
@@ -123,6 +126,50 @@ class MultiVaultRestoreTests(MultiVaultServiceTests):
         self.assertEqual(checked['inboxes'], 2)
         self.assertFalse(checked['attachment_authorized'])
         self.assertFalse(checked['vault_passwords_rechecked'])
+        with _stopped_service(runtime.root), runtime._connection(ownership_exclusive=True) as core:
+            with closing(sqlite3.connect(':memory:', isolation_level=None)) as wrong_core:
+                wrong_core.execute('BEGIN IMMEDIATE')
+                with _locked_read(destination) as stream:
+                    with self.assertRaisesRegex(MemoryFailure, 'vault_stage_lock_required'):
+                        with _verified_locked(runtime, owner, wrong_core, stream, Path(keys.recovery_file), b'synthetic backup password',
+                                              check=lambda: None, deadline=time.monotonic() + 120):
+                            pass
+            with _locked_read(destination) as stream:
+                with self.assertRaisesRegex(MemoryFailure, 'vault_stage_lock_required'):
+                    with _verified_locked(runtime, owner, core, stream, Path(keys.recovery_file), b'synthetic backup password',
+                                          check=lambda: None, deadline=time.monotonic() + 120):
+                        pass
+            core.execute('BEGIN IMMEDIATE')
+            with _locked_read(destination) as stream:
+                with _verified_locked(runtime, owner, core, stream, Path(keys.recovery_file), b'synthetic backup password',
+                                      check=lambda: None, deadline=time.monotonic() + 120) as verified:
+                    self.assertFalse(verified.result['attachment_authorized'])
+                    self.assertIn('00-inbox.enc', verified.archive.namelist())
+                    child = subprocess.run([sys.executable, '-c',
+                        'from pathlib import Path; import sys; Path(sys.argv[1]).write_bytes(b"changed")', str(destination)],
+                        capture_output=True, timeout=15)
+                    self.assertNotEqual(child.returncode, 0)
+            core.execute('ROLLBACK')
+            core.execute('BEGIN IMMEDIATE')
+            with patch('evernook.vault_stage_check._authorize_admin', side_effect=[None, MemoryFailure('permission_denied')]):
+                with _locked_read(destination) as stream:
+                    with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                        with _verified_locked(runtime, owner, core, stream, Path(keys.recovery_file), b'synthetic backup password',
+                                              check=lambda: None, deadline=time.monotonic() + 120):
+                            pass
+            core.execute('ROLLBACK')
+            core.execute('BEGIN IMMEDIATE')
+            core.execute('UPDATE messages SET fingerprint=? WHERE id=?', (bytes(32), self.linked.message.message_id))
+            interrupted = threading.Event()
+            with _locked_read(destination) as stream:
+                with self.assertRaisesRegex(MemoryFailure, 'vault_backup_ledger_mismatch'):
+                    with _verified_locked(runtime, owner, core, stream, Path(keys.recovery_file), b'synthetic backup password',
+                                          check=lambda: None, deadline=time.monotonic() + 120, cancel=interrupted):
+                        pass
+            interrupted.set()
+            value = core.execute('WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<3000) SELECT sum(x) FROM n').fetchone()[0]
+            self.assertEqual(value, 4501500)
+            core.execute('ROLLBACK')
         with patch('evernook.vault_stage_check._receipt', return_value='0' * 64):
             with self.assertRaisesRegex(MemoryFailure, 'protected_recovery_proof_invalid'):
                 check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
