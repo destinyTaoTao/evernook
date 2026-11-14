@@ -87,6 +87,7 @@ class VaultVerifyTests(unittest.TestCase):
             (['backup-init', '--key-dir', str(fake / 'backup-keys')], 'interactive_recovery_required'),
             (['backup-restore', '--source', str(fake), '--destination', str(fake / 'out'), '--recovery-file', str(fake / 'key')], 'interactive_recovery_required'),
             (['backup-vault-stage', *shared, '--source', str(fake), '--destination', str(fake / 'out'), '--recovery-file', str(fake / 'key')], 'interactive_recovery_required'),
+            (['backup-vault-multi-stage', *shared, '--source', str(fake), '--destination', str(fake / 'out'), '--recovery-file', str(fake / 'key')], 'interactive_recovery_required'),
             (['backup-vault-attach', *shared, '--container', str(fake)], 'interactive_recovery_required'),
             (['backup-vault-workspace-clean', *shared, '--id', '00000000000040008000000000000001'], 'interactive_recovery_required'),
         ]

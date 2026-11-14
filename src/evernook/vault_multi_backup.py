@@ -11,7 +11,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Callable, cast
 from uuid import uuid4
 
 from .backup import _encrypt, _writer
@@ -35,6 +35,21 @@ class MultiVaultBackupStatus:
     verification: str = 'signature_and_links_only'
     recovery_tested: bool = False
     restore_supported: bool = False
+
+
+def _link_digest(core: sqlite3.Connection, store: sqlite3.Connection, check: Callable[[], None]) -> str:
+    """Digest immutable link identity, leaving current visibility outside the backup."""
+    digest = hashlib.sha256()
+    for row in store.execute('SELECT * FROM objects ORDER BY id'):
+        check()
+        saved = core.execute('''SELECT m.id,l.reference FROM messages m JOIN protected_links_v1 l
+                                ON l.message_id=m.id WHERE m.source=?''', (row['source'],)).fetchone()
+        if saved is None:
+            raise MemoryFailure('protected_link_unavailable')
+        digest.update((_json([row['id'], row['source'], bytes(row['fingerprint']).hex(),
+            hashlib.sha256(str(row['envelope']).encode()).hexdigest(), row['receipt'],
+            saved['id'], saved['reference']]) + '\n').encode())
+    return digest.hexdigest()
 
 
 def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
@@ -91,19 +106,10 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
                 provision_private_directory(slot_dir)
                 inbox_dir = slot_dir / 'inbox'
                 provision_private_directory(inbox_dir)
-                digest = hashlib.sha256()
-                for row in store.execute('SELECT * FROM objects ORDER BY id'):
-                    check()
-                    saved = core.execute('''SELECT m.id,l.reference FROM messages m JOIN protected_links_v1 l
-                                            ON l.message_id=m.id WHERE m.source=?''', (row['source'],)).fetchone()
-                    if saved is None:
-                        raise MemoryFailure('protected_link_unavailable')
-                    digest.update((_json([row['id'], row['source'], bytes(row['fingerprint']).hex(),
-                        hashlib.sha256(str(row['envelope']).encode()).hexdigest(), row['receipt'],
-                        saved['id'], saved['reference']]) + '\n').encode())
+                digest = _link_digest(core, store, check)
                 summary = next(item for item in snapshot['inboxes'] if item['inbox_id'] == inbox.inbox_id)
                 members.append({'slot': slot, 'inbox_id': inbox.inbox_id, 'key_id': str(inbox.public['key_id']),
-                                'objects': summary['objects'], 'link_digest': digest.hexdigest()})
+                                'objects': summary['objects'], 'link_digest': digest})
                 snapshot_file = inbox_dir / 'inbox.sqlite3'
                 if (inbox.root / 'inbox.sqlite3').stat().st_size > 1073741824:
                     raise MemoryFailure('vault_backup_too_large')
