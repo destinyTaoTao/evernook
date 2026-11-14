@@ -1,7 +1,10 @@
 """Synthetic Windows-only checks for the experimental NTFS primitive."""
+import ctypes
+from ctypes import wintypes
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
@@ -94,6 +97,74 @@ class SecureNtfsTests(unittest.TestCase):
             self.assertFalse((target / 'must-not-exist').exists())
         finally:
             junction.rmdir()
+
+    def test_existing_child_junction_is_not_followed(self):
+        target = self.root / 'target'
+        target.mkdir()
+        junction = self.root / 'existing'
+        result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(junction), str(target)],
+                                capture_output=True)
+        if result.returncode:
+            self.skipTest('junction creation unavailable')
+        try:
+            with PrivateTree(self.root) as root:
+                with self.assertRaises(MemoryFailure):
+                    root.mkdir('existing')
+            self.assertEqual(list(target.iterdir()), [])
+        finally:
+            junction.rmdir()
+
+    def test_held_ancestor_cannot_be_replaced_by_another_process(self):
+        parent = self.root / 'parent'
+        parent.mkdir()
+        anchor = parent / 'anchor'
+        anchor.mkdir()
+        with PrivateTree(anchor) as root:
+            result = subprocess.run([sys.executable, '-c',
+                'import os,sys; os.rename(sys.argv[1],sys.argv[2])',
+                str(parent), str(self.root / 'stolen')], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            root.mkdir('created')
+        self.assertTrue((anchor / 'created').is_dir())
+
+    def test_reparse_added_to_held_empty_child_does_not_redirect_create(self):
+        target = self.root / 'target'
+        target.mkdir()
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.DeviceIoControl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                           ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+        kernel.DeviceIoControl.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        with PrivateTree(self.root) as root:
+            child = root.mkdir('child')
+            handle = kernel.CreateFileW(str(self.root / 'child'), 0x40000000, 7, None, 3, 0x02200000, None)
+            self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
+            installed = False
+            try:
+                substitute = ('\\??\\' + str(target)).encode('utf-16-le')
+                display = str(target).encode('utf-16-le')
+                body = (struct.pack('<HHHH', 0, len(substitute), len(substitute) + 2, len(display))
+                        + substitute + b'\0\0' + display + b'\0\0')
+                data = struct.pack('<IHH', 0xA0000003, len(body), 0) + body
+                buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
+                self.assertTrue(kernel.DeviceIoControl(handle, 0x900A4, buffer, len(data), None, 0,
+                                                       ctypes.byref(returned), None), ctypes.get_last_error())
+                installed = True
+                with self.assertRaises(MemoryFailure):
+                    child.mkdir('must-not-exist')
+                self.assertFalse((target / 'must-not-exist').exists())
+            finally:
+                try:
+                    if installed:
+                        data = struct.pack('<IHH', 0xA0000003, 0, 0)
+                        buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
+                        self.assertTrue(kernel.DeviceIoControl(handle, 0x900AC, buffer, len(data), None, 0,
+                                                               ctypes.byref(returned), None), ctypes.get_last_error())
+                finally:
+                    kernel.CloseHandle(handle)
 
     def test_acl_validation_failure_releases_handle_and_writes_no_data(self):
         native = _shared_native()
