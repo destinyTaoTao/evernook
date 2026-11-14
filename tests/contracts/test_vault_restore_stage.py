@@ -24,6 +24,7 @@ from evernook.runtime import _identities, _load
 from evernook.vault_backup import create_vault_backup
 from evernook.vault_restore import VaultRestoreStage, restore_stage
 from evernook.vault_attach import attach
+from evernook.vault_workspace import cleanup_workspaces, list_workspaces
 
 
 class VaultRestoreStageTests(unittest.TestCase):
@@ -201,6 +202,11 @@ class VaultRestoreStageTests(unittest.TestCase):
             if mode == 'after':
                 self.assertTrue((target / 'inbox' / 'inbox.sqlite3').exists())
         self.assertTrue(list(self.root.glob('.evernook-vault-restore-*')))
+        entries = list_workspaces(self.destination / 'runtime.json', self.new_owner)
+        self.assertEqual(len(entries), 2)
+        cleanup_result = cleanup_workspaces(self.destination / 'runtime.json', self.new_owner, [entry['id'] for entry in entries])
+        self.assertEqual(cleanup_result['removed'], 2)
+        self.assertTrue((self.root / 'crash-after' / 'inbox' / 'inbox.sqlite3').exists())
         client = self.start()
         self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'restored_missing')
 
@@ -275,6 +281,11 @@ class VaultRestoreStageTests(unittest.TestCase):
         after = subprocess.run([sys.executable, str(worker), str(self.root), 'after'], capture_output=True, timeout=90)
         self.assertEqual(after.returncode, 91, after.stderr.decode(errors='replace'))
         container = self.root / 'staged-vault'
+        entries = list_workspaces(self.destination / 'runtime.json', self.new_owner)
+        self.assertEqual(len(entries), 2)
+        result = cleanup_workspaces(self.destination / 'runtime.json', self.new_owner, [entry['id'] for entry in entries])
+        self.assertEqual(result['removed'], 2)
+        self.assertTrue((container / 'keys' / 'recovery.json').exists())
         client = self.start('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
         self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'configured')
 

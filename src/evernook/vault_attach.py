@@ -8,7 +8,6 @@ import hmac
 from pathlib import Path
 import shutil
 import sqlite3
-import tempfile
 import threading
 import time
 from typing import cast
@@ -21,6 +20,7 @@ from .runtime import MemoryRuntime, _atomic_bytes, _atomic_json, _json
 from .vault_crypto import _unlock
 from .vault_migration import _authorize_admin, _materials, _snapshot
 from .vault_restore import _stopped_service
+from .vault_workspace import workspace
 
 
 @dataclass(frozen=True)
@@ -75,8 +75,8 @@ def attach(config: Path, access: Access, container: Path, vault_password: bytes,
                 verify_private_directory(container)
                 if {path.name for path in container.iterdir()} != {'inbox', 'keys'}:
                     raise MemoryFailure('protected_attachment_mismatch')
-                with tempfile.TemporaryDirectory(prefix='.evernook-vault-attach-', dir=container.parent) as temporary:
-                    clone = Path(temporary) / 'ledger'
+                with workspace(runtime, container.parent, 'attach') as temporary:
+                    clone = temporary / 'ledger'
                     provision_private_directory(clone)
                     with closing(sqlite3.connect((root / 'memory.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
                         with closing(sqlite3.connect(clone / 'memory.sqlite3')) as copy:
@@ -128,6 +128,10 @@ def attach(config: Path, access: Access, container: Path, vault_password: bytes,
                     publication_started = True
                     _commit_attachment(core)
                     return VaultAttachment(str(inbox_dir), str(key_dir), cast(int, snapshot['objects']))
+    except MemoryFailure:
+        if publication_started:
+            raise MemoryFailure('vault_attach_outcome_unknown') from None
+        raise
     except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
         if publication_started:
             raise MemoryFailure('vault_attach_outcome_unknown') from None

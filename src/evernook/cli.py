@@ -108,6 +108,12 @@ def _parser() -> Parser:
     vault_attach = commands.add_parser('backup-vault-attach', help='Reverify and bind a staged vault to an offline restored service')
     for flag in ('config', 'access', 'container'):
         vault_attach.add_argument('--' + flag, type=Path, required=True)
+    for name in ('backup-vault-workspaces', 'backup-vault-workspace-clean'):
+        command = commands.add_parser(name, help='Inspect or explicitly clean registered offline vault workspaces')
+        command.add_argument('--config', type=Path, required=True)
+        command.add_argument('--access', type=Path, required=True)
+        if name.endswith('-clean'):
+            command.add_argument('--id', action='append', required=True)
     backup_retain = commands.add_parser("backup-retain", help="Plan/apply retention while preserving a locally verified recovery anchor")
     backup_retain.add_argument("--root", type=Path, required=True)
     backup_retain.add_argument("--key-dir", type=Path, required=True)
@@ -336,6 +342,21 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return create_backup(memory, memory.access_from_file(args.access), args.destination, args.key_dir)
         if args.command == "backup-retain":
             return retain_backups(args.root, args.key_dir, recovery_verified_id=args.recovery_verified_id, apply=args.apply)
+        if args.command in ('backup-vault-workspaces', 'backup-vault-workspace-clean'):
+            from .service import client_access
+            from .vault_workspace import cleanup_workspaces, list_workspaces
+            access = client_access(args.config, args.access)
+            if args.command == 'backup-vault-workspaces':
+                return list_workspaces(args.config, access)
+            if not sys.stdin.isatty():
+                raise MemoryFailure('interactive_recovery_required')
+            try:
+                confirmation = input('Type DELETE_REGISTERED_WORKSPACES to remove the selected workspaces: ')
+            except EOFError:
+                raise MemoryFailure('vault_workspace_confirmation_required') from None
+            if confirmation != 'DELETE_REGISTERED_WORKSPACES':
+                raise MemoryFailure('vault_workspace_confirmation_required')
+            return cleanup_workspaces(args.config, access, args.id)
         if not sys.stdin.isatty():
             raise MemoryFailure("interactive_recovery_required")
         if args.command == 'backup-vault-attach':
@@ -792,7 +813,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)

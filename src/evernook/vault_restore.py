@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-import tempfile
 import threading
 import time
 from typing import Iterator, cast
@@ -24,6 +23,7 @@ from .protected import ProtectedInbox
 from .runtime import MemoryRuntime, _atomic_bytes, _atomic_json, _json
 from .vault_crypto import _unlock as unlock_vault
 from .vault_migration import _authorize_admin, _snapshot
+from .vault_workspace import workspace
 
 
 @dataclass(frozen=True)
@@ -110,9 +110,9 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                 backup_id = content['status']['backup_id']
                 if not isinstance(backup_id, str) or str(UUID(backup_id)) != backup_id:
                     raise MemoryFailure('invalid_backup')
-                with tempfile.TemporaryDirectory(prefix='.evernook-vault-restore-', dir=destination.parent) as temporary:
-                    stage = Path(temporary) / 'vault'
-                    clone = Path(temporary) / 'ledger'
+                with workspace(runtime, destination.parent, 'restore') as temporary:
+                    stage = temporary / 'vault'
+                    clone = temporary / 'ledger'
                     provision_private_directory(stage)
                     provision_private_directory(clone)
                     inbox_dir, key_dir = stage / 'inbox', stage / 'keys'
@@ -177,6 +177,10 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                 return VaultRestoreStage(backup_id, cast(int, snapshot['objects']), str(destination))
     except (BadSignatureError, CryptoError):
         raise MemoryFailure('backup_authentication_failed') from None
+    except MemoryFailure:
+        if destination.exists():
+            raise MemoryFailure('vault_restore_outcome_unknown') from None
+        raise
     except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
         if destination.exists():
             raise MemoryFailure('vault_restore_outcome_unknown') from None
