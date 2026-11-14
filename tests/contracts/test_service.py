@@ -154,12 +154,18 @@ class ServiceTests(unittest.TestCase):
         self.start(['--activate-owner', str(owner), '--embedding-config', str(config_path)])
         status_args = {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}}
         self.assertNotEqual(self.client.call(self.access, 'mcp', status_args)['semantic']['state'], 'unavailable')
+        manage = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
+        identity = self.client.call(self.access, 'cli', manage)['model_identity']['embedding']
+        self.assertEqual(identity['provider'], 'local-minilm')
+        self.assertEqual(len(identity['version']), 64)
+        self.assertNotIn(str(Path(self.temporary.name)), json.dumps(identity))
         config['model_dir'] = str(Path(self.temporary.name) / 'model-b')
         config_path.write_text(json.dumps(config), encoding='utf-8')
         changed = self.client.call(self.access, 'mcp', status_args)
         self.assertEqual(changed['semantic']['error_code'], 'embedding_config_changed')
         diagnostics = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
         self.assertEqual(diagnostics['configuration_validation']['embedding'], 'restart_required')
+        self.assertIsNone(diagnostics['model_identity']['embedding'])
         saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_remember',
             'arguments': {'event': self.event()}})
         self.assertTrue(saved['original_saved'])
@@ -222,6 +228,13 @@ class ServiceTests(unittest.TestCase):
         initial = self.client.call(self.access, 'cli', status)
         self.assertEqual(initial['model_configuration']['reflection'], 'configured_remote')
         self.assertEqual(initial['configuration_validation']['reflection'], 'valid')
+        self.assertEqual(initial['model_identity']['reflection']['provider'], 'openai-compatible')
+        self.assertIsNone(initial['model_identity']['reflection']['model'])
+        self.assertEqual(len(initial['model_identity']['reflection']['version']), 64)
+        self.assertEqual(initial['model_identity']['extraction']['model'], 'qwen3-0.6b')
+        self.assertNotIn('synthetic', json.dumps(initial['model_identity']))
+        self.assertNotIn('127.0.0.1', json.dumps(initial['model_identity']))
+        self.assertNotIn(str(root), json.dumps(initial['model_identity']))
         with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
             self.client.call(self.access, 'cli', {'command': 'reflect', 'input': {'query': '合成', 'provider_check': None}})
         reflection.write_text(json.dumps(remote_value, indent=2), encoding='utf-8')
@@ -231,6 +244,8 @@ class ServiceTests(unittest.TestCase):
         changed = self.client.call(self.access, 'cli', status)
         self.assertEqual(changed['configuration_validation']['reflection'], 'restart_required')
         self.assertEqual(changed['configuration_validation']['extraction'], 'restart_required')
+        self.assertIsNone(changed['model_identity']['reflection'])
+        self.assertIsNone(changed['model_identity']['extraction'])
         self.assertEqual(changed['reflection_daily_budget'], {'state': 'restart_required'})
         self.assertNotIn(str(root), json.dumps(changed))
         self.assertNotIn('SYNTHETIC_KEY', json.dumps(changed))
@@ -257,6 +272,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(restarted['model_configuration']['reflection'], 'configured_local')
         self.assertEqual(restarted['configuration_validation']['reflection'], 'valid')
         self.assertEqual(restarted['configuration_validation']['extraction'], 'valid')
+        self.assertEqual(restarted['model_identity']['reflection']['model'], 'qwen3-0.6b')
 
     def test_provider_binding_rejects_a_changed_resolved_target(self) -> None:
         from unittest.mock import patch
@@ -439,6 +455,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(status['configuration_validation'], {'embedding': 'not_configured', 'context': 'not_configured', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         self.assertEqual(status['model_configuration'], {'embedding': 'not_configured',
             'reflection': 'not_configured', 'extraction': 'not_configured', 'speech': 'host_owned'})
+        self.assertEqual(status['model_identity'], {'embedding': None, 'reflection': None, 'extraction': None})
         ordinary = pair_client(self.config, client_id='ordinary-status', entry='ordinary-status',
             access_path=self.config.parent / 'mcp-access-ordinary-status.json', scopes=('capture', 'recall'))
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):

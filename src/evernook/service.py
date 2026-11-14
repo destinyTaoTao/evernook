@@ -5,6 +5,7 @@ import argparse
 from dataclasses import asdict, is_dataclass
 import json
 import hashlib
+import hmac
 import msvcrt
 from pathlib import Path
 import secrets
@@ -421,6 +422,32 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
 
             reflection_model = reflector.model if reflector is not None else None
             reflection_config_state = provider_validation(reflection_binding, reflection_error)
+            extraction_config_state = provider_validation(extraction_binding, extraction_error)
+            embedding_config_state = config_validation(embedding_config, context=False)
+            from .embedding import LocalMiniLM
+            from .extraction import LocalQwen
+            from .reflection_model import LocalReflectionModel
+            from .reflection_remote import RemoteReflectionModel
+
+            def identity(provider: str, model: str | None, version: str) -> dict[str, str | None] | None:
+                # Processor versions contain a fixed prefix and SHA-256, never raw configuration.
+                digest = version.rsplit(':', 1)[-1]
+                if len(digest) != 64 or any(char not in '0123456789abcdef' for char in digest):
+                    return None
+                return {'provider': provider, 'model': model, 'version': digest}
+
+            identities: dict[str, dict[str, str | None] | None] = {'embedding': None, 'extraction': None, 'reflection': None}
+            if embedding_config_state == 'valid' and embedding_binding is not None and type(embedding_binding.backend) is LocalMiniLM:
+                identities['embedding'] = identity('local-minilm', 'paraphrase-multilingual-minilm-l12-v2', embedding_binding.backend.space.key)
+            if extraction_config_state == 'valid' and type(extractor) is LocalQwen:
+                identities['extraction'] = identity('local-qwen', 'qwen3-0.6b', extractor.processor_version)
+            if reflection_config_state == 'valid' and type(reflection_model) is LocalReflectionModel:
+                identities['reflection'] = identity('local-qwen', 'qwen3-0.6b', reflection_model.processor_version)
+            elif reflection_config_state == 'valid' and type(reflection_model) is RemoteReflectionModel:
+                # A keyed digest avoids exposing or enabling offline guesses of user-supplied model IDs or endpoints.
+                opaque = hmac.digest(runtime._fingerprint_key, b'provider-identity-v1\0'
+                                     + reflection_model.processor_version.encode(), hashlib.sha256).hex()
+                identities['reflection'] = identity('openai-compatible', None, opaque)
             if reflection_config_state == 'restart_required':
                 budget_status: dict[str, Any] = {'state': 'restart_required'}
             elif reflection_error is not None:
@@ -433,10 +460,10 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
                 'reflection': 'configured_unavailable' if reflection_error is not None else 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
                 'extraction': 'configured_unavailable' if extraction_error is not None else 'configured_local' if extractor is not None else 'not_configured',
-                'speech': 'host_owned'}, 'configuration_validation': {
-                    'embedding': config_validation(embedding_config, context=False),
+                'speech': 'host_owned'}, 'model_identity': identities, 'configuration_validation': {
+                    'embedding': embedding_config_state,
                     'context': config_validation(context_config, context=True),
-                    'extraction': provider_validation(extraction_binding, extraction_error),
+                    'extraction': extraction_config_state,
                     'reflection': reflection_config_state}, 'reflection_daily_budget': budget_status}
         return result
     if operation == "remember":
