@@ -127,51 +127,27 @@ class SecureNtfsTests(unittest.TestCase):
             root.mkdir('created')
         self.assertTrue((anchor / 'created').is_dir())
 
-    def test_reparse_added_to_held_empty_child_does_not_redirect_create(self):
-        target = self.root / 'target'
-        target.mkdir()
+    def test_managed_child_blocks_planting_rename_and_replacement(self):
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
         kernel.CreateFileW.restype = wintypes.HANDLE
-        kernel.DeviceIoControl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
-                                           ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
-        kernel.DeviceIoControl.restype = wintypes.BOOL
-        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
         with PrivateTree(self.root) as root:
             child = root.mkdir('child')
-            handle = kernel.CreateFileW(str(self.root / 'child'), 0x40000000, 7, None, 3, 0x02200000, None)
-            self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
-            installed = False
-            try:
-                substitute = ('\\??\\' + str(target)).encode('utf-16-le')
-                display = str(target).encode('utf-16-le')
-                body = (struct.pack('<HHHH', 0, len(substitute), len(substitute) + 2, len(display))
-                        + substitute + b'\0\0' + display + b'\0\0')
-                data = struct.pack('<IHH', 0xA0000003, len(body), 0) + body
-                buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
-                self.assertTrue(kernel.DeviceIoControl(handle, 0x900A4, buffer, len(data), None, 0,
-                                                       ctypes.byref(returned), None), ctypes.get_last_error())
-                installed = True
-                with self.assertRaises(MemoryFailure):
-                    child.mkdir('must-not-exist')
-                self.assertFalse((target / 'must-not-exist').exists())
-            finally:
-                try:
-                    if installed:
-                        data = struct.pack('<IHH', 0xA0000003, 0, 0)
-                        buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
-                        self.assertTrue(kernel.DeviceIoControl(handle, 0x900AC, buffer, len(data), None, 0,
-                                                               ctypes.byref(returned), None), ctypes.get_last_error())
-                finally:
-                    kernel.CloseHandle(handle)
+            # Write-data-class and delete-class opens are refused, so no other
+            # process can plant children, rename or replace a managed child.
+            for access in (0x40000000, 0x2, 0x4, 0x10000):
+                handle = kernel.CreateFileW(str(self.root / 'child'), access, 7, None, 3, 0x02200000, None)
+                self.assertEqual(handle, wintypes.HANDLE(-1).value)
+            child.mkdir('created')
+        self.assertTrue((self.root / 'child' / 'created').is_dir())
 
-    def test_concurrent_reparse_toggle_does_not_redirect_create(self):
+    def test_concurrent_write_attempts_cannot_plant_or_replace_managed_child(self):
         # Isolate a potentially stuck kernel call and its handles from the test runner.
         if os.environ.get('EVERNOOK_NTFS_RACE_CHILD') != '1':
             environment = dict(os.environ, EVERNOOK_NTFS_RACE_CHILD='1')
             result = subprocess.run([sys.executable, '-m', 'unittest',
-                'test_secure_ntfs.SecureNtfsTests.test_concurrent_reparse_toggle_does_not_redirect_create'],
+                'test_secure_ntfs.SecureNtfsTests.test_concurrent_write_attempts_cannot_plant_or_replace_managed_child'],
                 env=environment, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
             return
@@ -195,44 +171,90 @@ class SecureNtfsTests(unittest.TestCase):
             with self.subTest(index=index), PrivateTree(self.root) as root:
                 child = root.mkdir(f'race-{index}')
                 path = self.root / f'race-{index}'
-                handle = kernel.CreateFileW(str(path), 0x40000000, 7, None, 3, 0x02200000, None)
-                self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
-                ready, stop = threading.Event(), threading.Event()
-                errors = []
+                stop = threading.Event()
+                detected: list[str] = []
                 def attacker():
                     returned = wintypes.DWORD()
-                    installed = False
-                    try:
-                        while not stop.is_set():
-                            if kernel.DeviceIoControl(handle, 0x900A4, setup, len(setup) - 1, None, 0,
-                                                      ctypes.byref(returned), None):
-                                installed = True
-                                ready.set()
-                                if not kernel.DeviceIoControl(handle, 0x900AC, remove, len(remove) - 1, None, 0,
-                                                              ctypes.byref(returned), None):
-                                    errors.append(ctypes.get_last_error())
-                                    break
-                                installed = False
-                    finally:
-                        if installed and not kernel.DeviceIoControl(handle, 0x900AC, remove, len(remove) - 1, None, 0,
-                                                                     ctypes.byref(returned), None):
-                            errors.append(ctypes.get_last_error())
+                    while not stop.is_set():
+                        # Write-data opens are refused; the only in-place mutation
+                        # left is a write-attributes junction conversion, whose
+                        # detection is asserted below. Neither may plant content.
+                        handle = kernel.CreateFileW(str(path), 0x40000000, 7, None, 3, 0x02200000, None)
+                        if handle != wintypes.HANDLE(-1).value:
+                            detected.append('write-open-accepted')
+                            kernel.CloseHandle(wintypes.HANDLE(int(handle)))
+                            return
+                        handle = kernel.CreateFileW(str(path), 0x100, 7, None, 3, 0x02200000, None)
+                        if handle != wintypes.HANDLE(-1).value:
+                            kernel.DeviceIoControl(handle, 0x900A4, setup, len(setup) - 1, None, 0,
+                                                   ctypes.byref(returned), None)
+                            kernel.DeviceIoControl(handle, 0x900AC, remove, len(remove) - 1, None, 0,
+                                                   ctypes.byref(returned), None)
+                            kernel.CloseHandle(handle)
+                        stop.wait(0.001)
                 worker = threading.Thread(target=attacker, daemon=True)
                 worker.start()
                 try:
-                    self.assertTrue(ready.wait(5), 'could not set up synthetic junction race')
-                    try:
-                        child.mkdir('created')
-                    except MemoryFailure as error:
-                        self.assertEqual(error.code, 'secure_creation_refused')
+                    for step in range(20):
+                        child.mkdir(f'created-{step}')
+                        # Transient write-attributes conversions may or may not
+                        # be visible here; they are asserted statically below.
+                        # Content must never land in the redirected target.
+                        self.assertFalse(list(target.iterdir()))
                 finally:
                     stop.set()
                     worker.join(5)
-                    if not worker.is_alive():
-                        kernel.CloseHandle(handle)
                 self.assertFalse(worker.is_alive())
-                self.assertFalse(errors, errors)
-                self.assertFalse((target / 'created').exists())
+                self.assertFalse(detected, detected)
+                self.assertFalse(list(target.iterdir()))
+
+    def test_in_place_junction_conversion_is_detected_and_never_redirects(self):
+        target = self.root / 'target'
+        target.mkdir()
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.DeviceIoControl.argtypes = (wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                           ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p)
+        kernel.DeviceIoControl.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        with PrivateTree(self.root) as root:
+            child = root.mkdir('child')
+            handle = kernel.CreateFileW(str(self.root / 'child'), 0x100, 7, None, 3, 0x02200000, None)
+            self.assertNotEqual(handle, wintypes.HANDLE(-1).value)
+            installed = False
+            try:
+                substitute = ('\\??\\' + str(target)).encode('utf-16-le')
+                display = str(target).encode('utf-16-le')
+                body = (struct.pack('<HHHH', 0, len(substitute), len(substitute) + 2, len(display))
+                        + substitute + b'\0\0' + display + b'\0\0')
+                data = struct.pack('<IHH', 0xA0000003, len(body), 0) + body
+                buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
+                self.assertTrue(kernel.DeviceIoControl(handle, 0x900A4, buffer, len(data), None, 0,
+                                                       ctypes.byref(returned), None), ctypes.get_last_error())
+                installed = True
+                # Creation through the held handle refuses while the object is
+                # a reparse point: OBJ_DONT_REPARSE turns the conversion into a
+                # detected abort instead of a redirected write.
+                with self.assertRaises(MemoryFailure):
+                    child.mkdir('probe')
+                self.assertFalse((target / 'probe').exists())
+                # The conversion is detected on the held identity and fails closed.
+                with self.assertRaises(MemoryFailure):
+                    root.verify()
+            finally:
+                try:
+                    if installed:
+                        data = struct.pack('<IHH', 0xA0000003, 0, 0)
+                        buffer, returned = ctypes.create_string_buffer(data), wintypes.DWORD()
+                        self.assertTrue(kernel.DeviceIoControl(handle, 0x900AC, buffer, len(data), None, 0,
+                                                               ctypes.byref(returned), None), ctypes.get_last_error())
+                finally:
+                    kernel.CloseHandle(handle)
+            root.verify()
+            child.mkdir('probe')
+            self.assertTrue((self.root / 'child' / 'probe').is_dir())
 
     def test_acl_validation_failure_releases_handle_and_writes_no_data(self):
         native = _shared_native()

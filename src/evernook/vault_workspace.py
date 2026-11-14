@@ -18,6 +18,7 @@ from .backup import _json_bytes
 from .models import Access, MemoryFailure
 from .paths import external, provision_private_directory, verify_private_directory
 from .runtime import MemoryRuntime, _atomic_json, _json, _load
+from .secure_ntfs import HeldFile, PrivateDirectory, PrivateTree
 from .vault_migration import _authorize_admin
 
 
@@ -238,6 +239,50 @@ def candidate_workspace(runtime: MemoryRuntime, parent: Path) -> Iterator[Path]:
     """Always retain registration, including on error; caller holds service and ledger locks."""
     path, _entry = _reserve(runtime, parent, 'candidate')
     yield path
+
+
+@contextmanager
+def secure_workspace(runtime: MemoryRuntime, parent: Path, kind: str, *,
+                     core: sqlite3.Connection) -> Iterator[PrivateDirectory]:
+    """Handle-held workspace: directories and files are born owner-only.
+
+    The tree is anchored without following reparse points and every created
+    object receives the caller-only security descriptor at creation, so no
+    window exists between existence and privacy. Registration records the
+    handle-derived identity before any content exists; cleanup reuses the
+    authenticated registry path so crash remnants stay recoverable. Caller
+    holds the stopped-service lock and exclusive ledger gate.
+    """
+    if kind not in _PREFIX:
+        raise MemoryFailure('invalid_vault_workspace')
+    parent = external(parent)
+    entries = _read(runtime)
+    if len(entries) >= _MAX:
+        raise MemoryFailure('vault_workspace_limit')
+    ident = uuid4().hex
+    path = parent / (_PREFIX[kind] + ident)
+    tree = PrivateTree(parent)
+    entry: dict[str, Any] | None = None
+    registered = False
+    try:
+        with tree as anchored:
+            try:
+                root_dir = anchored.mkdir(path.name)
+                metadata = root_dir.identity()
+                entry = {'id': ident, 'kind': kind, 'path': str(path),
+                         'device': metadata.st_dev, 'inode': metadata.st_ino}
+                _save(runtime, [*entries, entry])
+                registered = True
+                yield root_dir
+            except BaseException:
+                if not registered:
+                    # Registration never completed: remove what this tree
+                    # created while the holds are still open.
+                    tree.delete_created()
+                raise
+    finally:
+        if registered and entry is not None:
+            _discard(runtime, core, entry)
 
 
 def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: list[dict[str, Any]]) -> None:
