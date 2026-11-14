@@ -101,6 +101,22 @@ class BackupTests(unittest.TestCase):
         self.assertNotIn(b"synthetic-backup-sentinel-123", (archive.root / "evidence.sqlite3").read_bytes())
         self.assertIsNone(self.runtime.read(self.access, receipt.message_id))
 
+    def test_offline_review_preserves_snapshot_controls_but_cannot_know_later_changes(self) -> None:
+        before = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event='before')))
+        after = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event='after')))
+        instruction = self.runtime.submit(self.access, replace(self.event, source=replace(self.event.source, event='control'), text='合成：撤回指定来源'))
+        self.runtime.change(self.access, Change('known-control', before.message_id, 1, 'suppress', instruction.message_id, 'synthetic'))
+        create_backup(self.runtime, self.access, self.root / 'backup', self.root / 'keys')
+        self.runtime.change(self.access, Change('later-control', after.message_id, 1, 'suppress', instruction.message_id, 'synthetic'))
+        # Move only the newly-created synthetic runtime; recovery must not read it.
+        self.config.parent.rename(self.root / 'synthetic-offline')
+        archive = restore_backup(self.root / 'backup', self.root / 'offline-review', Path(self.keys.recovery_file), self.password)
+        self.assertEqual(archive.status().recovery_state, 'review_required')
+        self.assertEqual(archive.review_message(before.message_id).state.status, 'suppressed')
+        self.assertEqual(archive.review_message(after.message_id).state.status, 'active')
+        self.assertFalse((archive.root / 'client.json').exists())
+        self.assertFalse((archive.root / 'idempotency.key').exists())
+
     def test_authentication_archive_permission_existing_targets_and_nested_paths_are_rejected(self) -> None:
         wrong = Access(self.access.client_id, "synthetic-wrong-token")
         with self.assertRaisesRegex(MemoryFailure, "unauthorized"):
