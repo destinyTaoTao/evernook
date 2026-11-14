@@ -263,7 +263,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: '  custom-category  ' } });
   tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   tree = render(); await flush(); tree = render();
-  assert.ok(calls.some(call => call.view === 'network_graph' && call.category === 'custom-category' && call.offset === 0));
+  assert.ok(calls.some(call => call.view === 'network_graph' && call.category === '  custom-category  ' && call.offset === 0));
   find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: '' } });
   tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   tree = render(); await flush(); tree = render();

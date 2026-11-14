@@ -469,6 +469,14 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual([node["id"] for node in second["nodes"]], ["beta"])
         self.assertIsNone(second["next_offset"])
 
+    def test_graph_category_preserves_custom_identifier_whitespace(self) -> None:
+        span = self.source()
+        self.profiles.decide(self.access, ProfileDecision('whitespace-category', 'whitespace-tag', 0, 'propose',
+            ProfileDraft('  custom  ', '合成：喜欢观鸟', 0.8, (span,))))
+        self.apply({'kind': 'profile_confirm', 'tag_id': 'whitespace-tag'})
+        self.assertEqual([node['id'] for node in self.ui.read(self.access, view='network_graph', category='  custom  ')['nodes']], ['whitespace-tag'])
+        self.assertEqual(self.ui.read(self.access, view='network_graph', category='custom')['nodes'], [])
+
     def test_source_preview_includes_observation_evidence_and_detects_new_revision(self) -> None:
         from dataclasses import replace
         from evernook.observations import ObservationDraft, ObservationRegistry

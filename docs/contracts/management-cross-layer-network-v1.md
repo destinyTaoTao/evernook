@@ -35,6 +35,14 @@ backend tests covered category selection and topic exclusion. TypeScript build,
 client syntax and package installation passed. No actual browser UI acceptance
 or daily admission is claimed for this change.
 
+Preview.49 (#188) preserves category identifiers exactly as entered,
+including leading/trailing spaces, matching the existing backend's exact
+comparison; only an empty string selects all categories. The preview.48 trim
+could not retrieve valid space-containing custom categories. The synthetic
+component regression failed before the fix; source and installed client tests
+passed afterward, as did an installed Core backend test with distinct spaced
+and unspaced identifiers. No actual browser UI acceptance is claimed.
+
 Source and approval checks are performed at read time. In the dsh preview,
 versioned page, source and history reads use authenticated fingerprint checks
 and a 12-second fail-closed lease. A change triggers refresh; disconnect,
