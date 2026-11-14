@@ -118,6 +118,55 @@ class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(failed.is_error)
         self.assertIsNotNone(self.service.poll())
 
+    async def test_real_stdio_capture_with_broken_optional_model_configs(self) -> None:
+        from evernook.models import MemoryFailure
+
+        self.stop()
+        endpoint = self.config.parent / 'memory-service.json'
+        previous = endpoint.read_bytes()
+        embedding = self.config.parent.parent / 'synthetic-embedding.json'
+        context = self.config.parent.parent / 'synthetic-context.json'
+        embedding.write_text('{', encoding='utf-8')
+        context.write_text('{', encoding='utf-8')
+        self.service = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+            '--activate-owner', str(self.owner_path), '--embedding-config', str(embedding), '--context-config', str(context)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 20
+        while not endpoint.exists() or endpoint.read_bytes() == previous:
+            if self.service.poll() is not None or time.monotonic() > deadline:
+                self.fail('isolated activated service startup failed')
+            await asyncio.sleep(0.05)
+        parameters = StdioServerParameters(command=sys.executable, args=[*self.parameters.args, '--require-service',
+            '--embedding-config', str(embedding), '--context-config', str(context)], env=dict(os.environ))
+        ordinary = self.client.call(self.access, 'status', {})
+        self.assertTrue(ordinary['service']['single_writer'])
+        with self.assertRaisesRegex(MemoryFailure, 'service_policy_mismatch'):
+            self.client.call(self.access, 'policy-match', {'embedding_config': None, 'context_config': None})
+        with self.assertRaisesRegex(MemoryFailure, 'operation_not_allowed'):
+            self.client.call(self.access, 'mcp', {'profile': 'recall', 'name': 'evernook_v1_capture', 'arguments': {}})
+        event = asdict(Event(Source('test', 'synthetic-bridge', 'main', '1'), 'user', 1, None,
+                             'complete', '合成：配置错误时仍保存的对话'))
+        async with Client(parameters, read_timeout_seconds=20) as mcp:
+            names = [tool.name for tool in (await mcp.list_tools()).tools]
+            self.assertIn('evernook_v1_capture', names)
+            status = await mcp.call_tool('evernook_v1_status', {})
+            self.assertFalse(status.is_error, status)
+            assert status.structured_content is not None
+            self.assertEqual(status.structured_content['result']['semantic']['state'], 'unavailable')
+            self.assertEqual(status.structured_content['result']['context']['available'], False)
+            result = await mcp.call_tool('evernook_v1_capture', {'event': event, 'kind': 'message'})
+            self.assertFalse(result.is_error, result)
+            assert result.structured_content is not None
+            message_id = result.structured_content['result']['message']['message_id']
+            self.assertEqual(self.client.call(self.access, 'read', {'message_id': message_id})['event'], event)
+            recalled = await mcp.call_tool('evernook_v1_recall', {'query': '合成'})
+            self.assertTrue(recalled.is_error)
+            assert recalled.structured_content is not None
+            self.assertEqual(recalled.structured_content['error']['code'], 'invalid_config')
+            context_result = await mcp.call_tool('evernook_v1_context', {'query': '合成', 'model_id': 'synthetic',
+                'max_tokens': 512, 'as_of': '2024-01-01T00:00:00Z'})
+            self.assertTrue(context_result.is_error)
+
     async def test_ordinary_identity_cannot_use_management_or_recall_profile_writes(self) -> None:
         ordinary = json.loads(self.ordinary_path.read_text(encoding="utf-8"))
         from evernook.models import Access, MemoryFailure
