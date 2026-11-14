@@ -6,7 +6,7 @@ import vm from 'node:vm';
 test('memory links use the confirmed profile page and re-read source on click', async () => {
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
-  let topics = [], failTopicControl = false, extractionMode = 'configured_local';
+  let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true;
   const windowListeners = new Map();
   const React = {
     Fragment: Symbol('fragment'),
@@ -61,6 +61,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
           ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'topic_settings') return respond({ items: topics, next_offset: null });
+    if (body.view === 'persona') return personaAvailable ? respond({ next_offset: null, items: [
+      { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
+      { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
+    ] }) : Response.json({ error: 'invalid_management_view' }, { status: 400 });
     if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
@@ -124,6 +128,26 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerLocal')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticSpeech: providerHost')));
   assert.ok(calls.some(call => call.view === 'status'));
+  find(tree, node => node.type === 'button' && node.children.includes('persona')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.action === 'read-versioned' && call.view === 'persona'));
+  assert.ok(find(tree, node => node.children?.includes('合成人设')));
+  assert.ok(find(tree, node => node.children?.includes('personaIndependent')));
+  assert.ok(find(tree, node => node.children?.includes('personaSourceUnavailable')));
+  sourceAvailable = true;
+  find(tree, node => node.type === 'button' && node.children.includes('source')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(find(tree, node => node.props?.title === 'raw'));
+  assert.ok(calls.some(call => call.view === 'source' && call.message_id === 'source-1'));
+  sourceAvailable = false;
+  personaAvailable = false;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.equal(find(tree, node => node.children?.includes('合成人设')), undefined);
+  assert.ok(find(tree, node => node.props?.role === 'alert'));
+  personaAvailable = true;
+  find(tree, node => node.type === 'button' && node.children.includes('profiles')).props.onClick();
+  tree = render(); await flush(); tree = render();
   extractionMode = 'not_configured';
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

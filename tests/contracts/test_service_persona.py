@@ -74,6 +74,10 @@ class ServicePersonaTests(unittest.TestCase):
         saved = call('persona-set', first)
         self.assertEqual(saved['revision'], 1)
         self.assertEqual(cli('persona-set', first), saved)
+        projection = client.call(self.owner, 'cli', {'command': 'manage', 'input': {'action': 'read-versioned', 'view': 'persona'}})
+        self.assertEqual(projection['value']['items'][0]['text'], '合成：温和')
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.call(self.ordinary, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'persona'}})
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             client.call(self.ordinary, 'cli', {'command': 'persona-set', 'input': {**first, 'request_id': 'unauthorized'}})
         with self.assertRaisesRegex(MemoryFailure, 'persona_revision_conflict'):
@@ -83,6 +87,8 @@ class ServicePersonaTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, 'persona_user_confirmation_required'):
             call('persona-set', {**first, 'request_id': 'assistant', 'expected_revision': 1, 'evidence_id': self.assistant})
         updated = call('persona-set', {**first, 'request_id': 'persona-two', 'text': '合成：活泼', 'expected_revision': 1})
+        fingerprint = client.call(self.owner, 'cli', {'command': 'manage', 'input': {'action': 'fingerprint', 'view': 'persona'}})
+        self.assertNotEqual(projection['token'], fingerprint['token'])
         history = cli('persona-history', {'block': 'tone'})
         self.assertEqual([record['revision'] for record in history['records']], [1, 2])
         rollback = cli('persona-rollback', {'request_id': 'persona-rollback', 'target_seq': saved['seq'],

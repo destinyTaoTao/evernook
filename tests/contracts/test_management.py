@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from evernook import Event, EvidenceSpan, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook import Change, Event, EvidenceSpan, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.management import MemoryManagement
 from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
 
@@ -38,6 +38,35 @@ class ManagementTests(unittest.TestCase):
     def apply(self, operation: dict[str, str]) -> dict[str, object]:
         preview = self.ui.preview(self.access, operation)
         return self.ui.confirm(self.access, preview["proposal_id"], operation)
+
+    def test_persona_projection_is_trusted_versioned_and_does_not_revive_hidden_source(self) -> None:
+        from evernook.persona import PersonaRegistry, PersonaSet
+        source = self.source('合成：请使用温和语气。')
+        other = self.source('合成：请称呼我小夏。')
+        persona = PersonaRegistry(self.runtime)
+        persona.set(self.access, PersonaSet('persona-tone', 'tone', '合成：温和', source.message_id, 'synthetic-private-reason', 0))
+        persona.set(self.access, PersonaSet('persona-address', 'address', '合成：小夏', other.message_id, 'synthetic-private-reason', 0))
+        first = self.ui.read_versioned(self.access, view='persona', limit=1)
+        self.assertEqual(len(first['value']['items']), 1)
+        self.assertIsNotNone(first['value']['next_offset'])
+        page = self.ui.read(self.access, view='persona', query='温和')
+        self.assertEqual(len(page['items']), 1)
+        item = page['items'][0]
+        self.assertEqual((item['block'], item['revision'], item['evidence_id']), ('tone', 1, source.message_id))
+        self.assertNotIn('synthetic-private-reason', json.dumps(page, ensure_ascii=False))
+        for invalid in ({'category': 'interest'}, {'session_id': 's'}, {'message_id': source.message_id}, {'cursor': 1}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
+                self.ui.read(self.access, view='persona', **invalid)
+        ordinary = pair_client(self.config, client_id='ordinary-persona', entry='ordinary-persona',
+            access_path=self.config.parent / 'mcp-access-ordinary-persona.json', scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.ui.read(ordinary, view='persona')
+        old = self.ui.fingerprint(self.access, view='persona', query='温和')['token']
+        self.runtime.change(self.access, Change('hide-persona-source', source.message_id, 1, 'suppress', other.message_id, 'synthetic'))
+        current = self.ui.read(self.access, view='persona', query='温和')['items'][0]
+        self.assertEqual(current['text'], '合成：温和')
+        self.assertIsNone(current['evidence_id'])
+        self.assertNotEqual(old, self.ui.fingerprint(self.access, view='persona', query='温和')['token'])
 
     def test_topic_settings_projection_tracks_versions_and_never_returns_snapshot_text(self) -> None:
         from evernook.topic_views import TopicViewDefinition, TopicViews

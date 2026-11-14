@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
     diagnostics: '连接与配置诊断', diagnosticScope: '宿主配置与本次可信管理读取；不代表模型或日用能力已通过验收。', diagnosticSchema: 'Core 配置格式版本', diagnosticService: '管理服务', diagnosticOnline: '读取成功', diagnosticLoading: '检查中', diagnosticUnavailable: '读取失败或不可用', diagnosticStream: '宿主流模式', diagnosticRecovery: '只读续接', diagnosticEnabled: '可用', diagnosticDisabled: '未启用或不支持',
     diagnosticPrivate: '本机私密记录入口', diagnosticFingerprint: '指纹复核桥接', diagnosticConfigured: '已配置（未检查健康状态）', diagnosticNotConfigured: '未配置',
+    persona: '伴侣人设', persona_identity: '身份', persona_tone: '语气', persona_boundary: '边界', persona_address: '称呼', persona_state: '状态', personaIndependent: '这里只读展示用户明确设定的人设；撤回来源不会自动修改人设，修改请使用可信维护入口。', personaSourceUnavailable: '原设定来源已不可用或版本已变化。', personaEmpty: '尚未设置人设',
     diagnosticEmbedding: '嵌入模型', diagnosticReflection: '复杂反思模型', diagnosticExtraction: '候选抽取模型', diagnosticSpeech: '语音', providerLocal: '已配置本地（未检查健康或准入）', providerRemote: '已配置线上（须单独授权，未检查健康或准入）', providerNone: '服务未配置', providerHost: '由宿主或独立语音适配器负责', providerUnknown: '未知或旧版服务未提供',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
@@ -61,6 +62,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
     diagnostics: 'Connection and configuration', diagnosticScope: 'Host configuration and this trusted management read; not model or daily-use admission.', diagnosticSchema: 'Core configuration schema', diagnosticService: 'Management service', diagnosticOnline: 'Read succeeded', diagnosticLoading: 'Checking', diagnosticUnavailable: 'Read failed or unavailable', diagnosticStream: 'Host stream mode', diagnosticRecovery: 'Read-only continuation', diagnosticEnabled: 'Available', diagnosticDisabled: 'Disabled or unsupported',
     diagnosticPrivate: 'Local private record entry', diagnosticFingerprint: 'Fingerprint revalidation bridge', diagnosticConfigured: 'Configured (health not checked)', diagnosticNotConfigured: 'Not configured',
+    persona: 'Companion persona', persona_identity: 'Identity', persona_tone: 'Tone', persona_boundary: 'Boundary', persona_address: 'Address', persona_state: 'State', personaIndependent: 'This view is read-only. Persona is explicitly set by the user; withdrawing its source does not change it. Use a trusted maintenance entry to edit it.', personaSourceUnavailable: 'The original setting source is unavailable or has changed.', personaEmpty: 'No persona configured',
     diagnosticEmbedding: 'Embedding model', diagnosticReflection: 'Reflection model', diagnosticExtraction: 'Candidate extraction model', diagnosticSpeech: 'Speech', providerLocal: 'Local configured (health and admission not checked)', providerRemote: 'Remote configured (separate consent required; health and admission not checked)', providerNone: 'Not configured in service', providerHost: 'Owned by host or separate speech adapter', providerUnknown: 'Unknown or unavailable in older service',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
@@ -498,7 +500,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               : sessionStatus.stream_mode === 'durable_tools' ? 'durableTools'
               : sessionStatus.tool_publication === 'saved_before_publish' ? 'bufferedTools' : 'buffered')),
             h('p', null, t('gaps') + ': ' + (sessionStatus.capture_gaps?.join(', ') || t('noGaps')))) : null,
-          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'network', 'topic_settings', 'drafts', 'suppressed', 'rejected'].map(name =>
+          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'persona', 'timeline', 'network', 'topic_settings', 'drafts', 'suppressed', 'rejected'].map(name =>
             button(t(name), () => changeTab(name), { key: name, role: 'tab', 'aria-selected': name === tab }))),
           notice ? h('div', { className: 'en-success', role: 'status' }, notice) : null,
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
@@ -516,21 +518,28 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                   maxLength: key === 'entry' || key === 'session' ? 256 : undefined, value: timelineInput[key], 'aria-label': t(label),
                   onChange: event => setTimelineInput(value => ({ ...value, [key]: event.target.value })) }));
               }) : []),
-              tab !== 'timeline' && tab !== 'interests' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { refresh(); setCategory(event.target.value); setOffsets([0]); } },
+              tab !== 'timeline' && tab !== 'interests' && tab !== 'persona' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { refresh(); setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
+            tab === 'persona' ? h('p', { className: 'en-muted' }, t('personaIndependent')) : null,
             tab === 'timeline' || tab === 'network' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
-                ...(tab === 'topic_settings' ? data.items.map(item => h('article', { key: item.view_id, className: 'en-card' },
+                ...(tab === 'persona' ? data.items.map(item => h('article', { key: item.block, className: 'en-card' },
+                  h('header', null, h('span', { className: 'en-pill' }, t('persona_' + item.block)),
+                    h('span', { className: 'en-muted' }, t('version') + ' ' + item.revision)),
+                  h('p', { className: 'en-label' }, item.text),
+                  item.evidence_id ? button(t('source'), () => openSource(item.evidence_id), { disabled: busy })
+                    : h('p', { className: 'en-muted' }, t('personaSourceUnavailable')))) :
+                tab === 'topic_settings' ? data.items.map(item => h('article', { key: item.view_id, className: 'en-card' },
                   h('h2', null, item.definition?.title ?? item.view_id), h('p', null, item.definition?.purpose),
                   h('p', { className: 'en-muted' }, t('version') + ' ' + item.revision + ' · ' + t(['valid', 'conflict'].includes(item.state) ? item.state : 'topic_' + item.state)),
                   h('div', { className: 'en-actions' }, button(t('topicEdit'), () => editTopic(item), { disabled: busy }),
                     button(t(item.state === 'paused' ? 'topicResume' : 'topicPause'), () => setTopicControl({ ...item, control: item.state === 'paused' ? 'resume' : 'pause' }), { disabled: busy }),
                     button(t('topicDelete'), () => setTopicControl({ ...item, control: 'delete' }), { disabled: busy })))) :
                   tab === 'network' && networkLayer === 'graph' ? graphCards(data.items) : data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard))) :
-              error ? null : h('div', { className: 'en-empty' }, h('h2', null, t(tab === 'topic_settings' ? 'topicEmpty' : 'empty')), h('p', null, t(tab === 'topic_settings' ? 'topicEmptyHelp' : tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
+              error ? null : h('div', { className: 'en-empty' }, h('h2', null, t(tab === 'persona' ? 'personaEmpty' : tab === 'topic_settings' ? 'topicEmpty' : 'empty')), h('p', null, t(tab === 'persona' ? 'personaIndependent' : tab === 'topic_settings' ? 'topicEmptyHelp' : tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
             error && !data.items.length ? null : h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
               button(t('previous'), () => { refresh(); setOffsets(value => value.slice(0, -1)); }, { disabled: loading || offsets.length < 2 }),
               button(t('next'), () => { const next = data.next_offset; refresh(); setOffsets(value => [...value, next]); }, { disabled: loading || data.next_offset == null }))),

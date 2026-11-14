@@ -195,6 +195,28 @@ class MemoryManagement:
             raise MemoryFailure("invalid_query")
         with self.runtime._connection() as db:
             db.execute("BEGIN")
+            if view == 'persona':
+                if category is not None or session_id is not None or message_id is not None or tag_id is not None or cursor != 0:
+                    raise MemoryFailure('invalid_arguments')
+                from .persona import PERSONA_BLOCKS, PersonaRegistry
+                items = []
+                for block in PERSONA_BLOCKS:
+                    persona_record = PersonaRegistry._latest(db, block)
+                    if persona_record is None or not persona_record.text or (query and query not in persona_record.text):
+                        continue
+                    evidence_id = None
+                    try:
+                        source = self._source(db, persona_record.evidence_id)
+                        if (source['state_version'] == persona_record.evidence_version and source['role'] == 'user'
+                                and source['completion'] == 'complete' and source['representation'] == 'original'):
+                            evidence_id = persona_record.evidence_id
+                    except MemoryFailure as error:
+                        if error.code not in {'message_not_found', 'source_unavailable'}:
+                            raise
+                    items.append({'block': block, 'revision': persona_record.revision, 'text': persona_record.text,
+                                  'recorded_at': persona_record.recorded_at, 'evidence_id': evidence_id})
+                return {'items': items[offset:offset + limit],
+                        'next_offset': offset + limit if len(items) > offset + limit else None}
             if view == 'topic_settings':
                 from .topic_views import TopicViews
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE name='topic_view_definitions_v1'").fetchone():
