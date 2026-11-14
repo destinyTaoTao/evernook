@@ -208,9 +208,20 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(calls.some(call => call.view === 'network_facts'));
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterEntry').props.onChange({ target: { value: 'dsh' } });
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSession').props.onChange({ target: { value: 'evidence-session' } });
+  const springTransition = process.env.TZ === 'America/New_York';
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSince').props.onChange({ target: { value: springTransition ? '2024-03-10' : '2024-01-01' } });
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterUntil').props.onChange({ target: { value: springTransition ? '2024-03-11' : '2024-01-02' } });
   tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   tree = render(); await flush(); tree = render();
   assert.ok(calls.some(call => call.view === 'network_facts' && call.entry === 'dsh' && call.session_id === 'evidence-session'));
+  if (process.env.TZ === 'Asia/Shanghai') {
+    assert.ok(calls.some(call => call.view === 'network_facts' && call.since === '2023-12-31T16:00:00.000Z'
+      && call.until === '2024-01-01T16:00:00.000Z'));
+  }
+  if (springTransition) {
+    assert.ok(calls.some(call => call.view === 'network_facts' && call.since === '2024-03-10T05:00:00.000Z'
+      && call.until === '2024-03-11T04:00:00.000Z'));
+  }
   layer.props.onChange({ target: { value: 'observations' } });
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('合成观察')));
@@ -224,10 +235,16 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterEntry').props.onChange({ target: { value: 'dsh' } });
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSession').props.onChange({ target: { value: 's1' } });
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSince').props.onChange({ target: { value: '2022-01-01' } });
+  find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterUntil').props.onChange({ target: { value: '2022-01-02' } });
   tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   tree = render(); await flush();
   assert.ok(calls.some(call => call.view === 'timeline' && call.entry === 'dsh' && call.session_id === 's1'
-    && call.since === new Date('2022-01-01T00:00:00').toISOString()));
+    && call.since === new Date('2022-01-01T00:00:00').toISOString()
+    && call.until === new Date('2022-01-02T00:00:00').toISOString()));
+  if (process.env.TZ === 'Asia/Shanghai') {
+    assert.ok(calls.some(call => call.view === 'timeline' && call.since === '2021-12-31T16:00:00.000Z'
+      && call.until === '2022-01-01T16:00:00.000Z'));
+  }
   tree = render();
   assert.ok(find(tree, node => node.type === 'h2' && node.children.includes('empty')));
   timelineAvailable = false;

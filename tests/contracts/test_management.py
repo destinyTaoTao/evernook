@@ -249,6 +249,34 @@ class ManagementTests(unittest.TestCase):
         self.apply({"kind": "source_suppress", "message_id": first})
         self.assertEqual(ids(since="2022-01-01T00:00:00Z", until="2023-01-01T00:00:00Z"), set())
 
+    def test_timeline_and_cross_layer_graph_use_half_open_local_midnight_bounds(self) -> None:
+        cases = (
+            ('before', '2023-12-31T15:59:59Z'),
+            ('start', '2023-12-31T16:00:00Z'),
+            ('inside', '2024-01-01T15:59:59Z'),
+            ('end', '2024-01-01T16:00:00Z'),
+            ('unknown', None),
+        )
+        ids: dict[str, str] = {}
+        for index, (name, occurred) in enumerate(cases, 1):
+            text = '合成边界：' + name
+            receipt = self.runtime.submit(self.access, Event(Source('owner', 'boundary-session', 'main', name),
+                'user', index, occurred, 'complete', text))
+            ids[name] = receipt.message_id
+            span = EvidenceSpan(receipt.message_id, 1, 'original', 1, 0, len(text), text)
+            self.profiles.decide(self.access, ProfileDecision('propose-' + name, 'tag-' + name, 0, 'propose',
+                ProfileDraft('interest', text, 0.8, (span,))))
+            self.apply({'kind': 'profile_confirm', 'tag_id': 'tag-' + name})
+        filters = {'entry': 'owner', 'session_id': 'boundary-session',
+                   'since': '2024-01-01T00:00:00+08:00', 'until': '2024-01-02T00:00:00+08:00'}
+        timeline = self.ui.read(self.access, view='timeline', **filters)
+        self.assertEqual({item['message_id'] for item in timeline['items']}, {ids['start'], ids['inside']})
+        graph = self.ui.read(self.access, view='network_graph', **filters)
+        self.assertEqual({node['label'] for node in graph['nodes']}, {'合成边界：start', '合成边界：inside'})
+        self.assertEqual(self.ui.read(self.access, view='timeline', **{**filters, 'session_id': 'other'})['items'], [])
+        self.assertEqual(self.ui.read(self.access, view='network_graph', **{**filters, 'entry': 'other'})['nodes'], [])
+        self.assertIn(ids['unknown'], {item['message_id'] for item in self.ui.read(self.access, view='timeline')['items']})
+
     def test_graph_links_shared_source_and_withholds_all_dependents_when_suppressed(self) -> None:
         from evernook import CandidateDraft, CandidateWorkflow
         from evernook.facts import FactDecision, FactRegistry
