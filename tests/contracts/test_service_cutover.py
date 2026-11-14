@@ -165,6 +165,46 @@ class ServiceCutoverTests(unittest.TestCase):
                     future.result(timeout=10)
         self.assertEqual(ServiceClient(self.config).call(self.access, "status", {})["ledger"]["messages"], 1)
 
+    def test_pending_reconcile_cannot_cross_actual_service_activation(self) -> None:
+        from evernook.protected import initialize_protected_inbox
+        inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic-gate-test-password')
+        pending = inbox.stage(self.access, Event(Source('test', 'synthetic-vault', 'main', 'pending'),
+            'user', 2, None, 'complete', 'synthetic-pending-cutover-secret'))
+        authorized, release = threading.Event(), threading.Event()
+        original = self.runtime._require_scope
+        def pause(*args: Any, **kwargs: Any) -> Any:
+            value = original(*args, **kwargs)
+            authorized.set()
+            if not release.wait(20):
+                raise RuntimeError('synthetic cutover test timed out')
+            return value
+        with patch.object(self.runtime, '_require_scope', side_effect=pause), ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(inbox.reconcile, self.access, pending.object_id)
+            try:
+                self.assertTrue(authorized.wait(10))
+                endpoint = self.config.parent / 'memory-service.json'
+                # An unbound external inbox is currently undiscoverable; a future
+                # fail-closed activation is also acceptable, not a required startup.
+                self.process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+                    '--activate-owner', str(self.access_path)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                deadline = time.monotonic() + 15
+                while not endpoint.exists() and self.process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                activated = endpoint.exists() and self.process.poll() is None
+                if not activated:
+                    self.assertIsNotNone(self.process.poll(), 'service startup timed out')
+                    assert self.process.stderr is not None
+                    self.assertIn(b'protected_cutover_requires_migration', self.process.stderr.read())
+            finally:
+                release.set()
+            if activated:
+                with self.assertRaisesRegex(MemoryFailure, 'service_required'):
+                    future.result(timeout=15)
+                with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
+                    self.assertEqual(db.execute('SELECT state FROM objects WHERE id=?', (pending.object_id,)).fetchone()[0], 'protected_pending_link')
+            else:
+                self.assertEqual(future.result(timeout=15).state, 'protected_linked')
+
     def test_service_pairing_can_recover_after_lockout_with_admin(self) -> None:
         from evernook.service import client_access
         self.start()

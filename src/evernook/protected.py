@@ -260,7 +260,16 @@ class ProtectedInbox:
         return result
 
     def reconcile(self, access: Access, object_id: str) -> ProtectedReceipt:
-        identity = self.runtime._require_scope(access, 'capture', 'protected_reconcile')
+        from .service_gate import ownership_gate
+        self.runtime._require_scope(access, 'capture', 'protected_reconcile')
+        with ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout):
+            # A caller may have waited behind a cutover or permission change.
+            identity = self.runtime._authorize(access)
+            if 'capture' not in identity.scopes:
+                raise MemoryFailure('permission_denied')
+            return self._reconcile_authorized(identity.entry, object_id)
+
+    def _reconcile_authorized(self, entry: str, object_id: str) -> ProtectedReceipt:
         try:
             if str(UUID(object_id)) != object_id:
                 raise ValueError()
@@ -273,7 +282,7 @@ class ProtectedInbox:
             _, projection = self._verified(row)
             envelope = str(row["envelope"])
             fingerprint = bytes(row["fingerprint"])
-        if projection.source.entry != identity.entry:
+        if projection.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
         reference = self._reference(object_id, envelope)
         with self.runtime._connection() as core:

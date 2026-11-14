@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -319,6 +320,81 @@ class ProtectedTests(unittest.TestCase):
         pending = self.inbox.stage(self.access, self.event)
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             self.inbox.reconcile(reader, pending.object_id)
+
+    def test_reconcile_holds_cutover_gate_through_inbox_acknowledgment(self) -> None:
+        from evernook.service_gate import ownership_gate
+        pending = self.inbox.stage(self.access, self.event)
+        reached_ack, release = threading.Event(), threading.Event()
+        original = self.inbox._verified
+        calls = 0
+        def pause_after_ledger(row: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                reached_ack.set()
+                if not release.wait(10):
+                    raise RuntimeError('synthetic gate test timeout')
+            return original(row)
+        with patch.object(self.inbox, '_verified', side_effect=pause_after_ledger), ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.inbox.reconcile, self.access, pending.object_id)
+            try:
+                self.assertTrue(reached_ack.wait(10))
+                with self.assertRaisesRegex(MemoryFailure, 'storage_busy'):
+                    with ownership_gate(self.runtime.root, exclusive=True, timeout=0.1):
+                        pass
+            finally:
+                release.set()
+            self.assertEqual(future.result(timeout=15).state, 'protected_linked')
+        with ownership_gate(self.runtime.root, exclusive=True, timeout=1):
+            pass
+
+    def test_reconcile_rechecks_scope_after_waiting_for_gate(self) -> None:
+        pending = self.inbox.stage(self.access, self.event)
+        authorized, release = threading.Event(), threading.Event()
+        original = self.runtime._require_scope
+        def pause_after_authorization(*args: object, **kwargs: object) -> object:
+            result = original(*args, **kwargs)
+            authorized.set()
+            if not release.wait(10):
+                raise RuntimeError('synthetic gate test timeout')
+            return result
+        with patch.object(self.runtime, '_require_scope', side_effect=pause_after_authorization), ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.inbox.reconcile, self.access, pending.object_id)
+            try:
+                self.assertTrue(authorized.wait(10))
+                pair_client(self.config, client_id='synthetic', entry='synthetic',
+                    access_path=self.config.parent / 'mcp-access-synthetic.json', scopes=('recall',))
+            finally:
+                release.set()
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                future.result(timeout=15)
+        self.assertEqual(self.inbox.pending(self.access)[0].state, 'protected_pending_link')
+
+    def test_reconcile_rechecks_service_mode_after_cutover_window(self) -> None:
+        from evernook.runtime import _atomic_json, _load
+        from evernook.service_gate import ownership_gate
+        pending = self.inbox.stage(self.access, self.event)
+        authorized, release = threading.Event(), threading.Event()
+        original = self.runtime._require_scope
+        def pause_after_authorization(*args: object, **kwargs: object) -> object:
+            result = original(*args, **kwargs)
+            authorized.set()
+            if not release.wait(10):
+                raise RuntimeError('synthetic cutover test timeout')
+            return result
+        with patch.object(self.runtime, '_require_scope', side_effect=pause_after_authorization), ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.inbox.reconcile, self.access, pending.object_id)
+            try:
+                self.assertTrue(authorized.wait(10))
+                # Synthetic state transition only; production still blocks protected cutover.
+                with ownership_gate(self.runtime.root, exclusive=True, timeout=1):
+                    _atomic_json(self.config, {**_load(self.config), 'service_mode': True})
+            finally:
+                release.set()
+            with self.assertRaisesRegex(MemoryFailure, 'service_required'):
+                future.result(timeout=15)
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
+            self.assertEqual(db.execute('SELECT state FROM objects WHERE id=?', (pending.object_id,)).fetchone()[0], 'protected_pending_link')
 
     def test_encryption_failure_and_missing_sender_material_never_fall_back_to_plaintext(self) -> None:
         with patch("evernook.protected.SealedBox.encrypt", side_effect=RuntimeError("synthetic secret diagnostic")):
