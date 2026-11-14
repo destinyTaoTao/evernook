@@ -21,7 +21,8 @@ class MultiVaultFixture(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='evernook-multi-verify-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.config, self.owner = initialize(self.root / 'ordinary', client_id='owner', entry='owner')
+        self.config, self.owner = initialize(self.root / 'ordinary', client_id='owner', entry='owner',
+                                             allow_archive_review=getattr(self, 'archive_review', False))
         self.runtime = MemoryRuntime(self.config)
         self.owner_file = self.config.parent / 'mcp-access-owner.json'
         pair_client(self.config, client_id='owner', entry='owner', access_path=self.owner_file)

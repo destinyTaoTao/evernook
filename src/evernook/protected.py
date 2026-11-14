@@ -54,6 +54,15 @@ class ProtectedLinkInventoryPage:
     next_cursor: str | None
 
 
+def _event_fingerprint(runtime: MemoryRuntime, event: Event, stream_provenance: bool) -> bytes:
+    if stream_provenance:
+        provenance = {'format': 'buffered_text_stream', 'gaps': ['private_stream_boundaries_not_saved']}
+        data = b'protected-event-v2' + _json({'event': asdict(event), 'provenance': provenance}).encode()
+    else:
+        data = b'protected-event-v1' + _json(asdict(event)).encode()
+    return hmac.digest(runtime._fingerprint_key, data, hashlib.sha256)
+
+
 def known_inboxes(runtime: MemoryRuntime, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
     """List known IDs only; never claim this enumerates all filesystem inboxes."""
     runtime._require_scope(access, 'admin', 'protected_known_inboxes')
@@ -172,6 +181,7 @@ class ProtectedInbox:
 
     def __init__(self, runtime: MemoryRuntime, root: Path, key_root: Path):
         self.runtime, self.root, self.key_root = runtime, external(root), external(key_root)
+        self._historical_inboxes: tuple[ProtectedInbox, ...] = ()
         self.public, self.recipient, self.sender = _public(self.key_root / "receiving.json")
         with self._connection() as db:
             row = db.execute("SELECT * FROM settings WHERE singleton=1").fetchone()
@@ -311,6 +321,8 @@ class ProtectedInbox:
             if 'capture' not in identity.scopes:
                 raise MemoryFailure('permission_denied')
             self.runtime._validate_event(event)
+            if stream_provenance and (event.sensitive is not True or event.completion != 'complete' or event.role == 'tool'):
+                raise MemoryFailure('invalid_protected_provenance')
             if event.source.entry != identity.entry:
                 raise MemoryFailure('unauthorized_source')
             # Registration must be durable before ciphertext; pairing serializes on
@@ -321,6 +333,42 @@ class ProtectedInbox:
                 identity = self.runtime._authorize(access)
                 if 'capture' not in identity.scopes:
                     raise MemoryFailure('permission_denied')
+                source = _json(asdict(event.source))
+                for historical in self._historical_inboxes:
+                    with historical._connection(gate_db=core) as history:
+                        row = history.execute('SELECT * FROM objects WHERE source=?', (source,)).fetchone()
+                        if row is not None:
+                            value, _ = historical._verified(row)
+                            expected = _event_fingerprint(self.runtime, event, stream_provenance)
+                            legacy = _event_fingerprint(self.runtime, event, False)
+                            if (not hmac.compare_digest(bytes(row['fingerprint']), expected)
+                                    and not (stream_provenance and value['bound']['version'] == 1
+                                             and hmac.compare_digest(bytes(row['fingerprint']), legacy))):
+                                raise MemoryFailure('source_conflict')
+                            receipt = historical._receipt(row)
+                            if receipt.state != 'protected_linked':
+                                raise MemoryFailure('protected_cutover_requires_migration')
+                            core.execute('COMMIT')
+                            return receipt
+                if self._historical_inboxes and core.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone():
+                    existing = core.execute('''SELECT l.reference FROM messages m JOIN protected_links_v1 l ON l.message_id=m.id
+                                               WHERE m.source=?''', (source,)).fetchone()
+                    if existing is not None:
+                        try:
+                            reference = json.loads(existing['reference'], object_pairs_hook=_unique_object)
+                            if (not isinstance(reference, dict) or reference.get('inbox_id') != self.inbox_id
+                                    or not isinstance(reference.get('object_id'), str)):
+                                raise ValueError()
+                        except (ValueError, TypeError, KeyError):
+                            raise MemoryFailure('protected_link_unavailable') from None
+                        with self._connection(gate_db=core) as primary:
+                            previous = primary.execute('SELECT * FROM objects WHERE id=?', (reference['object_id'],)).fetchone()
+                            if previous is None:
+                                raise MemoryFailure('protected_link_unavailable')
+                            self._verified(previous)
+                            if (previous['source'] != source or self._reference(str(previous['id']), str(previous['envelope']))
+                                    != existing['reference']):
+                                raise MemoryFailure('protected_link_unavailable')
                 result = (self._stage_authorized(identity.entry, event, stream_provenance=True)
                           if stream_provenance else self._stage_authorized(identity.entry, event))
                 core.execute('COMMIT')
@@ -335,7 +383,7 @@ class ProtectedInbox:
         if event.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
         provenance = {'format': 'buffered_text_stream', 'gaps': ['private_stream_boundaries_not_saved']} if stream_provenance else None
-        fingerprint = hmac.digest(self.runtime._fingerprint_key, (b'protected-event-v2' + _json({'event': asdict(event), 'provenance': provenance}).encode()) if provenance else (b'protected-event-v1' + _json(asdict(event)).encode()), hashlib.sha256)
+        fingerprint = _event_fingerprint(self.runtime, event, stream_provenance)
         source = _json(asdict(event.source))
         sender = self._writer()
         with self._connection() as db:
@@ -346,7 +394,7 @@ class ProtectedInbox:
                     # Before v2, buffered streams and ordinary text used the same
                     # fingerprint. An exact retry can recover the old receipt, but
                     # cannot reconstruct whether stream boundaries existed.
-                    legacy = hmac.digest(self.runtime._fingerprint_key, b'protected-event-v1' + _json(asdict(event)).encode(), hashlib.sha256)
+                    legacy = _event_fingerprint(self.runtime, event, False)
                     value, _ = self._verified(previous)
                     if not (stream_provenance and value['bound']['version'] == 1
                             and hmac.compare_digest(bytes(previous['fingerprint']), legacy)):
@@ -426,6 +474,8 @@ class ProtectedInbox:
 
     def submit(self, access: Access, event: Event, *, stream_provenance: bool = False) -> ProtectedReceipt:
         staged = self.stage(access, event, stream_provenance=stream_provenance)
+        if staged.inbox_id != self.inbox_id:
+            return staged
         return self.reconcile(access, staged.object_id)
 
     def status(self, access: Access, object_id: str) -> ProtectedReceipt:

@@ -148,6 +148,7 @@ def _parser() -> Parser:
         ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
         ('service-protected-receive', 'Trusted local private Event from stdin; service configuration required'),
         ('service-protected-capture', 'Trusted local structured private capture from stdin'),
+        ('service-protected-inboxes', 'Administrator list of bound protected inbox IDs'),
         ('service-protected-inventory', 'Administrator inventory of the bound encrypted inbox'),
         ('service-protected-links', 'Administrator inventory of protected ledger links'),
         ('service-protected-show-local', 'Request one native password-confirmed local display'),
@@ -265,6 +266,7 @@ def _parser() -> Parser:
         if name == 'service-protected-show-local':
             command.add_argument('--object-id', required=True)
             command.add_argument('--purpose', required=True)
+            command.add_argument('--inbox-id')
         if name == 'service-protected-backup':
             command.add_argument('--destination', type=Path, required=True)
             command.add_argument('--backup-keys', type=Path, required=True)
@@ -873,7 +875,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-protected-capture', 'service-private-window', 'service-private-session', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-protected-capture', 'service-private-window', 'service-private-session', 'service-protected-inboxes', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -904,16 +906,19 @@ def main() -> None:
                 tuple(AttachmentInput('', '', '', None) for _ in attachments), value.get('provided', True),
                 tuple(chunks) if chunks is not None else None)
             result = ServiceClient(args.config).protected_capture(access, capture_request)
+        elif args.command == 'service-protected-inboxes':
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).protected_inboxes(access)
         elif args.command in ('service-protected-inventory', 'service-protected-links'):
             access = client_access(args.config, args.access)
             value = _input()
-            if set(value) - {'after', 'limit'}:
+            if set(value) - {'after', 'limit', 'inbox_id'}:
                 raise MemoryFailure('invalid_arguments')
             method = ServiceClient(args.config).protected_inventory if args.command == 'service-protected-inventory' else ServiceClient(args.config).protected_links
             result = method(access, **value)
         elif args.command == 'service-protected-show-local':
             access = client_access(args.config, args.access)
-            result = ServiceClient(args.config).protected_show_local(access, args.object_id, args.purpose)
+            result = ServiceClient(args.config).protected_show_local(access, args.object_id, args.purpose, inbox_id=args.inbox_id)
         elif args.command == 'service-protected-backup':
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).protected_backup(access, args.destination, args.backup_keys)

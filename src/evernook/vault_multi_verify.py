@@ -19,9 +19,16 @@ from .paths import verify_private_directory
 from .vault_migration import MAX_OBJECTS, MAX_SECONDS, _authorize_admin, _file_bytes, _materials
 
 
-def _inspect(runtime: MemoryRuntime, access: Access,
+def _inspect(runtime: MemoryRuntime, access: Access | None,
              declared: tuple[tuple[ProtectedInbox, bytes | None], ...], *, decrypt: bool,
-             require_complete: bool, locked: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+             require_complete: bool, locked: Callable[[dict[str, Any]], None] | None = None,
+             require_readable: bool = True, unbounded_objects: bool = False,
+             service_startup: bool = False) -> dict[str, Any]:
+    if access is None and not (service_startup and runtime._service_owner):
+        raise MemoryFailure('permission_denied')
+    def authorize() -> None:
+        if access is not None:
+            _authorize_admin(runtime, access)
     if (not isinstance(declared, tuple) or not 2 <= len(declared) <= 16
             or any(not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], ProtectedInbox)
                    or item[0].runtime is not runtime or (not isinstance(item[1], bytes) if decrypt else item[1] is not None)
@@ -49,7 +56,7 @@ def _inspect(runtime: MemoryRuntime, access: Access,
         return deadline - time.monotonic()
     with runtime._connection(ownership_exclusive=True, check=remaining) as core:
         core.execute('BEGIN IMMEDIATE')
-        _authorize_admin(runtime, access)
+        authorize()
         _require_protected_available(runtime, core)
         key_path = runtime.root / 'idempotency.key'
         client_path = runtime.root / 'client.json'
@@ -101,7 +108,7 @@ def _inspect(runtime: MemoryRuntime, access: Access,
             for _, _, store, _ in stores:
                 for source_row in store.execute('SELECT source FROM objects'):
                     check()
-                    if len(sources) >= MAX_OBJECTS or source_row['source'] in sources:
+                    if ((not unbounded_objects and len(sources) >= MAX_OBJECTS) or source_row['source'] in sources):
                         raise MemoryFailure('protected_cutover_requires_migration')
                     sources.add(source_row['source'])
             for inbox, private, store, material in stores:
@@ -116,7 +123,7 @@ def _inspect(runtime: MemoryRuntime, access: Access,
                 for row in store.execute('SELECT * FROM objects ORDER BY id'):
                     check()
                     total += 1; count += 1
-                    if total > MAX_OBJECTS:
+                    if not unbounded_objects and total > MAX_OBJECTS:
                         raise MemoryFailure('protected_cutover_requires_migration')
                     is_pending = row['state'] == 'protected_pending_link' and row['receipt'] is None
                     if is_pending and require_complete:
@@ -124,7 +131,7 @@ def _inspect(runtime: MemoryRuntime, access: Access,
                     if not is_pending and (row['state'] != 'protected_linked' or row['receipt'] is None):
                         raise MemoryFailure('protected_object_corrupt')
                     _, projection = inbox._verified(row)
-                    if projection.source.entry not in readable:
+                    if require_readable and projection.source.entry not in readable:
                         raise MemoryFailure('protected_migration_unreachable_entry')
                     if private is not None:
                         _decrypt_event(inbox, row, private)
@@ -165,7 +172,7 @@ def _inspect(runtime: MemoryRuntime, access: Access,
             if linked != links:
                 raise MemoryFailure('protected_cutover_requires_migration')
             check()
-            _authorize_admin(runtime, access)
+            authorize()
             current_clients = hmac.digest(runtime._fingerprint_key, b'protected-multi-clients-v1\0'
                                           + _file_bytes(client_path, 1048576), 'sha256').hex()
             if not hmac.compare_digest(current_clients, clients):

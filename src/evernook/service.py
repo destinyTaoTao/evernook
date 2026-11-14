@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
-PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local', 'protected-backup', 'transcription-submit', 'transcription-read'})
+PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inboxes', 'protected-inventory', 'protected-links', 'protected-show-local', 'protected-backup', 'transcription-submit', 'transcription-read'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
     "persona-read", "persona-history", "persona-set", "persona-rollback",
@@ -92,8 +92,15 @@ class ServiceClient:
             raise MemoryFailure('invalid_private_capture')
         return capture(self, access, request, timeout=timeout, cancel=cancel)
 
-    def protected_inventory(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
-        value = self.call(access, 'protected-inventory', {'after': after, 'limit': limit})
+    def protected_inventory(self, access: Access, *, after: str | None = None, limit: int = 100,
+                            inbox_id: str | None = None) -> dict[str, Any]:
+        value = self.call(access, 'protected-inventory', {'after': after, 'limit': limit, **({'inbox_id': inbox_id} if inbox_id is not None else {})})
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def protected_inboxes(self, access: Access) -> dict[str, Any]:
+        value = self.call(access, 'protected-inboxes', {})
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -110,15 +117,17 @@ class ServiceClient:
             raise MemoryFailure('service_invalid_response')
         return value
 
-    def protected_links(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
-        value = self.call(access, 'protected-links', {'after': after, 'limit': limit})
+    def protected_links(self, access: Access, *, after: str | None = None, limit: int = 100,
+                        inbox_id: str | None = None) -> dict[str, Any]:
+        value = self.call(access, 'protected-links', {'after': after, 'limit': limit, **({'inbox_id': inbox_id} if inbox_id is not None else {})})
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
 
     def protected_show_local(self, access: Access, object_id: str, purpose: str, *,
-                             cancel: threading.Event | None = None) -> dict[str, Any]:
-        value = self.call(access, 'protected-show-local', {'object_id': object_id, 'purpose': purpose}, timeout=170, cancel=cancel)
+                             cancel: threading.Event | None = None, inbox_id: str | None = None) -> dict[str, Any]:
+        value = self.call(access, 'protected-show-local', {'object_id': object_id, 'purpose': purpose,
+                          **({'inbox_id': inbox_id} if inbox_id is not None else {})}, timeout=170, cancel=cancel)
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -210,7 +219,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
              extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None,
              embedding_binding: ServiceEmbedding | None = None, extraction_error: str | None = None,
              reflection_error: str | None = None, extraction_binding: _ProviderBinding | None = None,
-             reflection_binding: _ProviderBinding | None = None) -> object:
+             reflection_binding: _ProviderBinding | None = None,
+             protected_history: dict[str, ProtectedInbox] | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -219,6 +229,19 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     runtime.handshake(access)
     arguments = request["arguments"]
     operation = request["operation"]
+    def selected_inbox() -> ProtectedInbox:
+        if protected_inbox is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        if 'inbox_id' not in arguments:
+            return protected_inbox
+        selected = arguments['inbox_id']
+        if not isinstance(selected, str):
+            raise MemoryFailure('invalid_arguments')
+        if selected == protected_inbox.inbox_id:
+            return protected_inbox
+        if protected_history is None or selected not in protected_history:
+            raise MemoryFailure('protected_inbox_not_found')
+        return protected_history[selected]
     if operation == 'transcription-submit':
         if set(arguments) != {'material'} or not isinstance(arguments['material'], dict):
             raise MemoryFailure('invalid_arguments')
@@ -248,6 +271,15 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if private_event.completion != 'complete':
             raise MemoryFailure('protected_incomplete_unsupported')
         return protected_inbox.submit(access, private_event, stream_provenance=arguments.get('stream_provenance', False))
+    if operation == 'protected-inboxes':
+        runtime._require_scope(access, 'admin', 'protected_inboxes')
+        if arguments:
+            raise MemoryFailure('invalid_arguments')
+        if protected_inbox is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        inboxes = {'primary': protected_inbox.inbox_id, 'historical': sorted((protected_history or {}).keys())}
+        runtime._require_scope(access, 'admin', 'protected_inboxes')
+        return inboxes
     if operation == 'protected-backup':
         runtime._require_scope(access, 'admin', 'vault_backup')
         if protected_inbox is None:
@@ -262,19 +294,22 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     if operation in {'protected-inventory', 'protected-links'}:
         if protected_inbox is None:
             raise MemoryFailure('protected_service_unconfigured')
-        if set(arguments) != {'after', 'limit'}:
+        if set(arguments) not in ({'after', 'limit'}, {'after', 'limit', 'inbox_id'}):
             raise MemoryFailure('invalid_arguments')
+        runtime._require_scope(access, 'admin', 'protected_inventory_select')
+        inbox = selected_inbox()
         if operation == 'protected-inventory':
-            return protected_inbox.inventory(access, after=arguments['after'], limit=arguments['limit'])
-        return protected_inbox.inventory_links(access, after=arguments['after'], limit=arguments['limit'])
+            return inbox.inventory(access, after=arguments['after'], limit=arguments['limit'])
+        return inbox.inventory_links(access, after=arguments['after'], limit=arguments['limit'])
     if operation == 'protected-show-local':
         if protected_inbox is None or display_gate is None:
             raise MemoryFailure('protected_service_unconfigured')
-        if (set(arguments) != {'object_id', 'purpose'} or not isinstance(arguments['object_id'], str)
+        if (set(arguments) not in ({'object_id', 'purpose'}, {'object_id', 'purpose', 'inbox_id'}) or not isinstance(arguments['object_id'], str)
                 or not isinstance(arguments['purpose'], str)):
             raise MemoryFailure('invalid_arguments')
+        runtime._require_scope(access, 'recall', 'vault_local_display_select')
         from .service_vault import show
-        return show(protected_inbox, access, arguments['object_id'], arguments['purpose'], gate=display_gate, cancel=cancel)
+        return show(selected_inbox(), access, arguments['object_id'], arguments['purpose'], gate=display_gate, cancel=cancel)
     if operation in ("pair-unlock", "pair-configure"):
         from .runtime import unlock_pairing, configure_lockout
         runtime._require_scope(access, "admin", "service_pair_control")
@@ -533,6 +568,7 @@ class _Server(socketserver.ThreadingTCPServer):
         self.key = key
         self.single_writer = False
         self.protected_inbox: ProtectedInbox | None = None
+        self.protected_history: dict[str, ProtectedInbox] = {}
         self.protected_state = 'unconfigured'
         self.display_gate = threading.BoundedSemaphore(1)
         self.context_config = context_config
@@ -629,7 +665,7 @@ class _Handler(socketserver.BaseRequestHandler):
             try:
                 result = dispatch(server.runtime, request, cancel=cancel,
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
-                    protected_inbox=server.protected_inbox, display_gate=server.display_gate,
+                    protected_inbox=server.protected_inbox, protected_history=server.protected_history, display_gate=server.display_gate,
                     extractor=server.extractor, extraction_gate=server.extraction_gate, embedding_binding=server.embedding_binding,
                     extraction_error=server.extraction_error, reflection_error=server.reflection_error,
                     extraction_binding=server.extraction_binding, reflection_binding=server.reflection_binding)
@@ -671,7 +707,8 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
           allow_legacy_shared: bool = False, protected_root: Path | None = None,
           protected_keys: Path | None = None, activate_verified_inbox: bool = False,
-          activate_restored_without_vault: bool = False) -> None:
+          activate_restored_without_vault: bool = False, protected_history_roots: tuple[Path, ...] = (),
+          protected_history_keys: tuple[Path, ...] = (), activate_verified_multi: bool = False) -> None:
     if type(allow_legacy_shared) is not bool or (activate_owner is not None and allow_legacy_shared):
         raise MemoryFailure('invalid_service_mode')
     if (protected_root is None) != (protected_keys is None) or (protected_root is not None and allow_legacy_shared):
@@ -683,7 +720,14 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
             (activate_owner is None or protected_root is not None or protected_keys is not None
              or allow_legacy_shared or activate_verified_inbox)):
         raise MemoryFailure('invalid_protected_service_config')
+    if (type(activate_verified_multi) is not bool or len(protected_history_roots) != len(protected_history_keys)
+            or len(protected_history_roots) > 15 or (protected_history_roots and protected_root is None)
+            or (activate_verified_multi and (activate_owner is None or protected_root is None
+                or not protected_history_roots or allow_legacy_shared or activate_verified_inbox
+                or activate_restored_without_vault))):
+        raise MemoryFailure('invalid_protected_service_config')
     runtime = MemoryRuntime(config, service_owner=True)
+    from .runtime import _load
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
     with lock_path.open("a+b") as lock:
@@ -707,12 +751,26 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     raise MemoryFailure(server.extraction_error or server.reflection_error or 'service_provider_unavailable')
                 from .missing_vault import attachment, read_state, record_state
                 with runtime._connection(ownership_exclusive=True) as check:
+                    initial_config = _load(config)
+                    multi_marker = initial_config.get('protected_multi_binding') is True
+                    binding_exists = (runtime.root / 'protected-multi-binding.json').exists()
+                    if (multi_marker and not binding_exists) or (binding_exists and not multi_marker and not activate_verified_multi):
+                        raise MemoryFailure('protected_multi_binding_mismatch')
+                    if multi_marker and (protected_root is None or not protected_history_roots):
+                        raise MemoryFailure('protected_multi_binding_mismatch')
+                    if ((protected_history_roots and not (multi_marker or activate_verified_multi))
+                            or (multi_marker and (activate_owner is not None or allow_legacy_shared))):
+                        raise MemoryFailure('invalid_protected_service_config')
                     missing_vault = read_state(runtime, check)
                     attached_vault = attachment(runtime, check)
+                    registry = check.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_inbox_registry_v1'").fetchone()
+                    if (registry and check.execute('SELECT count(*) FROM protected_inbox_registry_v1').fetchone()[0] > 1
+                            and not (multi_marker or activate_verified_multi or activate_restored_without_vault or missing_vault)):
+                        raise MemoryFailure('protected_cutover_requires_migration')
                 if missing_vault and (protected_root is not None or allow_legacy_shared):
                     raise MemoryFailure('protected_restore_required')
                 if attached_vault is not None:
-                    if (allow_legacy_shared or protected_root is None or protected_keys is None
+                    if (multi_marker or activate_verified_multi or allow_legacy_shared or protected_root is None or protected_keys is None
                             or str(external(protected_root)) != attached_vault['inbox_dir']
                             or str(external(protected_keys)) != attached_vault['key_dir']):
                         raise MemoryFailure('protected_attachment_mismatch')
@@ -727,6 +785,22 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         raise MemoryFailure('vault_dependency_missing') from None
                     server.protected_inbox = ProtectedInbox(runtime, protected_root, protected_keys)
                     server.protected_state = 'configured'
+                    if protected_history_roots:
+                        history = tuple(ProtectedInbox(runtime, root, keys) for root, keys in
+                                        zip(protected_history_roots, protected_history_keys))
+                        all_inboxes = (server.protected_inbox, *history)
+                        if activate_verified_multi:
+                            assert activate_owner is not None
+                            from .vault_multi_binding import activate
+                            activate(runtime, runtime.access_from_file(activate_owner), server.protected_inbox, all_inboxes)
+                            multi_marker = True
+                        elif multi_marker:
+                            from .vault_multi_binding import verify_startup
+                            verify_startup(runtime, server.protected_inbox, all_inboxes)
+                        server.protected_inbox._historical_inboxes = history
+                        server.protected_history = {item.inbox_id: item for item in history}
+                    elif multi_marker:
+                        raise MemoryFailure('protected_multi_binding_mismatch')
                     if attached_vault is not None:
                         from .vault_migration import _materials, _snapshot
                         if (server.protected_inbox.inbox_id != attached_vault['inbox_id']
@@ -757,7 +831,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
                         navigation_policies, server.stopping, embedding_config=embedding_config,
                         embedding_binding=server.embedding_binding)
-                if activate_owner is not None:
+                if activate_owner is not None and not activate_verified_multi:
                     owner = runtime.access_from_file(activate_owner)
                     runtime._require_scope(owner, "admin", "activate_service")
                     with runtime._connection(ownership_exclusive=True) as db:
@@ -808,7 +882,11 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                             _atomic_json(config, {**value, "service_mode": True})
                             db.execute("COMMIT")
                 with runtime._connection(ownership_exclusive=True) as db:
-                    activated = _load(config).get('service_mode') is True
+                    current_config = _load(config)
+                    if ((current_config.get('protected_multi_binding') is True) != multi_marker
+                            or (runtime.root / 'protected-multi-binding.json').exists() != multi_marker):
+                        raise MemoryFailure('protected_multi_binding_mismatch')
+                    activated = current_config.get('service_mode') is True
                     if read_state(runtime, db):
                         if server.protected_inbox is not None or allow_legacy_shared:
                             raise MemoryFailure('protected_restore_required')
@@ -856,6 +934,9 @@ def main() -> None:
     parser.add_argument("--protected-keys", type=Path)
     parser.add_argument('--activate-verified-inbox', action='store_true')
     parser.add_argument('--activate-restored-without-vault', action='store_true')
+    parser.add_argument('--protected-history-inbox', type=Path, action='append', default=[])
+    parser.add_argument('--protected-history-keys', type=Path, action='append', default=[])
+    parser.add_argument('--activate-verified-multi', action='store_true')
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
@@ -864,7 +945,9 @@ def main() -> None:
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
             allow_legacy_shared=args.allow_legacy_shared, protected_root=args.protected_inbox,
             protected_keys=args.protected_keys, activate_verified_inbox=args.activate_verified_inbox,
-            activate_restored_without_vault=args.activate_restored_without_vault)
+            activate_restored_without_vault=args.activate_restored_without_vault,
+            protected_history_roots=tuple(args.protected_history_inbox), protected_history_keys=tuple(args.protected_history_keys),
+            activate_verified_multi=args.activate_verified_multi)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:

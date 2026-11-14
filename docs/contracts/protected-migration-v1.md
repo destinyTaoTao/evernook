@@ -92,6 +92,42 @@ publication followed by revalidation. Existing preflight and single-inbox
 cutover tests were also rerun. These checks are not a multi-inbox activation or
 restoration test; no actual user vault or operating-system lock was exercised.
 
+Core 0.1.89 can activate a fully verified declared multi-inbox set with one
+writable primary and explicit historical inboxes. After preparing the proof,
+start with `--activate-owner <access> --activate-verified-multi`, the primary
+`--protected-inbox <dir> --protected-keys <dir>`, and one paired
+`--protected-history-inbox <dir> --protected-history-keys <dir>` per historical
+inbox. The service rechecks the proof while holding the ledger and all inbox
+locks, writes an authenticated binding and then enables service mode. Later
+restarts must provide the same complete set and primary, without the activation
+flags. The service validates current signatures, references and key materials;
+primary pending writes may be reconciled, but pending historical objects reject
+startup. An interruption before service mode is written requires an explicit
+retry with a still-valid or newly prepared proof; after mode is written, restart
+with the complete set. Process-crash testing does not prove power-loss durability.
+
+The trusted admin `service-protected-inboxes` / `ServiceClient.protected_inboxes`
+lists bound IDs only. Inventory, reverse links and single-use local display can
+select an inbox ID; omission retains the primary default. Historical originals
+are never used for new writes. An exact retry of an existing historical source
+returns its original linked receipt; changed content or missing referenced
+objects fail before staging. Local display may append audit metadata to a
+historical inbox but does not alter its protected objects. Old Core versions
+reject the new runtime configuration rather than silently starting with one
+inbox. Startup scanning has a cooperative time limit and no large-store
+performance guarantee. If the registry still records multiple inboxes, removal
+of both the runtime marker and binding fails closed. Simultaneous external
+rollback of the runtime configuration, binding and registry or ledger, or
+writers that bypass the project's locks, cannot reliably be detected.
+
+**Multi-inbox backup and restore remain unimplemented:** the existing single
+vault backup rejects this configuration and an ordinary backup does not include
+the vaults. A recovered ordinary backup may enter the existing authenticated
+missing-vault mode, allowing ordinary memory while protected access remains
+unavailable; it does not reattach any vault. Keep independent verified backups and original materials; #233
+tracks complete multi-inbox recovery. This increment does not establish real
+OS lock-screen behavior or daily-use admission.
+
 For #229, seven source tests and seven installed-wheel tests passed; after
 adding the non-nesting guard, two focused tests passed on each. They cover
 different passwords, linked and pending objects, a lost acknowledgment,
