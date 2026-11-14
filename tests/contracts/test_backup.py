@@ -117,6 +117,91 @@ class BackupTests(unittest.TestCase):
         self.assertFalse((archive.root / 'client.json').exists())
         self.assertFalse((archive.root / 'idempotency.key').exists())
 
+    def test_resigned_backup_with_mismatched_ledger_key_never_publishes(self) -> None:
+        import io
+        from evernook.backup import _decrypt, _encrypt, _unlock, _writer
+        self.runtime.submit(self.access, self.event)
+        root = self.root / 'backup'
+        create_backup(self.runtime, self.access, root, self.root / 'keys')
+        header = json.loads((root / 'backup.json').read_text(encoding='utf-8'))
+        content = header['content']
+        key_id, private, _ = _unlock(Path(self.keys.recovery_file), self.password)
+        _, recipient, signer = _writer(self.root / 'keys')
+        aad = json.dumps({'backup_id': content['status']['backup_id'], 'key_id': key_id, 'file': 'runtime'}, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+        plain = io.BytesIO()
+        _decrypt(root / 'runtime.enc', plain, private, content['files']['runtime'], aad)
+        materials = json.loads(plain.getvalue())
+        materials['idempotency_key'] = ('01' if materials['idempotency_key'][:2] != '01' else '02') + materials['idempotency_key'][2:]
+        (root / 'runtime.enc').unlink()
+        content['files']['runtime'] = _encrypt(io.BytesIO(json.dumps(materials).encode()), root / 'runtime.enc', recipient, aad)
+        canonical = json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
+        header['signature'] = signer.sign(canonical).signature.hex()
+        (root / 'backup.json').write_text(json.dumps(header), encoding='utf-8')
+        with self.assertRaisesRegex(MemoryFailure, 'backup_ledger_mismatch'):
+            restore_backup(root, self.root / 'mismatched-review', Path(self.keys.recovery_file), self.password)
+        self.assertFalse((self.root / 'mismatched-review').exists())
+
+    def test_resigned_archive_with_wrong_ledger_identity_never_publishes(self) -> None:
+        import io
+        from evernook.archive import _archive_auth
+        from evernook.backup import _decrypt, _encrypt, _unlock, _writer
+        from evernook.runtime import _json
+        self.runtime.submit(self.access, self.event)
+        root = self.root / 'backup'
+        create_backup(self.runtime, self.access, root, self.root / 'keys')
+        header = json.loads((root / 'backup.json').read_text(encoding='utf-8'))
+        content = header['content']
+        key_id, private, _ = _unlock(Path(self.keys.recovery_file), self.password)
+        _, recipient, signer = _writer(self.root / 'keys')
+        def aad(name: str) -> bytes:
+            return _json({'backup_id': content['status']['backup_id'], 'key_id': key_id, 'file': name}).encode()
+        def decrypt(name: str) -> bytes:
+            output = io.BytesIO()
+            _decrypt(root / (name + '.enc'), output, private, content['files'][name], aad(name))
+            return output.getvalue()
+        evidence = self.root / 'synthetic-evidence.sqlite3'
+        evidence.write_bytes(decrypt('evidence'))
+        with closing(sqlite3.connect(evidence)) as db:
+            with db:
+                db.execute("UPDATE ledger_identity_v1 SET ledger_id=? WHERE id=1", ('f' * 64,))
+        manifest = json.loads(decrypt('manifest'))
+        manifest['status']['sha256'] = hashlib.sha256(evidence.read_bytes()).hexdigest()
+        manifest.pop('source_auth')
+        key = bytes.fromhex(json.loads(decrypt('runtime'))['idempotency_key'])
+        manifest['source_auth'] = _archive_auth(key, manifest)
+        for name, data in [('evidence', evidence.read_bytes()), ('manifest', _json(manifest).encode())]:
+            (root / (name + '.enc')).unlink()
+            content['files'][name] = _encrypt(io.BytesIO(data), root / (name + '.enc'), recipient, aad(name))
+        header['signature'] = signer.sign(_json(content).encode()).signature.hex()
+        (root / 'backup.json').write_text(_json(header), encoding='utf-8')
+        with self.assertRaisesRegex(MemoryFailure, 'backup_ledger_mismatch'):
+            restore_backup(root, self.root / 'wrong-ledger-review', Path(self.keys.recovery_file), self.password)
+        self.assertFalse((self.root / 'wrong-ledger-review').exists())
+
+    def test_legacy_v1_manifest_remains_review_only(self) -> None:
+        import io
+        from evernook.backup import _decrypt, _encrypt, _unlock, _writer
+        from evernook.runtime import _json
+        self.runtime.submit(self.access, self.event)
+        root = self.root / 'backup'
+        create_backup(self.runtime, self.access, root, self.root / 'keys')
+        header = json.loads((root / 'backup.json').read_text(encoding='utf-8'))
+        content = header['content']
+        key_id, private, _ = _unlock(Path(self.keys.recovery_file), self.password)
+        _, recipient, signer = _writer(self.root / 'keys')
+        aad = _json({'backup_id': content['status']['backup_id'], 'key_id': key_id, 'file': 'manifest'}).encode()
+        output = io.BytesIO()
+        _decrypt(root / 'manifest.enc', output, private, content['files']['manifest'], aad)
+        manifest = json.loads(output.getvalue())
+        manifest['version'] = 1
+        manifest.pop('source_auth')
+        (root / 'manifest.enc').unlink()
+        content['files']['manifest'] = _encrypt(io.BytesIO(_json(manifest).encode()), root / 'manifest.enc', recipient, aad)
+        header['signature'] = signer.sign(_json(content).encode()).signature.hex()
+        (root / 'backup.json').write_text(_json(header), encoding='utf-8')
+        archive = restore_backup(root, self.root / 'legacy-review', Path(self.keys.recovery_file), self.password)
+        self.assertEqual(archive.status().recovery_state, 'review_required')
+
     def test_authentication_archive_permission_existing_targets_and_nested_paths_are_rejected(self) -> None:
         wrong = Access(self.access.client_id, "synthetic-wrong-token")
         with self.assertRaisesRegex(MemoryFailure, "unauthorized"):

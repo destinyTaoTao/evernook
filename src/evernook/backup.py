@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ from nacl.public import PrivateKey, PublicKey, SealedBox
 from nacl.secret import SecretBox
 from nacl.signing import SigningKey, VerifyKey
 
-from .archive import EvidenceArchive, verify_archive
+from .archive import EvidenceArchive, _archive_auth, _database, verify_archive
 from .models import Access, MemoryFailure
 from .paths import external, provision_private_directory, verify_private_directory
 from .runtime import MemoryRuntime, _identities, _json, _load, _time, _unique_object
@@ -311,6 +312,7 @@ def restore_backup(source: Path, destination: Path, recovery_file: Path, passwor
         with tempfile.TemporaryDirectory(prefix=".evernook-restore-", dir=destination.parent) as temporary:
             staging = Path(temporary) / "archive"
             provision_private_directory(staging)
+            ledger_key: bytes | None = None
             for name, filename in _FILES.items():
                 info = files[name]
                 if not isinstance(info, dict):
@@ -328,13 +330,26 @@ def restore_backup(source: Path, destination: Path, recovery_file: Path, passwor
                             or type(materials["schema_version"]) is not int or materials["schema_version"] != 1):
                         raise MemoryFailure("invalid_backup")
                     _identities(materials["clients"])
-                    _hex(materials["idempotency_key"], 32)
+                    ledger_key = _hex(materials["idempotency_key"], 32)
                 else:
                     with (staging / filename).open("xb") as output_file:
                         _decrypt(source / (name + ".enc"), output_file, private, info, aad)
                         output_file.flush()
                         os.fsync(output_file.fileno())
             verify_archive(staging)
+            assert ledger_key is not None
+            manifest = _load(staging / 'manifest.json')
+            if manifest.get('version') == 2:
+                supplied = manifest.pop('source_auth', None)
+                if not isinstance(supplied, str) or not hmac.compare_digest(supplied, _archive_auth(ledger_key, manifest)):
+                    raise MemoryFailure('backup_ledger_mismatch')
+            # Older review-only archives may predate the ledger identity table.
+            with _database(staging / 'evidence.sqlite3') as db:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_identity_v1'").fetchone():
+                    row = db.execute('SELECT ledger_id FROM ledger_identity_v1 WHERE id=1').fetchone()
+                    expected = hmac.digest(ledger_key, b'evernook-ledger-identity-v1', hashlib.sha256).hex()
+                    if row is None or not isinstance(row[0], str) or not hmac.compare_digest(row[0], expected):
+                        raise MemoryFailure('backup_ledger_mismatch')
             os.rename(staging, destination)
         return EvidenceArchive(destination)
     except (CryptoError, BadSignatureError):
