@@ -46,6 +46,34 @@ does not yet migrate multiple inboxes together or discover undeclared copies;
 it does not establish physical owner identity, real lock-screen behavior, or
 daily-use admission.
 
+For several known legacy inboxes, `vault-verify-set` accepts 2–16 repeated
+`--inbox-dir` and `--key-dir` options in matching order, together with `--config`
+and an administrator `--access`. It prompts locally for each inbox password;
+passwords must not be supplied in arguments or redirected input. The trusted
+Python equivalent is `vault_multi_verify.verify_declared`. The declared IDs and
+keys must exactly match the ledger registry. Under the exclusive ownership gate
+and inbox transactions, preflight unlocks and checks every object, both pending
+crash windows, source uniqueness and all ledger links. It reports only IDs and
+counts and creates no cutover proof. Every declared inbox, key directory and
+the ledger directory must be distinct and non-nested; older layouts that nest
+these directories are refused and require a separate safe relocation procedure.
+It does not change protected objects,
+links or service mode; permission checks may write or prune ordinary audit
+records and SQLite may create journal files. The 10,000-object and 120-second
+checks are cooperative: blocking system calls or one password derivation may
+exceed the deadline. Unknown unregistered inboxes are not discoverable, and a
+successful preflight is not a backup, multi-inbox cutover or recovery proof.
+
+For #229, seven source tests and seven installed-wheel tests passed; after
+adding the non-nesting guard, two focused tests passed on each. They cover
+different passwords, linked and pending objects, a lost acknowledgment,
+wrong/missing keys, omitted or extra inboxes, duplicate sources, tampering,
+cooperative writer exclusion and non-interactive CLI rejection. An initial
+CLI test exposed Windows `NUL` reporting `isatty() == true`; the new entry now
+also requires `GetConsoleMode` on its input handle. Authorization auditing and
+the stated limits still apply; these tests did not activate or recover multiple
+inboxes, touch user assets or establish daily admission.
+
 The #226 increment was checked with synthetic data: four targeted migration
 tests passed on both source and the non-editable 0.1.84 wheel; two additional
 source tests covered concurrent old writers and crash after mode persistence.

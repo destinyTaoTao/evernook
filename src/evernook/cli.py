@@ -16,6 +16,23 @@ from .embedding import EmbeddingBackend, load_embedding
 from .semantic import SemanticRecall
 
 
+def _trusted_console() -> bool:
+    """Windows NUL can pass isatty(); require an actual console input handle."""
+    if sys.platform != 'win32' or not sys.stdin.isatty():
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import msvcrt
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetConsoleMode.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel.GetConsoleMode.restype = wintypes.BOOL
+        mode = wintypes.DWORD()
+        return bool(kernel.GetConsoleMode(msvcrt.get_osfhandle(sys.stdin.fileno()), ctypes.byref(mode)))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         # argparse's default diagnostic repeats user-controlled arguments.
@@ -87,6 +104,11 @@ def _parser() -> Parser:
     vault_known.add_argument('--access', type=Path, required=True)
     vault_known.add_argument('--after')
     vault_known.add_argument('--limit', type=int, default=100)
+    vault_multi = commands.add_parser('vault-verify-set', help='Verify an explicitly declared set of protected inboxes locally')
+    vault_multi.add_argument('--config', type=Path, required=True)
+    vault_multi.add_argument('--access', type=Path, required=True)
+    vault_multi.add_argument('--inbox-dir', type=Path, action='append', required=True)
+    vault_multi.add_argument('--key-dir', type=Path, action='append', required=True)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
     backup_init.add_argument("--key-dir", type=Path, required=True)
     backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
@@ -285,6 +307,19 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         access = memory.access_from_file(args.access)
         if args.command == 'vault-known':
             return known_inboxes(memory, access, after=args.after, limit=args.limit)
+        if args.command == 'vault-verify-set':
+            memory._require_scope(access, 'admin', 'protected_multi_verify')
+            if not _trusted_console():
+                raise MemoryFailure('interactive_vault_verification_required')
+            if len(args.inbox_dir) != len(args.key_dir) or not 2 <= len(args.inbox_dir) <= 16:
+                raise MemoryFailure('invalid_protected_inbox_set')
+            from .vault_multi_verify import verify_declared
+            declared = []
+            for inbox_path, key_path in zip(args.inbox_dir, args.key_dir):
+                inbox = ProtectedInbox(memory, inbox_path, key_path)
+                password = getpass.getpass(f'Local vault password for {inbox.inbox_id}: ').encode('utf-8')
+                declared.append((inbox, password))
+            return verify_declared(memory, access, tuple(declared))
         if args.command == "vault-init":
             if not sys.stdin.isatty():
                 raise MemoryFailure("interactive_vault_initialization_required")
