@@ -165,10 +165,19 @@ class ContextBuilder:
                         omitted.append(OmittedEvidence(important_id, "important_requires_paging"))
                         continue
                     data = asdict(page)
+                    self.runtime._require_scope(access, 'recall', 'state')
+                    with self.runtime._connection(check=budget) as db:
+                        from .transcription import provenance
+                        db.execute('BEGIN')
+                        state = self.runtime._state(db, page.item.message_id)
+                        row = db.execute('SELECT event FROM messages WHERE id=?', (page.item.message_id,)).fetchone()
+                        event = json.loads(row['event']) if row is not None else {}
+                        annotation = provenance(db, page.item.message_id) if event.get('role') == 'tool' else None
+                        if annotation is not None:
+                            data['transcription'] = annotation
                     if self._tokens(_json([*pins, data])) > self.policy.pinned_tokens:
                         omitted.append(OmittedEvidence(important_id, "pinned_budget"))
                         continue
-                    state = self.runtime.state(access, page.item.message_id)
                     if state.status != "active":
                         omitted.append(OmittedEvidence(important_id, "source_unavailable"))
                         continue
@@ -334,6 +343,17 @@ class ContextBuilder:
         # Reuse the same visibility/version rules before and after tokenizer work.
         def usable_now(db: sqlite3.Connection, item: _Item) -> bool:
             usable = True
+            if item.kind in {'evidence', 'important'}:
+                evidence = item.data.get('evidence', {}).get('evidence', {}) if item.kind == 'evidence' else {}
+                expected = evidence.get('transcription') if item.kind == 'evidence' else item.data.get('transcription')
+                tool_source = evidence.get('role') == 'tool'
+                if item.kind == 'important' and item.references:
+                    row = db.execute("SELECT json_extract(event,'$.role') FROM messages WHERE id=?", (item.references[0][0],)).fetchone()
+                    tool_source = row is not None and row[0] == 'tool'
+                if expected is not None or tool_source:
+                    from .transcription import provenance
+                    if not item.references or provenance(db, item.references[0][0]) != expected:
+                        return False
             if item.kind == 'topic_view':
                 from .topic_views import TopicViews
                 current_view = TopicViews(self.runtime, self.recall)._read(db, item.evidence_id, current_input_id=current_input_id)

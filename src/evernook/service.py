@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
-PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local'})
+PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local', 'transcription-submit', 'transcription-read'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-decide", "candidate-list", "fact-query",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
@@ -53,6 +53,27 @@ def client_access(config: Path, access_path: Path) -> Access:
 
 
 class ServiceClient:
+    def submit_transcription(self, access: Access, material: object, *, timeout: float = 30,
+                             cancel: threading.Event | None = None) -> dict[str, Any]:
+        from .transcription import Transcription
+        if not isinstance(material, Transcription):
+            raise MemoryFailure('invalid_transcription')
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure('service_canceled')
+        value = self.call(access, 'transcription-submit', {'material': asdict(material)}, timeout=timeout, cancel=cancel)
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def read_transcription(self, access: Access, message_id: str, *, timeout: float = 30,
+                           cancel: threading.Event | None = None) -> dict[str, Any] | None:
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure('service_canceled')
+        value = self.call(access, 'transcription-read', {'message_id': message_id}, timeout=timeout, cancel=cancel)
+        if value is not None and not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
     def protected_receive(self, access: Access, event: Event, *, timeout: float = 30) -> dict[str, Any]:
         value = self.call(access, 'protected-receive', {'event': asdict(event)}, timeout=timeout)
         if not isinstance(value, dict):
@@ -150,6 +171,20 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     runtime.handshake(access)
     arguments = request["arguments"]
     operation = request["operation"]
+    if operation == 'transcription-submit':
+        if set(arguments) != {'material'} or not isinstance(arguments['material'], dict):
+            raise MemoryFailure('invalid_arguments')
+        from .transcription import Transcription, submit
+        value = dict(arguments['material'])
+        if not isinstance(value.get('source'), dict):
+            raise MemoryFailure('invalid_arguments')
+        value['source'] = Source(**value['source'])
+        return submit(runtime, protected_inbox, access, Transcription(**value))
+    if operation == 'transcription-read':
+        if set(arguments) != {'message_id'} or not isinstance(arguments['message_id'], str):
+            raise MemoryFailure('invalid_arguments')
+        from .transcription import read
+        return read(runtime, access, arguments['message_id'])
     if operation == 'protected-receive':
         if protected_inbox is None:
             raise MemoryFailure('protected_service_unconfigured')

@@ -106,6 +106,8 @@ def _parser() -> Parser:
         ('service-protected-inventory', 'Administrator inventory of the bound encrypted inbox'),
         ('service-protected-links', 'Administrator inventory of protected ledger links'),
         ('service-protected-show-local', 'Request one native password-confirmed local display'),
+        ('service-transcription-submit', 'Trusted host: submit bounded ASR material from JSON stdin'),
+        ('service-transcription-read', 'Read current ASR material provenance by message ID'),
         ('service-private-window', 'Enter one private note in a dedicated local window'),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
@@ -214,6 +216,8 @@ def _parser() -> Parser:
         if name == 'service-protected-show-local':
             command.add_argument('--object-id', required=True)
             command.add_argument('--purpose', required=True)
+        if name == 'service-transcription-read':
+            command.add_argument('--message-id', required=True)
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
@@ -715,7 +719,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-transcription-submit', 'service-transcription-read'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -737,6 +741,12 @@ def main() -> None:
         elif args.command == 'service-protected-show-local':
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).protected_show_local(access, args.object_id, args.purpose)
+        elif args.command == 'service-transcription-submit':
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).call(access, 'transcription-submit', {'material': _input()})
+        elif args.command == 'service-transcription-read':
+            access = client_access(args.config, args.access)
+            result = ServiceClient(args.config).read_transcription(access, args.message_id)
         elif args.command == 'service-private-window':
             try:
                 from .private_capture_local import LocalPrivateCapture, show_private_capture

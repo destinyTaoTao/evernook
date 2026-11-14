@@ -91,12 +91,18 @@ def source_contexts(db: sqlite3.Connection, spans: tuple[EvidenceSpan, ...], sta
             raise MemoryFailure('stale_observation_source')
         if span.end > len(event.text) or event.text[span.start:span.end] != span.expected_text:
             raise MemoryFailure('observation_span_mismatch')
-        contexts.append({'message_id': span.message_id, 'state_version': span.state_version,
+        context = {'message_id': span.message_id, 'state_version': span.state_version,
             'content_version': span.content_version, 'start': span.start, 'end': span.end,
             'quote': span.expected_text, 'stance': stance, 'role': event.role, 'origin': asdict(event.source),
             'occurred_at': event.occurred_at, 'learned_at': receipt.received_at,
             # Assistant/tool material can be useful context, but cannot self-reinforce user patterns.
-            'independent_user_evidence': event.role == 'user'})
+            'independent_user_evidence': event.role == 'user'}
+        if event.role == 'tool':
+            from .transcription import provenance
+            annotation = provenance(db, span.message_id)
+            if annotation is not None:
+                context['transcription'] = annotation
+        contexts.append(context)
     return tuple(contexts)
 
 

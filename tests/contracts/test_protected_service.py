@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -20,7 +20,7 @@ from nacl import pwhash
 from nacl.public import PrivateKey, SealedBox
 from nacl.secret import SecretBox
 
-from evernook import Event, MemoryRuntime, Source, initialize, pair_client
+from evernook import Event, MemoryRuntime, Source, Transcription, initialize, pair_client
 from evernook.models import MemoryFailure
 from evernook.protected import initialize_protected_inbox
 from evernook.service import ServiceClient
@@ -159,6 +159,83 @@ class ProtectedServiceTests(unittest.TestCase):
         with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM objects').fetchone()[0], 0)
 
+    def test_unconfigured_service_never_falls_back_for_private_transcription(self) -> None:
+        client = self.start(configured=False)
+        private = Transcription(Source('owner', 'synthetic-voice', 'voice', 'private'), 1, None, 'complete',
+            'synthetic-no-vault-secret-168', 'synthetic-asr', 'model-v1', 'en-US', 'local', 0, 100, sensitive=True)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_service_unconfigured'):
+            client.submit_transcription(self.owner, private)
+        self.assertEqual(client.call(self.owner, 'search', {'query': private.text})['hits'], [])
+        self.stop()
+        files = b''.join(path.read_bytes() for path in self.root.rglob('*') if path.is_file())
+        self.assertNotIn(private.text.encode(), files)
+
+    def test_transcription_service_seals_private_material_and_exposes_only_ordinary_provenance(self) -> None:
+        client = self.start(configured=True)
+        ordinary = Transcription(Source('owner', 'asr-session', 'voice', '1'), 1, None, 'complete',
+            'synthetic ordinary walking transcript', 'synthetic-asr', 'model-v1', 'en-US', 'local', 0, 500, 0.8)
+        canceled = threading.Event(); canceled.set()
+        with self.assertRaisesRegex(MemoryFailure, 'service_canceled'):
+            client.submit_transcription(self.owner, ordinary, cancel=canceled)
+        self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
+        public = client.submit_transcription(self.owner, ordinary)
+        self.assertEqual(public['storage'], 'ordinary')
+        message_id = public['receipt']['message']['message_id']
+        self.assertEqual(client.read_transcription(self.owner, message_id)['transcription']['confirmation'], 'unverified')
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.submit_transcription(self.reader, ordinary)
+        with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
+            client.submit_transcription(self.owner, replace(ordinary, source=replace(ordinary.source, entry='reader')))
+        with self.assertRaisesRegex(MemoryFailure, 'source_conflict'):
+            client.submit_transcription(self.owner, replace(ordinary, model='model-v2'))
+        endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
+        with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+            deadline = time.monotonic() + 5
+            authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+            send_json(connection, {'version': 1, 'access': asdict(self.owner), 'operation': 'transcription-submit',
+                'arguments': {'material': asdict(ordinary)}}, deadline)
+            self.assertEqual(receive_json(connection, deadline)['error']['code'], 'protected_encryption_required')
+        private = Transcription(Source('owner', 'asr-session', 'voice', 'private'), 2, None, 'complete',
+            'synthetic-private-asr-sentinel-168', 'synthetic-asr', 'model-v1', 'en-US', 'remote', 0, 500, None, True)
+        import evernook.service as service_module
+        sent: list[object] = []
+        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
+            sent.append(value); send_json(connection, value, deadline)
+        with patch.object(service_module, 'send_json', side_effect=capture_send):
+            protected = client.submit_transcription(self.owner, private)
+        self.assertNotIn(private.text, json.dumps(sent))
+        self.assertNotIn(private.text, json.dumps(protected))
+        self.assertEqual(protected['receipt']['state'], 'protected_linked')
+        self.assertFalse(protected['receipt']['message']['original_saved'])
+        self.assertEqual(client.submit_transcription(self.owner, private), protected)
+        self.assertIsNone(client.read_transcription(self.owner, protected['receipt']['message']['message_id']))
+        self.assertEqual(client.call(self.owner, 'search', {'query': private.text})['hits'], [])
+        with self.assertRaisesRegex(MemoryFailure, 'protected_incomplete_unsupported'):
+            client.submit_transcription(self.owner, replace(private, completion='partial'))
+        cli = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', 'service-transcription-submit',
+            '--config', str(self.config), '--access', str(self.owner_path)], input=json.dumps(asdict(ordinary)).encode(),
+            capture_output=True, timeout=30)
+        self.assertEqual(cli.returncode, 0, cli.stdout)
+        self.assertEqual(json.loads(cli.stdout)['result'], public)
+        read_cli = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', 'service-transcription-read',
+            '--config', str(self.config), '--access', str(self.owner_path), '--message-id', message_id],
+            capture_output=True, timeout=30)
+        self.assertEqual(read_cli.returncode, 0, read_cli.stdout)
+        self.assertEqual(json.loads(read_cli.stdout)['result']['transcription']['confirmation'], 'unverified')
+        self.stop()
+        recovery = json.loads((self.root / 'keys/recovery.json').read_text(encoding='utf-8'))
+        derived = pwhash.argon2id.kdf(SecretBox.KEY_SIZE, b'synthetic service password', bytes.fromhex(recovery['salt']),
+            opslimit=pwhash.argon2id.OPSLIMIT_INTERACTIVE, memlimit=pwhash.argon2id.MEMLIMIT_INTERACTIVE)
+        key = json.loads(SecretBox(derived).decrypt(bytes.fromhex(recovery['ciphertext'])))
+        with closing(sqlite3.connect(self.root / 'inbox/inbox.sqlite3')) as db:
+            envelope = json.loads(db.execute('SELECT envelope FROM objects WHERE id=?', (protected['receipt']['object_id'],)).fetchone()[0])
+        clear = json.loads(SealedBox(PrivateKey(bytes.fromhex(key['private']))).decrypt(bytes.fromhex(envelope['ciphertext'])))
+        payload = json.loads(clear['event']['text'])
+        self.assertEqual(payload['text'], private.text)
+        self.assertEqual(payload['metadata']['confirmation'], 'unverified')
+        files = b''.join(path.read_bytes() for path in self.root.rglob('*') if path.is_file())
+        self.assertNotIn(private.text.encode(), files)
+
     def test_local_capture_state_machine_uses_encrypted_service(self) -> None:
         from evernook.private_capture_local import LocalPrivateCapture
         client = self.start(configured=True)
@@ -281,6 +358,9 @@ class ProtectedServiceTests(unittest.TestCase):
                 client.protected_inventory(self.owner)
             with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
                 client.protected_links(self.owner)
+            with self.assertRaisesRegex(MemoryFailure, 'vault_dependency_missing'):
+                client.submit_transcription(self.owner, Transcription(Source('owner', 'synthetic', 'voice', 'missing-crypto'),
+                    1, None, 'complete', 'synthetic-asr-no-fallback', 'synthetic', 'model-v1', 'en-US', 'local', 0, 1))
             send.assert_not_called()
         self.assertEqual(client.call(self.owner, 'status', {})['ledger']['messages'], 0)
 

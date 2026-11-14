@@ -117,6 +117,22 @@ class RemoteReflectionTests(unittest.TestCase):
         self.assertNotIn('tools', request['body'])
         self.assertNotIn('synthetic-api-secret-key', json.dumps([request['body'], result, engine.configure(self.access)]))
 
+    def test_remote_transcript_evidence_keeps_unverified_marker_without_model_identity(self) -> None:
+        from evernook import Transcription
+        from evernook.transcription import submit
+        material = Transcription(Source('owner', 'voice', 'main', 'asr-remote'), 1, None, 'complete',
+            '合成语音问题：钥匙放在银色盒子里。', 'synthetic-asr-provider', 'synthetic-asr-model', 'zh-CN',
+            'local', 100, 900, 0.7, speaker='user')
+        submit(self.runtime, None, self.access, material)
+        self.engine().reflect(self.access, '合成语音问题', allow_remote=True)
+        packet = json.loads(self.requests[-1]['body']['messages'][-1]['content'])
+        marked = [item['transcription'] for item in packet['evidence'].values() if 'transcription' in item]
+        self.assertTrue(marked)
+        self.assertEqual(marked[0]['confirmation'], 'unverified')
+        self.assertEqual(marked[0]['speaker'], 'user')
+        self.assertNotIn('synthetic-asr-provider', json.dumps(packet))
+        self.assertNotIn('synthetic-asr-model', json.dumps(packet))
+
     def test_no_implicit_remote_client_or_sensitive_input_egress(self) -> None:
         engine = self.engine()
         with self.assertRaisesRegex(MemoryFailure, 'remote_reflection_not_permitted'):
@@ -249,12 +265,17 @@ class RemoteReflectionTests(unittest.TestCase):
 
     def test_real_protected_inbox_is_not_a_remote_source(self) -> None:
         from evernook.protected import initialize_protected_inbox
+        from evernook import Transcription
+        from evernook.transcription import submit
         inbox = initialize_protected_inbox(self.runtime, self.root / 'inbox', self.root / 'keys', b'synthetic vault password 123')
         inbox.submit(self.access, Event(Source('owner', 'vault', 'main', '2'), 'user', 2, None, 'complete',
             '钥匙 SYNTHETIC-VAULT-ONLY-DO-NOT-SEND'))
+        submit(self.runtime, inbox, self.access, Transcription(Source('owner', 'vault', 'voice', '3'), 3, None, 'complete',
+            '钥匙 SYNTHETIC-ASR-VAULT-ONLY', 'synthetic', 'asr-v1', 'zh-CN', 'local', 0, 100, sensitive=True))
         result = self.engine().reflect(self.access, '钥匙', allow_remote=True)
         self.assertEqual(result['state'], 'complete')
         self.assertNotIn('SYNTHETIC-VAULT', json.dumps(self.requests))
+        self.assertNotIn('SYNTHETIC-ASR-VAULT', json.dumps(self.requests))
 
     def test_local_profiles_keep_v1_compatibility_and_never_select_cloud(self) -> None:
         local = {'profile': 'qwen3-0.6b-experimental-reflection-v1', 'node': sys.executable,
@@ -275,7 +296,7 @@ class RemoteReflectionTests(unittest.TestCase):
         access_path = self.runtime.root / 'mcp-access-owner.json'
         access_path.write_text(json.dumps(asdict(self.access)), encoding='utf-8')
         process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(config),
-            '--reflection-config', str(profile)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            '--reflection-config', str(profile), '--activate-owner', str(access_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             end = time.monotonic() + 15
             while not (config.parent / 'memory-service.json').exists():

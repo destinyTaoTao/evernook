@@ -184,7 +184,11 @@ class TopicViews:
         else:
             try:
                 spans = tuple(EvidenceSpan(**span) for span in json.loads(snapshot['sources']))
-                source_contexts(db, spans, 'view_evidence')
+                fresh = source_contexts(db, spans, 'view_evidence')
+                citations = json.loads(snapshot['data'])['citations']
+                if len(citations) != len(fresh) or any(old.get('transcription') != current.get('transcription')
+                        for old, current in zip(citations, fresh)):
+                    raise MemoryFailure('stale_observation_source')
                 for observation_id, revision in json.loads(snapshot['observations']):
                     observed = ObservationRegistry._latest(db, observation_id)
                     if observed is None or observed.revision != revision or ObservationRegistry._view(db, observed).state not in {'published', 'conflicted'}:

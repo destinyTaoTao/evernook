@@ -342,9 +342,10 @@ class SemanticRecall:
                 start = max(0, spans[0].start - 64)
                 end = min(len(message.event.text), max(spans[0].end, start + 192))
                 event, receipt = message.event, message.receipt
-                hits.append(SearchHit(receipt.message_id, event.source, event.role, event.sequence, event.occurred_at,
+                from .transcription import annotate
+                hits.append(annotate(db, SearchHit(receipt.message_id, event.source, event.role, event.sequence, event.occurred_at,
                     receipt.received_at, event.completion, receipt.representation, receipt.content_version,
-                    int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),)))
+                    int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),))))
             return tuple(hits)
 
     def _semantic(self, access: Access, vector: tuple[float, ...], *, since: str | None, until: str | None,
@@ -394,6 +395,8 @@ class SemanticRecall:
                 hit = SearchHit(receipt.message_id, event.source, event.role, event.sequence, event.occurred_at,
                     receipt.received_at, event.completion, receipt.representation, receipt.content_version,
                     int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),))
+                from .transcription import annotate
+                hit = annotate(db, hit)
                 best.append((hit, similarity))
         return best, scanned, False, engine
 

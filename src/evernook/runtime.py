@@ -1250,10 +1250,11 @@ class MemoryRuntime:
             if not spans:
                 continue
             if found >= offset:
-                hits.append(SearchHit(message.receipt.message_id, message.event.source, message.event.role,
+                from .transcription import annotate
+                hits.append(annotate(db, SearchHit(message.receipt.message_id, message.event.source, message.event.role,
                     message.event.sequence, message.event.occurred_at, message.receipt.received_at,
                     message.event.completion, message.receipt.representation, message.receipt.content_version,
-                    int(row["state_version"]), spans))
+                    int(row["state_version"]), spans)))
             found += 1
             if len(hits) > limit:
                 break

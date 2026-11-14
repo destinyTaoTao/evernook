@@ -52,7 +52,9 @@ class EvidenceTools:
                 self.check()
                 span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'],
                     item['start'], item['end'], item['quote'])
-                source_contexts(db, (span,), 'reflection_remote')
+                current = source_contexts(db, (span,), 'reflection_remote')[0]
+                if current.get('transcription') != item.get('transcription'):
+                    raise MemoryFailure('reflection_source_unavailable')
                 if credential_signal(item['quote']):
                     raise MemoryFailure('protected_query')
 
@@ -156,7 +158,9 @@ class EvidenceTools:
                 check()
                 span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'], item['start'], item['end'], item['quote'])
                 try:
-                    source_contexts(db, (span,), 'reflection_original')
+                    current = source_contexts(db, (span,), 'reflection_original')[0]
+                    if current.get('transcription') != item.get('transcription'):
+                        raise MemoryFailure('reflection_source_unavailable')
                     valid.append(item)
                 except MemoryFailure:
                     unchanged = False

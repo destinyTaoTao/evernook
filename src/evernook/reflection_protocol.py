@@ -36,6 +36,12 @@ def build_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
             raise MemoryFailure('protected_query')
         actual['evidence'][item['evidence_id']] = {'quote': item['quote'], 'role': item['role'],
             'statement_at': item.get('occurred_at'), 'message_id': item['message_id']}
+        annotation = item.get('transcription')
+        if isinstance(annotation, dict) and annotation.get('kind') == 'asr_transcription':
+            # Only the minimum needed to interpret the excerpt leaves this boundary;
+            # local model/provider identifiers and recording offsets stay local.
+            actual['evidence'][item['evidence_id']]['transcription'] = {
+                key: annotation[key] for key in ('kind', 'confirmation', 'speaker', 'confidence', 'metadata') if key in annotation}
     if payload.get('format_feedback'):
         actual['format_feedback'] = payload['format_feedback']
     examples = [
