@@ -2430,6 +2430,49 @@ test('web service topic controls use CSRF, revisions and a leased settings proje
   assert.deepEqual((await send({ action: 'read', view: 'topic_settings' })).body.result.items, []);
 });
 
+test('web service persona preview requires CSRF and confirms atomically', async t => {
+  const host = await boot(new Synthetic(), false, true, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  host.ctx.provide('connection', { fetch: { register: () => () => {} } });
+  const web = await installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: join(host.root, 'memory/mcp-access-owner.json'),
+    entry: 'dsh', streamMode: 'durable_text' });
+  t.after(() => web.close());
+  let csrf = '';
+  async function send(input: Record<string, unknown>, includeCsrf = true) {
+    const response = await web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+      method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+        'content-type': 'application/json', ...(csrf && includeCsrf ? { 'x-evernook-csrf': csrf } : {}) }, body: JSON.stringify(input) }));
+    return { status: response.status, body: await response.json() as Record<string, any> };
+  }
+  csrf = (await send({ action: 'bootstrap' })).body.csrf;
+  const operation = { kind: 'persona_set', block: 'tone', text: '合成页面温和语气' };
+  assert.equal((await send({ action: 'preview', operation }, false)).status, 403);
+  const preview = await send({ action: 'preview', operation });
+  assert.equal(preview.status, 200);
+  const staleOperation = { ...operation, text: '合成页面旧预览' };
+  const stale = await send({ action: 'preview', operation: staleOperation });
+  const before = await send({ action: 'read-versioned', view: 'persona' });
+  assert.deepEqual(before.body.result.value.items, []);
+  const confirm = { action: 'confirm', proposal_id: preview.body.result.proposal_id, operation };
+  const committed = await send(confirm); assert.equal(committed.status, 200);
+  assert.equal(committed.body.result.revision, 1);
+  assert.deepEqual((await send(confirm)).body.result, committed.body.result);
+  const rejected = await send({ action: 'confirm', proposal_id: stale.body.result.proposal_id, operation: staleOperation });
+  assert.equal(rejected.status, 400); assert.equal(rejected.body.error, 'management_preview_stale');
+  const after = await send({ action: 'read-versioned', view: 'persona' });
+  assert.equal(after.body.result.value.items[0].text, operation.text);
+  assert.notEqual(after.body.result.token, before.body.result.token);
+  const source = await send({ action: 'read', view: 'source', message_id: committed.body.result.confirmation_id });
+  assert.equal(source.body.result.text, operation.text);
+  const clear = { kind: 'persona_set', block: 'tone', text: '' };
+  const clearPreview = await send({ action: 'preview', operation: clear });
+  assert.equal((await send({ action: 'confirm', proposal_id: clearPreview.body.result.proposal_id, operation: clear })).status, 200);
+  assert.deepEqual((await send({ action: 'read', view: 'persona' })).body.result.items, []);
+  assert.equal((await send({ action: 'read', view: 'source', message_id: committed.body.result.confirmation_id })).body.result.text, operation.text);
+});
+
 test('web service startup rejects an ordinary identity missing capture', async t => {
   const host = await boot(new Synthetic(), false, false, { service: true });
   t.after(() => host.close());

@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
     diagnostics: '连接与配置诊断', diagnosticScope: '宿主配置与本次可信管理读取；不代表模型或日用能力已通过验收。', diagnosticSchema: 'Core 配置格式版本', diagnosticService: '管理服务', diagnosticOnline: '读取成功', diagnosticLoading: '检查中', diagnosticUnavailable: '读取失败或不可用', diagnosticStream: '宿主流模式', diagnosticRecovery: '只读续接', diagnosticEnabled: '可用', diagnosticDisabled: '未启用或不支持',
     diagnosticPrivate: '本机私密记录入口', diagnosticFingerprint: '指纹复核桥接', diagnosticConfigured: '已配置（未检查健康状态）', diagnosticNotConfigured: '未配置',
-    persona: '伴侣人设', persona_identity: '身份', persona_tone: '语气', persona_boundary: '边界', persona_address: '称呼', persona_state: '状态', personaIndependent: '这里只读展示用户明确设定的人设；撤回来源不会自动修改人设，修改请使用可信维护入口。', personaSourceUnavailable: '原设定来源已不可用或版本已变化。', personaEmpty: '尚未设置人设',
+    persona: '伴侣人设', persona_identity: '身份', persona_tone: '语气', persona_boundary: '边界', persona_address: '称呼', persona_state: '状态', personaIndependent: '人设由用户明确设定；撤回来源不会自动修改人设。页面修改需要先预览，再确认。', personaSourceUnavailable: '原设定来源已不可用或版本已变化。', personaEmpty: '尚未设置人设', personaNew: '设置人设', personaEdit: '修改人设', personaClear: '清空此分块', personaClearValue: '确认后清空此分块', personaBlock: '人设分块', personaUnsupported: '当前服务未提供人设编辑能力。', personaSecret: '人设属于普通记忆，请勿在此输入凭证或私密内容。', personaUnknown: '修改结果未能确认，请检查刷新后的人设；不要重复提交。',
     diagnosticEmbedding: '嵌入模型', diagnosticReflection: '复杂反思模型', diagnosticExtraction: '候选抽取模型', diagnosticSpeech: '语音', providerLocal: '已配置本地（未检查健康或准入）', providerRemote: '已配置线上（须单独授权，未检查健康或准入）', providerNone: '服务未配置', providerHost: '由宿主或独立语音适配器负责', providerUnknown: '未知或旧版服务未提供',
     local: '本地处理', evidence: '每条都有来源', control: '随时纠正与撤回', refresh: '刷新', search: '搜索当前分类', searchGo: '搜索',
     all: '全部分类', identity: '身份', preference: '偏好', interest: '兴趣', relation: '关系', goal: '目标', boundary: '边界',
@@ -62,7 +62,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
     diagnostics: 'Connection and configuration', diagnosticScope: 'Host configuration and this trusted management read; not model or daily-use admission.', diagnosticSchema: 'Core configuration schema', diagnosticService: 'Management service', diagnosticOnline: 'Read succeeded', diagnosticLoading: 'Checking', diagnosticUnavailable: 'Read failed or unavailable', diagnosticStream: 'Host stream mode', diagnosticRecovery: 'Read-only continuation', diagnosticEnabled: 'Available', diagnosticDisabled: 'Disabled or unsupported',
     diagnosticPrivate: 'Local private record entry', diagnosticFingerprint: 'Fingerprint revalidation bridge', diagnosticConfigured: 'Configured (health not checked)', diagnosticNotConfigured: 'Not configured',
-    persona: 'Companion persona', persona_identity: 'Identity', persona_tone: 'Tone', persona_boundary: 'Boundary', persona_address: 'Address', persona_state: 'State', personaIndependent: 'This view is read-only. Persona is explicitly set by the user; withdrawing its source does not change it. Use a trusted maintenance entry to edit it.', personaSourceUnavailable: 'The original setting source is unavailable or has changed.', personaEmpty: 'No persona configured',
+    persona: 'Companion persona', persona_identity: 'Identity', persona_tone: 'Tone', persona_boundary: 'Boundary', persona_address: 'Address', persona_state: 'State', personaIndependent: 'Persona is explicitly set by the user; withdrawing its source does not change it. Changes here require a preview and confirmation.', personaSourceUnavailable: 'The original setting source is unavailable or has changed.', personaEmpty: 'No persona configured', personaNew: 'Set persona', personaEdit: 'Edit persona', personaClear: 'Clear this block', personaClearValue: 'This block will be cleared on confirmation', personaBlock: 'Persona block', personaUnsupported: 'This service does not offer persona editing.', personaSecret: 'Persona is ordinary memory. Do not enter credentials or private material here.', personaUnknown: 'The change could not be confirmed. Check the refreshed persona before trying again.',
     diagnosticEmbedding: 'Embedding model', diagnosticReflection: 'Reflection model', diagnosticExtraction: 'Candidate extraction model', diagnosticSpeech: 'Speech', providerLocal: 'Local configured (health and admission not checked)', providerRemote: 'Remote configured (separate consent required; health and admission not checked)', providerNone: 'Not configured in service', providerHost: 'Owned by host or separate speech adapter', providerUnknown: 'Unknown or unavailable in older service',
     local: 'Processed locally', evidence: 'Linked to evidence', control: 'Correct or withdraw', refresh: 'Refresh', search: 'Search this category', searchGo: 'Search',
     all: 'All categories', identity: 'Identity', preference: 'Preference', interest: 'Interest', relation: 'Relationship', goal: 'Goal', boundary: 'Boundary',
@@ -141,7 +141,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     }
     const errorText = code => t(['management_preview_stale', 'recovery_stale', 'topic_view_revision_conflict'].includes(code) ? 'changed' : ['management_preview_expired', 'recovery_expired'].includes(code) ? 'expired'
       : code === 'forbidden' ? 'forbidden' : code === 'source_unavailable' ? 'sourceUnavailable'
-      : code === 'invalid_topic_form' ? 'topicInvalid'
+      : code === 'invalid_topic_form' ? 'topicInvalid' : code === 'protected_persona' ? 'personaSecret'
       : code === 'invalid_time_range' ? 'invalidTimeRange' : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
     const time = value => value ? new Date(value).toLocaleString() : t('unknown');
     const button = (label, action, props = {}) => h('button', { type: 'button', onClick: action, ...props }, label);
@@ -300,7 +300,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           setFingerprintBridge(boot.fingerprint_bridge === true);
           if (!boot.configured) return;
           call({ action: 'read', view: 'status' }, controller.signal)
-            .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version, models: status.model_configuration }); })
+            .then(status => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: true, schema: status.configuration_schema_version, models: status.model_configuration, actions: status.supported_actions }); })
             .catch(() => { if (!controller.signal.aborted && epoch === readEpoch.current) setDiagnostic({ available: false }); });
           if (host === 'sidebar' && tab === 'timeline' && !sessionId) throw new Error('invalid_session');
           const result = await versionedRead({ view: tab === 'network' ? 'network_' + networkLayer : tab,
@@ -445,6 +445,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           recoverySupported && item.source.entry === currentEntry ? button(t('recovery'), () => openRecovery(item.source.session), { disabled: busy }) : null));
       if (!enabled) return null;
       const budgetMode = sessionStatus?.context_mode ?? contextMode;
+      const personaEditable = !error && diagnostic?.available === true && Array.isArray(diagnostic.actions) && diagnostic.actions.includes('persona_set');
       return h('section', { className: 'en-mem' + (host === 'sidebar' ? ' en-side' : ''), 'aria-label': t('title') },
         h('style', null, css), h('div', { className: 'en-wrap' },
           h('div', { className: 'en-head' }, h('div', { className: 'en-brand' }, h('span', { className: 'en-mark', 'aria-hidden': true }, '❧'),
@@ -522,7 +523,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
-            tab === 'persona' ? h('p', { className: 'en-muted' }, t('personaIndependent')) : null,
+            tab === 'persona' ? h('div', { className: 'en-actions' }, h('p', { className: 'en-muted' }, t('personaIndependent')),
+              button(t('personaNew'), () => setEditing({ kind: 'persona_set', block: 'identity', text: '' }), { disabled: busy || loading || !personaEditable }),
+              !personaEditable ? h('p', { className: 'en-muted' }, t('personaUnsupported')) : null) : null,
             tab === 'timeline' || tab === 'network' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
@@ -531,7 +534,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                     h('span', { className: 'en-muted' }, t('version') + ' ' + item.revision)),
                   h('p', { className: 'en-label' }, item.text),
                   item.evidence_id ? button(t('source'), () => openSource(item.evidence_id), { disabled: busy })
-                    : h('p', { className: 'en-muted' }, t('personaSourceUnavailable')))) :
+                    : h('p', { className: 'en-muted' }, t('personaSourceUnavailable')),
+                  button(t('personaEdit'), () => setEditing({ kind: 'persona_set', block: item.block, text: item.text }), { disabled: busy || !personaEditable }))) :
                 tab === 'topic_settings' ? data.items.map(item => h('article', { key: item.view_id, className: 'en-card' },
                   h('h2', null, item.definition?.title ?? item.view_id), h('p', null, item.definition?.purpose),
                   h('p', { className: 'en-muted' }, t('version') + ' ' + item.revision + ' · ' + t(['valid', 'conflict'].includes(item.state) ? item.state : 'topic_' + item.state)),
@@ -561,16 +565,22 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             h('p', { className: 'en-muted' }, t('topicControlHelp')),
             h('div', { className: 'en-footer' }, button(t('cancel'), () => setTopicControl(null), { disabled: busy }),
               button(t('topicConfirm'), confirmTopicControl, { className: 'en-primary', disabled: busy }))) : null,
-          editing ? h(Modal, { title: t('revise'), close: () => setEditing(null), busy, error },
-            h('p', { className: 'en-muted' }, t('reviseHelp')),
+          editing ? h(Modal, { title: t(editing.kind === 'persona_set' ? 'personaEdit' : 'revise'), close: () => setEditing(null), busy, error },
+            h('p', { className: 'en-muted' }, t(editing.kind === 'persona_set' ? 'personaSecret' : 'reviseHelp')),
+            editing.kind === 'persona_set' ? h('label', null, t('personaBlock'), h('select', { value: editing.block, 'aria-label': t('personaBlock'),
+              onChange: event => setEditing(value => ({ ...value, block: event.target.value, text: '' })) },
+              ...['identity', 'tone', 'boundary', 'address', 'state'].map(block => h('option', { key: block, value: block }, t('persona_' + block))))) : null,
             h('textarea', { value: editing.label ?? editing.text, maxLength: editing.kind === 'profile_revise' ? 256 : 16384, 'aria-label': t('replacement'),
               onChange: event => setEditing(value => ({ ...value, [value.kind === 'profile_revise' ? 'label' : 'text']: event.target.value })) }),
             h('div', { className: 'en-footer' }, button(t('cancel'), () => setEditing(null), { disabled: busy }),
+              editing.kind === 'persona_set' ? button(t('personaClear'), () => preview({ ...editing, text: '' }), { disabled: busy }) : null,
               button(t('review'), () => preview(editing), { className: 'en-primary', disabled: busy || !(editing.label ?? editing.text).trim() }))) : null,
           review ? h(Modal, { title: t('review') + ' · ' + t(({ profile_confirm: 'accept', profile_reject: 'reject', profile_suppress: 'remove',
-              profile_revise: 'revise', source_correct: 'revise', source_suppress: 'suppress', profile_reopen: 'reopen' })[review.operation.kind]), close: cancelReview, busy, error },
-            h('p', null, t(review.operation.kind === 'profile_suppress' ? 'removeHelp' : review.operation.kind === 'source_suppress' ? 'suppressHelp' : review.operation.kind === 'profile_reject' ? 'rejectHelp' : 'originalRetained')),
-            review.previous ? h('div', null, h('h2', null, t('old')), h('pre', null, review.previous.draft.label)) : null,
+              profile_revise: 'revise', source_correct: 'revise', source_suppress: 'suppress', profile_reopen: 'reopen', persona_set: 'personaEdit' })[review.operation.kind]), close: cancelReview, busy, error },
+            h('p', null, t(review.operation.kind === 'persona_set' ? 'personaSecret' : review.operation.kind === 'profile_suppress' ? 'removeHelp' : review.operation.kind === 'source_suppress' ? 'suppressHelp' : review.operation.kind === 'profile_reject' ? 'rejectHelp' : 'originalRetained')),
+            review.operation.kind === 'persona_set' ? h('p', null, t('personaBlock') + ': ' + t('persona_' + review.operation.block)) : null,
+            review.previous ? h('div', null, h('h2', null, t('old')), h('pre', null, review.operation.kind === 'persona_set' ? review.previous.text : review.previous.draft.label)) : null,
+            review.operation.kind === 'persona_set' && review.operation.text === '' ? h('p', null, t('personaClearValue')) : null,
             review.operation.label || review.operation.text ? h('div', null, h('h2', null, t('replacement')), h('pre', null, review.operation.label ?? review.operation.text)) : null,
             h('h2', null, t('sources')), ...review.sources.map(item => h('div', { key: item.message_id }, h('p', { className: 'en-muted' }, `${t('version')} ${item.state_version} · ${t('received')} ${time(item.received_at)}`), h('pre', null, item.excerpt),
               item.total > Array.from(item.excerpt).length ? h('p', { className: 'en-muted' }, t('partial')) : null,
@@ -580,7 +590,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             h('p', { className: 'en-muted' }, t('originalRetained')),
             h('div', { className: 'en-footer' }, button(t('cancel'), cancelReview, { disabled: busy }),
               button(t('confirm'), () => perform(async signal => {
-                const outcome = await call({ action: 'confirm', proposal_id: review.proposal_id, operation: review.operation }, signal);
+                let outcome;
+                try { outcome = await call({ action: 'confirm', proposal_id: review.proposal_id, operation: review.operation }, signal); }
+                catch (cause) { if (review.operation.kind === 'persona_set' && alive.current && !signal.aborted) { refresh(); setNotice(t('personaUnknown')); } throw cause; }
                 if (alive.current) { setReview(null); setNotice(t('saved') + ' · ' + t('version') + ' ' + outcome.revision); updates.dispatchEvent(new Event('changed')); }
               }), { className: 'en-primary', disabled: busy }))) : null,
           recovery ? h(Modal, { title: t('recovery'), close: closeRecovery, busy, error },

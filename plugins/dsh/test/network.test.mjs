@@ -6,7 +6,11 @@ import vm from 'node:vm';
 test('memory links use the confirmed profile page and re-read source on click', async () => {
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
-  let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true;
+  let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
+  let personas = [
+    { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
+    { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
+  ];
   const windowListeners = new Map();
   const React = {
     Fragment: Symbol('fragment'),
@@ -55,16 +59,27 @@ test('memory links use the confirmed profile page and re-read source on click', 
       return Response.json({ result: { view_id: body.view_id, revision: body.expected_revision + 1, state: body.control } });
     }
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
+    if (body.action === 'preview' && body.operation?.kind === 'persona_set') return Response.json({ result: {
+      proposal_id: 'synthetic-persona-preview', operation: body.operation,
+      previous: personas.find(item => item.block === body.operation.block) ?? null, sources: [] } });
+    if (body.action === 'cancel' && body.proposal_id === 'synthetic-persona-preview') return Response.json({ result: { state: 'canceled' } });
+    if (body.action === 'confirm' && body.operation?.kind === 'persona_set') {
+      const previous = personas.find(item => item.block === body.operation.block);
+      personas = personas.filter(item => item.block !== body.operation.block);
+      if (body.operation.text) personas.push({ block: body.operation.block, revision: (previous?.revision ?? 0) + 1,
+        text: body.operation.text, evidence_id: 'source-1' });
+      if (failPersonaConfirm) throw new Error('synthetic_disconnect');
+      return Response.json({ result: { revision: (previous?.revision ?? 0) + 1 } });
+    }
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
+        supported_actions: personaSupported ? ['persona_set'] : [],
         ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned',
           ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'topic_settings') return respond({ items: topics, next_offset: null });
-    if (body.view === 'persona') return personaAvailable ? respond({ next_offset: null, items: [
-      { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
-      { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
-    ] }) : Response.json({ error: 'invalid_management_view' }, { status: 400 });
+    if (body.view === 'persona') return personaAvailable ? respond({ next_offset: null, items: personas })
+      : Response.json({ error: 'invalid_management_view' }, { status: 400 });
     if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
@@ -134,6 +149,69 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('合成人设')));
   assert.ok(find(tree, node => node.children?.includes('personaIndependent')));
   assert.ok(find(tree, node => node.children?.includes('personaSourceUnavailable')));
+  let personaEdit = find(tree, node => node.type === 'button' && node.children.includes('personaEdit'));
+  assert.ok(personaEdit); personaEdit.props.onClick(); tree = render();
+  let personaModal = find(tree, node => node.props?.title === 'personaEdit');
+  let personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'textarea').props.onChange({ target: { value: '合成修改后人设' } });
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'button' && node.children.includes('review')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  let personaReview = find(tree, node => node.props?.title === 'review · personaEdit');
+  assert.ok(personaReview); personaContent = renderModal(personaReview);
+  assert.ok(find(personaContent, node => node.children?.includes('合成人设')));
+  assert.ok(find(personaContent, node => node.children?.includes('合成修改后人设')));
+  assert.equal(calls.filter(call => call.action === 'confirm' && call.operation?.kind === 'persona_set').length, 0);
+  find(personaContent, node => node.type === 'button' && node.children.includes('confirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('合成修改后人设')));
+  personaEdit = find(tree, node => node.type === 'button' && node.children.includes('personaEdit'));
+  personaEdit.props.onClick(); tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit');
+  personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'button' && node.children.includes('personaClear')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  personaReview = find(tree, node => node.props?.title === 'review · personaEdit'); personaContent = renderModal(personaReview);
+  assert.ok(find(personaContent, node => node.children?.includes('personaClearValue')));
+  find(personaContent, node => node.type === 'button' && node.children.includes('cancel')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('合成修改后人设')));
+  find(tree, node => node.type === 'button' && node.children.includes('personaNew')).props.onClick();
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'textarea').props.onChange({ target: { value: '合成新人设' } });
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'button' && node.children.includes('review')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  personaReview = find(tree, node => node.props?.title === 'review · personaEdit'); personaContent = renderModal(personaReview);
+  find(personaContent, node => node.type === 'button' && node.children.includes('confirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  let newCard = find(tree, node => node.type === 'article' && find(node, child => child.children?.includes('合成新人设')));
+  assert.ok(newCard); find(newCard, node => node.type === 'button' && node.children.includes('personaEdit')).props.onClick();
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'button' && node.children.includes('personaClear')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  personaReview = find(tree, node => node.props?.title === 'review · personaEdit'); personaContent = renderModal(personaReview);
+  find(personaContent, node => node.type === 'button' && node.children.includes('confirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.equal(find(tree, node => node.children?.includes('合成新人设')), undefined);
+  let toneCard = find(tree, node => node.type === 'article' && find(node, child => child.children?.includes('合成修改后人设')));
+  find(toneCard, node => node.type === 'button' && node.children.includes('personaEdit')).props.onClick();
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'textarea').props.onChange({ target: { value: '合成结果不确定' } });
+  tree = render(); personaModal = find(tree, node => node.props?.title === 'personaEdit'); personaContent = renderModal(personaModal);
+  find(personaContent, node => node.type === 'button' && node.children.includes('review')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  personaReview = find(tree, node => node.props?.title === 'review · personaEdit'); personaContent = renderModal(personaReview);
+  failPersonaConfirm = true;
+  find(personaContent, node => node.type === 'button' && node.children.includes('confirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('personaUnknown')));
+  assert.ok(find(tree, node => node.children?.includes('合成结果不确定')));
+  failPersonaConfirm = false;
+  personaSupported = false;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.equal(find(tree, node => node.type === 'button' && node.children.includes('personaEdit')).props.disabled, true);
+  personaSupported = true;
   sourceAvailable = true;
   find(tree, node => node.type === 'button' && node.children.includes('source')).props.onClick();
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
