@@ -1,5 +1,7 @@
 # 本地 CLI v1
 
+Core 0.1.87 起，保险库初始化、口令验证、迁移准备，以及需口令或确认的备份恢复和工作区清理命令，都要求 stdin 同时通过 `isatty()` 与 Windows `GetConsoleMode`；`NUL` 和管道不再被视为可信交互入口。重定向输入或不提供真实控制台句柄的终端将被拒绝，需改用提供控制台输入句柄的本地终端；不会回退到明文 stdin 或跳过确认。此检查不证明操作者的物理身份。源码与独立 wheel 均以合成数据验证了多种命令的 NUL/管道拒绝和模拟控制台确认；真实 Windows Terminal / ConPTY 兼容性尚未验证，日用门禁不变。
+
 `host-recovery --config <runtime.json> --access <maintenance-access.json>` 接收严格 JSON stdin，提供 `preview/confirm/cancel/complete` 的持久核对回执。仅可信宿主可调用，身份须 recall/maintain/accept；不作为模型工具，不自行执行工具或创建宿主会话。目标会话持久化由已打补丁的宿主完成，Core 的 confirmed/complete 分别表示授权与完成回执，不能混为同一事务。输入、幂等、取消和验证边界见[只读续接](../reports/dsh-tool-recovery.md)。
 
 对应 [Issue #30](https://github.com/destinyTaoTao/evernook/issues/30)。CLI 是可信本机操作端，复用 [Python 核心契约](python-text-v1.md)，不增加数据库、网络服务、保险库或自动采集/注入。仍只支持 Python 3.14、Windows 本机固定 NTFS。

@@ -321,7 +321,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
                 declared.append((inbox, password))
             return verify_declared(memory, access, tuple(declared))
         if args.command == "vault-init":
-            if not sys.stdin.isatty():
+            if not _trusted_console():
                 raise MemoryFailure("interactive_vault_initialization_required")
             password = getpass.getpass("Local vault password: ").encode("utf-8")
             if password != getpass.getpass("Repeat vault password: ").encode("utf-8"):
@@ -334,14 +334,14 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return inventory_entries(inbox, access, after=args.after, limit=args.limit)
         if args.command == 'vault-verify':
             memory._require_scope(access, 'admin', 'protected_verify')
-            if not sys.stdin.isatty():
+            if not _trusted_console():
                 raise MemoryFailure('interactive_vault_verification_required')
             from .vault_verify import verify_page
             password = getpass.getpass('Local vault password: ').encode('utf-8')
             return verify_page(inbox, access, password, after=args.after, limit=args.limit)
         if args.command == 'vault-prepare-migration':
             memory._require_scope(access, 'admin', 'protected_migration_prepare')
-            if not sys.stdin.isatty():
+            if not _trusted_console():
                 raise MemoryFailure('interactive_vault_migration_required')
             from .vault_migration import invalidate, prepare
             invalidate(memory, access)
@@ -390,7 +390,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             access = client_access(args.config, args.access)
             if args.command == 'backup-vault-workspaces':
                 return list_workspaces(args.config, access)
-            if not sys.stdin.isatty():
+            if not _trusted_console():
                 raise MemoryFailure('interactive_recovery_required')
             try:
                 confirmation = input('Type DELETE_REGISTERED_WORKSPACES to remove the selected workspaces: ')
@@ -399,7 +399,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             if confirmation != 'DELETE_REGISTERED_WORKSPACES':
                 raise MemoryFailure('vault_workspace_confirmation_required')
             return cleanup_workspaces(args.config, access, args.id)
-        if not sys.stdin.isatty():
+        if not _trusted_console():
             raise MemoryFailure("interactive_recovery_required")
         if args.command == 'backup-vault-attach':
             from .service import client_access

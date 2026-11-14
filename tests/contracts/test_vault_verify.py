@@ -69,12 +69,36 @@ class VaultVerifyTests(unittest.TestCase):
         item = self.inbox.submit(self.owner, self.event)
         args = _parser().parse_args(['vault-verify', '--config', str(self.config), '--access', str(self.access_path),
             '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys'), '--limit', '1'])
-        with patch('sys.stdin.isatty', return_value=True), patch('getpass.getpass', return_value=self.password.decode()) as prompt:
+        with patch('evernook.cli._trusted_console', return_value=True), patch('getpass.getpass', return_value=self.password.decode()) as prompt:
             result = cast(dict[str, Any], _execute(args))
         prompt.assert_called_once()
         self.assertEqual(result['objects'][0]['object_id'], item.object_id)
         self.assertNotIn('synthetic-secret-canary-203', json.dumps(result))
         self.assertNotIn(self.password.decode(), json.dumps(result))
+
+    def test_sensitive_cli_rejects_nul_and_pipe_without_prompt_or_side_effect(self) -> None:
+        shared = ['--config', str(self.config), '--access', str(self.access_path)]
+        vault = shared + ['--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys')]
+        fake = self.root / 'synthetic-not-created'
+        commands = [
+            (['vault-init', *shared, '--inbox-dir', str(fake / 'inbox'), '--key-dir', str(fake / 'keys')], 'interactive_vault_initialization_required'),
+            (['vault-verify', *vault], 'interactive_vault_verification_required'),
+            (['vault-prepare-migration', *vault], 'interactive_vault_migration_required'),
+            (['backup-init', '--key-dir', str(fake / 'backup-keys')], 'interactive_recovery_required'),
+            (['backup-restore', '--source', str(fake), '--destination', str(fake / 'out'), '--recovery-file', str(fake / 'key')], 'interactive_recovery_required'),
+            (['backup-vault-stage', *shared, '--source', str(fake), '--destination', str(fake / 'out'), '--recovery-file', str(fake / 'key')], 'interactive_recovery_required'),
+            (['backup-vault-attach', *shared, '--container', str(fake)], 'interactive_recovery_required'),
+            (['backup-vault-workspace-clean', *shared, '--id', '00000000000040008000000000000001'], 'interactive_recovery_required'),
+        ]
+        for command, expected in commands:
+            for options in ({'input': b''}, {'stdin': subprocess.DEVNULL}):
+                with self.subTest(command=command[0], options=options):
+                    result = subprocess.run([sys.executable, '-B', '-m', 'evernook.cli', *command],
+                        **options, capture_output=True, timeout=20)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(json.loads(result.stdout)['error']['code'], expected)
+                    self.assertNotIn(self.password, result.stdout + result.stderr)
+        self.assertFalse(fake.exists())
 
     def test_invalid_page_and_cursor_are_rejected(self) -> None:
         for limit in (True, 0, 21):

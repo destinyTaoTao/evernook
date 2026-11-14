@@ -193,7 +193,7 @@ class OfflineRecoveryTests(unittest.TestCase):
         args = _parser().parse_args(['backup-restore-runtime', '--source', str(backup), '--destination', str(destination),
                                      '--recovery-file', self.keys.recovery_file])
         stderr = io.StringIO()
-        with patch('sys.stdin.isatty', return_value=True), patch('getpass.getpass', return_value=self.password.decode()), \
+        with patch('evernook.cli._trusted_console', return_value=True), patch('getpass.getpass', return_value=self.password.decode()), \
                 patch('builtins.input', return_value=ACKNOWLEDGEMENT), patch('sys.stderr', stderr):
             result = _execute(args)
         assert isinstance(result, dict)

@@ -199,13 +199,13 @@ class VaultMigrationTests(unittest.TestCase):
         args = _parser().parse_args(['vault-prepare-migration', '--config', str(self.config),
             '--access', str(self.owner_path), '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys')])
         prepare(self.runtime, self.inbox, self.owner, self.password)
-        with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', return_value='no'), \
+        with patch('evernook.cli._trusted_console', return_value=True), patch('builtins.input', return_value='no'), \
                 patch('getpass.getpass') as password_prompt:
             with self.assertRaisesRegex(MemoryFailure, 'protected_migration_inventory_unconfirmed'):
                 _execute(args)
             password_prompt.assert_not_called()
         self.assertFalse((self.runtime.root / PROOF_NAME).exists())
-        with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', return_value='STOPPED_AND_INVENTORIED'), \
+        with patch('evernook.cli._trusted_console', return_value=True), patch('builtins.input', return_value='STOPPED_AND_INVENTORIED'), \
                 patch('getpass.getpass', return_value=self.password.decode()):
             result = _execute(args)
         self.assertNotIn(self.password.decode(), str(result))
