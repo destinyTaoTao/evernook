@@ -134,6 +134,10 @@ def _parser() -> Parser:
     vault_multi_check = commands.add_parser('backup-vault-multi-check', help='Revalidate a staged encrypted multi-vault bundle offline')
     for flag in ('config', 'access', 'source', 'recovery-file'):
         vault_multi_check.add_argument('--' + flag, type=Path, required=True)
+    vault_multi_attach = commands.add_parser('backup-vault-multi-attach',
+                                             help='Reverify and attach a complete staged multi-vault set offline')
+    for flag in ('config', 'access', 'bundle', 'recovery-file', 'destination'):
+        vault_multi_attach.add_argument('--' + flag, type=Path, required=True)
     vault_attach = commands.add_parser('backup-vault-attach', help='Reverify and bind a staged vault to an offline restored service')
     for flag in ('config', 'access', 'container'):
         vault_attach.add_argument('--' + flag, type=Path, required=True)
@@ -444,6 +448,13 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
                 return getpass.getpass(f'Local vault password for {slot} ({inbox_id}): ').encode('utf-8')
             return restore_multi_stage(args.config, client_access(args.config, args.access), args.source,
                                        args.destination, args.recovery_file, password, read_vault_password)
+        if args.command == 'backup-vault-multi-attach':
+            from .service import client_access
+            from .vault_multi_attach import attach_stage
+            def read_vault_password(slot: str, inbox_id: str) -> bytes:
+                return getpass.getpass(f'Local vault password for {slot} ({inbox_id}): ').encode('utf-8')
+            return attach_stage(args.config, client_access(args.config, args.access), args.bundle, args.recovery_file,
+                                password, read_vault_password, args.destination)
         if args.command == 'backup-vault-stage':
             from .service import client_access
             from .vault_restore import restore_stage
@@ -892,7 +903,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-protected-capture', 'service-private-window', 'service-private-session', 'service-protected-inboxes', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-multi-stage', 'backup-vault-multi-check', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-protected-capture', 'service-private-window', 'service-private-session', 'service-protected-inboxes', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-multi-stage', 'backup-vault-multi-check', 'backup-vault-multi-attach', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
