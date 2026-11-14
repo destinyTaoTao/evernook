@@ -32,6 +32,7 @@ ENDPOINT = "memory-service.json"
 PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local', 'transcription-submit', 'transcription-read'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-decide", "candidate-list", "fact-query",
+    "persona-read", "persona-history", "persona-set", "persona-rollback",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
     "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state",
     "preference-update-status", "preference-update-configure", "preference-update-process", "preference-clarify", "preference-resolve",
