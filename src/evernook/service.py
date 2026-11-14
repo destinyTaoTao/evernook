@@ -604,10 +604,13 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
           allow_legacy_shared: bool = False, protected_root: Path | None = None,
-          protected_keys: Path | None = None) -> None:
+          protected_keys: Path | None = None, activate_verified_inbox: bool = False) -> None:
     if type(allow_legacy_shared) is not bool or (activate_owner is not None and allow_legacy_shared):
         raise MemoryFailure('invalid_service_mode')
     if (protected_root is None) != (protected_keys is None) or (protected_root is not None and allow_legacy_shared):
+        raise MemoryFailure('invalid_protected_service_config')
+    if type(activate_verified_inbox) is not bool or (activate_verified_inbox and
+            (activate_owner is None or protected_root is None or protected_keys is None or allow_legacy_shared)):
         raise MemoryFailure('invalid_protected_service_config')
     runtime = MemoryRuntime(config, service_owner=True)
     lock_path = runtime.root / "memory-service.lock"
@@ -646,25 +649,40 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     owner = runtime.access_from_file(activate_owner)
                     runtime._require_scope(owner, "admin", "activate_service")
                     with runtime._connection(ownership_exclusive=True) as db:
-                        if db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone():
-                            if server.protected_inbox is None:
-                                unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()
-                            else:
-                                unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 WHERE inbox_id IS NOT ? OR key_id IS NOT ? LIMIT 1',
-                                    (server.protected_inbox.inbox_id, server.protected_inbox.public['key_id'])).fetchone()
-                            if unknown:
-                                raise MemoryFailure('protected_cutover_requires_migration')
-                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
-                                and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
-                            raise MemoryFailure("protected_cutover_requires_migration")
-                        if server.protected_inbox is not None:
-                            with server.protected_inbox._connection() as inbox:
-                                if inbox.execute('SELECT 1 FROM objects LIMIT 1').fetchone():
-                                    raise MemoryFailure('protected_cutover_requires_migration')
                         db.execute("BEGIN EXCLUSIVE")
-                        value = _load(config)
-                        _atomic_json(config, {**value, "service_mode": True})
-                        db.execute("COMMIT")
+                        if 'admin' not in runtime._authorize(owner).scopes:
+                            raise MemoryFailure('permission_denied')
+                        if activate_verified_inbox:
+                            if _load(config).get('service_mode') is True:
+                                raise MemoryFailure('invalid_service_mode')
+                            assert server.protected_inbox is not None
+                            from .vault_migration import verify_for_activation
+                            with server.protected_inbox._connection() as store:
+                                store.execute('BEGIN IMMEDIATE')
+                                verify_for_activation(runtime, server.protected_inbox, owner, db, store)
+                                value = _load(config)
+                                _atomic_json(config, {**value, "service_mode": True})
+                                db.execute("COMMIT")
+                                store.execute('COMMIT')
+                        else:
+                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone():
+                                if server.protected_inbox is None:
+                                    unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()
+                                else:
+                                    unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 WHERE inbox_id IS NOT ? OR key_id IS NOT ? LIMIT 1',
+                                        (server.protected_inbox.inbox_id, server.protected_inbox.public['key_id'])).fetchone()
+                                if unknown:
+                                    raise MemoryFailure('protected_cutover_requires_migration')
+                            if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
+                                    and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
+                                raise MemoryFailure('protected_cutover_requires_migration')
+                            if server.protected_inbox is not None:
+                                with server.protected_inbox._connection() as inbox:
+                                    if inbox.execute('SELECT 1 FROM objects LIMIT 1').fetchone():
+                                        raise MemoryFailure('protected_cutover_requires_migration')
+                            value = _load(config)
+                            _atomic_json(config, {**value, "service_mode": True})
+                            db.execute("COMMIT")
                 with runtime._connection(ownership_exclusive=True) as db:
                     activated = _load(config).get('service_mode') is True
                     if not activated:
@@ -705,6 +723,7 @@ def main() -> None:
     parser.add_argument("--allow-legacy-shared", action="store_true")
     parser.add_argument("--protected-inbox", type=Path)
     parser.add_argument("--protected-keys", type=Path)
+    parser.add_argument('--activate-verified-inbox', action='store_true')
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
@@ -712,7 +731,7 @@ def main() -> None:
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
             allow_legacy_shared=args.allow_legacy_shared, protected_root=args.protected_inbox,
-            protected_keys=args.protected_keys)
+            protected_keys=args.protected_keys, activate_verified_inbox=args.activate_verified_inbox)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:

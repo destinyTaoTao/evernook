@@ -69,7 +69,7 @@ def _parser() -> Parser:
     audit_config = commands.add_parser("audit-configure", help="Configure audit log retention in days")
     audit_config.add_argument("--config", type=Path, required=True)
     audit_config.add_argument("--retention-days", type=int, required=True)
-    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-links", "vault-register", "vault-reconcile", "vault-show", "vault-verify"):
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-links", "vault-register", "vault-reconcile", "vault-show", "vault-verify", "vault-prepare-migration"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
         vault.add_argument("--access", type=Path, required=True)
@@ -277,6 +277,20 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             from .vault_verify import verify_page
             password = getpass.getpass('Local vault password: ').encode('utf-8')
             return verify_page(inbox, access, password, after=args.after, limit=args.limit)
+        if args.command == 'vault-prepare-migration':
+            memory._require_scope(access, 'admin', 'protected_migration_prepare')
+            if not sys.stdin.isatty():
+                raise MemoryFailure('interactive_vault_migration_required')
+            from .vault_migration import invalidate, prepare
+            invalidate(memory, access)
+            try:
+                acknowledgement = input('Stop all old hosts and writers; inventory all inboxes (unknown inboxes cannot be discovered). Type STOPPED_AND_INVENTORIED: ')
+            except EOFError:
+                raise MemoryFailure('protected_migration_inventory_unconfirmed') from None
+            if acknowledgement != 'STOPPED_AND_INVENTORIED':
+                raise MemoryFailure('protected_migration_inventory_unconfirmed')
+            password = getpass.getpass('Local vault password: ').encode('utf-8')
+            return prepare(memory, inbox, access, password, inventory_statement=acknowledgement)
         if args.command == "vault-show":
             try:
                 from .vault_local import show_local
