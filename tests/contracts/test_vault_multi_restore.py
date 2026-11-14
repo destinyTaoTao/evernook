@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
+import hmac
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -8,12 +11,15 @@ import threading
 import time
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from evernook import Access, Change, Event, MemoryFailure, MemoryRuntime, Source, pair_client
 from evernook.backup import create_backup, initialize_backup_keys
 from evernook.offline_recovery import ACKNOWLEDGEMENT, OfflineRecovery
 from evernook.service import ServiceClient
+from evernook.runtime import _json
 from evernook.vault_multi_restore import restore_stage
+from evernook.vault_stage_check import check_stage
 from evernook.vault_workspace import cleanup_workspaces, list_workspaces
 from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
 
@@ -113,6 +119,69 @@ class MultiVaultRestoreTests(MultiVaultServiceTests):
         with runtime._connection() as core:
             from evernook.missing_vault import read_state
             self.assertTrue(read_state(runtime, core))
+        checked = check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
+        self.assertEqual(checked['inboxes'], 2)
+        self.assertFalse(checked['attachment_authorized'])
+        self.assertFalse(checked['vault_passwords_rechecked'])
+        with patch('evernook.vault_stage_check._receipt', return_value='0' * 64):
+            with self.assertRaisesRegex(MemoryFailure, 'protected_recovery_proof_invalid'):
+                check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
+        old_stage = self.root / 'old-stage'
+        with zipfile.ZipFile(destination) as original, zipfile.ZipFile(old_stage, 'w', compression=zipfile.ZIP_STORED) as old:
+            for name in original.namelist():
+                data = original.read(name)
+                if name == 'stage-proof.json':
+                    current = json.loads(data)['content']
+                    old_content = {'version': 1, 'backup_id': current['backup_id'], 'binding': current['binding']}
+                    authentication = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-stage-v1\0'
+                                                 + _json(old_content).encode(), hashlib.sha256).hex()
+                    data = _json({'content': old_content, 'authentication': authentication}).encode()
+                old.writestr(name, data)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_recovery_proof_invalid'):
+            check_stage(config, owner, old_stage, Path(keys.recovery_file), b'synthetic backup password')
+        with self.assertRaises(MemoryFailure):
+            check_stage(config, Access('unauthorized', 'unauthorized'), destination, Path(keys.recovery_file), b'synthetic backup password')
+        with self.assertRaises(MemoryFailure):
+            check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic wrong backup password')
+        other_keys = initialize_backup_keys(self.root / 'other-backup-keys', b'synthetic other backup password')
+        with self.assertRaises(MemoryFailure):
+            check_stage(config, owner, destination, Path(other_keys.recovery_file), b'synthetic other backup password')
+        canceled = threading.Event(); canceled.set()
+        with self.assertRaisesRegex(MemoryFailure, 'vault_restore_canceled'):
+            check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password', cancel=canceled)
+        with runtime._connection() as core:
+            original_fingerprint = bytes(core.execute('SELECT fingerprint FROM messages WHERE id=?',
+                                                       (self.linked.message.message_id,)).fetchone()['fingerprint'])
+            core.execute('UPDATE messages SET fingerprint=? WHERE id=?', (bytes(32), self.linked.message.message_id))
+        try:
+            with self.assertRaisesRegex(MemoryFailure, 'vault_backup_ledger_mismatch'):
+                check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
+        finally:
+            with runtime._connection() as core:
+                core.execute('UPDATE messages SET fingerprint=? WHERE id=?', (original_fingerprint, self.linked.message.message_id))
+        with runtime._connection() as core:
+            original_event = core.execute('SELECT event FROM messages WHERE id=?', (self.linked.message.message_id,)).fetchone()['event']
+            core.execute('UPDATE messages SET event=? WHERE id=?', ('{"text":"synthetic-tamper"}', self.linked.message.message_id))
+        try:
+            with self.assertRaisesRegex(MemoryFailure, 'vault_backup_ledger_mismatch'):
+                check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
+        finally:
+            with runtime._connection() as core:
+                core.execute('UPDATE messages SET event=? WHERE id=?', (original_event, self.linked.message.message_id))
+        with runtime._connection() as core:
+            core.execute('PRAGMA foreign_keys=OFF')
+            core.execute('INSERT INTO protected_links_v1(message_id,reference) VALUES (?,?)', ('synthetic-orphan-link', '{}'))
+        try:
+            with self.assertRaisesRegex(MemoryFailure, 'vault_backup_ledger_mismatch'):
+                check_stage(config, owner, destination, Path(keys.recovery_file), b'synthetic backup password')
+        finally:
+            with runtime._connection() as core:
+                core.execute('DELETE FROM protected_links_v1 WHERE message_id=?', ('synthetic-orphan-link',))
+        damaged = self.root / 'damaged-stage'
+        raw = destination.read_bytes()
+        damaged.write_bytes(raw[:50] + bytes([raw[50] ^ 1]) + raw[51:])
+        with self.assertRaises(MemoryFailure):
+            check_stage(config, owner, damaged, Path(keys.recovery_file), b'synthetic backup password')
 
 
 if __name__ == '__main__':

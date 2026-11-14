@@ -203,35 +203,45 @@ def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str
         raise MemoryFailure("invalid_backup")
     if type(info["plaintext_size"]) is not int or info["plaintext_size"] < 0 or _digest(source, check=check) != info["sha256"]:
         raise MemoryFailure("backup_integrity_mismatch")
+    with source.open("rb") as input_file:
+        _decrypt_stream(input_file, output, private, info, aad, check=check)
+
+
+def _decrypt_stream(input_file: BinaryIO, output: BinaryIO, private: PrivateKey, info: dict[str, Any], aad: bytes,
+                    *, check: Callable[[], None] | None = None) -> None:
+    """Decrypt an already digest-verified stream with the normal backup contract."""
+    if set(info) != {"stream_header", "wrapped_key", "sha256", "plaintext_size"}:
+        raise MemoryFailure("invalid_backup")
+    if type(info["plaintext_size"]) is not int or info["plaintext_size"] < 0:
+        raise MemoryFailure("invalid_backup")
     key = SealedBox(private).decrypt(_hex(info["wrapped_key"], 80))
     state = bindings.crypto_secretstream_xchacha20poly1305_state()
     bindings.crypto_secretstream_xchacha20poly1305_init_pull(state,
         _hex(info["stream_header"], bindings.crypto_secretstream_xchacha20poly1305_HEADERBYTES), key)
     size = 0
-    with source.open("rb") as input_file:
-        while True:
-            if check is not None:
-                check()
-            prefix = input_file.read(4)
-            if len(prefix) != 4:
-                raise MemoryFailure("backup_truncated")
-            length = struct.unpack(">I", prefix)[0]
-            if not bindings.crypto_secretstream_xchacha20poly1305_ABYTES <= length <= _CHUNK + bindings.crypto_secretstream_xchacha20poly1305_ABYTES:
-                raise MemoryFailure("invalid_backup")
-            chunk = input_file.read(length)
-            if len(chunk) != length:
-                raise MemoryFailure("backup_truncated")
-            plaintext, tag = bindings.crypto_secretstream_xchacha20poly1305_pull(state, chunk, aad)
-            if tag == bindings.crypto_secretstream_xchacha20poly1305_TAG_FINAL:
-                if plaintext or input_file.read(1) or size != info["plaintext_size"]:
-                    raise MemoryFailure("backup_integrity_mismatch")
-                return
-            if tag != bindings.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE:
-                raise MemoryFailure("invalid_backup")
-            size += len(plaintext)
-            if size > info["plaintext_size"]:
+    while True:
+        if check is not None:
+            check()
+        prefix = input_file.read(4)
+        if len(prefix) != 4:
+            raise MemoryFailure("backup_truncated")
+        length = struct.unpack(">I", prefix)[0]
+        if not bindings.crypto_secretstream_xchacha20poly1305_ABYTES <= length <= _CHUNK + bindings.crypto_secretstream_xchacha20poly1305_ABYTES:
+            raise MemoryFailure("invalid_backup")
+        chunk = input_file.read(length)
+        if len(chunk) != length:
+            raise MemoryFailure("backup_truncated")
+        plaintext, tag = bindings.crypto_secretstream_xchacha20poly1305_pull(state, chunk, aad)
+        if tag == bindings.crypto_secretstream_xchacha20poly1305_TAG_FINAL:
+            if plaintext or input_file.read(1) or size != info["plaintext_size"]:
                 raise MemoryFailure("backup_integrity_mismatch")
-            output.write(plaintext)
+            return
+        if tag != bindings.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE:
+            raise MemoryFailure("invalid_backup")
+        size += len(plaintext)
+        if size > info["plaintext_size"]:
+            raise MemoryFailure("backup_integrity_mismatch")
+        output.write(plaintext)
 
 
 def _create_backup(runtime: MemoryRuntime, access: Access, destination: Path, key_directory: Path) -> BackupStatus:

@@ -20,7 +20,7 @@ import zipfile
 from nacl.exceptions import BadSignatureError, CryptoError
 
 from .backup import _decrypt, _hex, _json_bytes, _unlock
-from .missing_vault import read_state
+from .missing_vault import _receipt, read_state
 from .models import Access, MemoryFailure
 from .paths import external, provision_private_directory, verify_private_directory
 from .protected import ProtectedInbox
@@ -167,6 +167,7 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                     _atomic_bytes(clone / 'idempotency.key', runtime._fingerprint_key)
                     isolated = MemoryRuntime(clone / 'runtime.json')
                     declared = []
+                    projection_digests: dict[str, str] = {}
                     for member in members:
                         inbox_file = vaults / member['slot'] / 'inbox' / 'inbox.sqlite3'
                         with closing(sqlite3.connect(inbox_file.as_uri() + '?mode=ro', uri=True)) as integrity:
@@ -192,10 +193,19 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                             if (summary['objects'] != member['objects']
                                     or not hmac.compare_digest(_link_digest(copied_core, store, check), member['link_digest'])):
                                 raise MemoryFailure('vault_backup_ledger_mismatch')
+                            digest = hashlib.sha256()
+                            for row in store.execute('SELECT id,source FROM objects ORDER BY id'):
+                                check()
+                                saved = copied_core.execute('SELECT event FROM messages WHERE source=?', (row['source'],)).fetchone()
+                                if saved is None:
+                                    raise MemoryFailure('vault_backup_ledger_mismatch')
+                                digest.update((_json([row['id'], saved['event']]) + '\n').encode())
+                            projection_digests[inbox.inbox_id] = digest.hexdigest()
                     _inspect(isolated, access, tuple(declared), decrypt=True, require_complete=True,
                              require_readable=False, locked_stores=verify, deadline_limit=deadline,
                              check_extra=check, cancel=cancel)
-                    stage_content = {'version': 1, 'backup_id': backup_id, 'binding': binding}
+                    stage_content = {'version': 2, 'backup_id': backup_id, 'receipt_auth': _receipt(runtime),
+                                     'binding': binding, 'projection_digests': projection_digests}
                     authentication = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-stage-v1\0'
                                                  + _json(stage_content).encode(), hashlib.sha256).hex()
                     proof_bytes = _json({'content': stage_content, 'authentication': authentication}).encode()
