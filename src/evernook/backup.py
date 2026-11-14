@@ -11,7 +11,7 @@ from pathlib import Path
 import shutil
 import struct
 import tempfile
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Callable
 from uuid import UUID, uuid4
 
 from nacl import bindings, pwhash, utils
@@ -55,8 +55,16 @@ class RetentionResult:
     recovery_anchor: str
 
 
-def _digest(path: Path) -> str:
+def _digest(path: Path, *, check: Callable[[], None] | None = None) -> str:
     with path.open("rb") as source:
+        if check is not None:
+            digest = hashlib.sha256()
+            while True:
+                check()
+                block = source.read(_CHUNK)
+                if not block:
+                    return digest.hexdigest()
+                digest.update(block)
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
@@ -188,10 +196,11 @@ def _encrypt(source: BinaryIO, destination: Path, recipient: PublicKey, aad: byt
             "sha256": _digest(destination), "plaintext_size": size}
 
 
-def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str, Any], aad: bytes) -> None:
+def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str, Any], aad: bytes,
+             *, check: Callable[[], None] | None = None) -> None:
     if set(info) != {"stream_header", "wrapped_key", "sha256", "plaintext_size"}:
         raise MemoryFailure("invalid_backup")
-    if type(info["plaintext_size"]) is not int or info["plaintext_size"] < 0 or _digest(source) != info["sha256"]:
+    if type(info["plaintext_size"]) is not int or info["plaintext_size"] < 0 or _digest(source, check=check) != info["sha256"]:
         raise MemoryFailure("backup_integrity_mismatch")
     key = SealedBox(private).decrypt(_hex(info["wrapped_key"], 80))
     state = bindings.crypto_secretstream_xchacha20poly1305_state()
@@ -200,6 +209,8 @@ def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str
     size = 0
     with source.open("rb") as input_file:
         while True:
+            if check is not None:
+                check()
             prefix = input_file.read(4)
             if len(prefix) != 4:
                 raise MemoryFailure("backup_truncated")

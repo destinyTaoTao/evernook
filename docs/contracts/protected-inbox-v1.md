@@ -64,6 +64,14 @@ Python 可调用 `ServiceClient.protected_backup(access, destination, backup_key
 
 验证使用隔离合成数据：源码备份 12 项及新增未配置服务拒绝 1 项通过，旧迁移证明与过期检查 2 项通过；非 editable wheel 的备份与旧迁移兼容共 14 项通过，strict mypy 通过。验证覆盖密文及独立口令、权限、取消、并发、篡改、损坏恢复材料、崩溃前后发布和普通抑制后的关联稳定性；没有操作用户保险库，也没有通过产品流程验证异机恢复。
 
+### 离线验证暂存
+
+在已恢复普通账本经显式缺失保险库模式激活一次后，停止服务；可信本地管理员可以使用 `backup-vault-stage --config <runtime.json> --access <admin-access.json> --source <vault-backup-dir> --destination <new-container-dir> --recovery-file <backup-recovery-file>`，交互输入备份恢复口令和保险库口令。SDK 的 `vault_restore.restore_stage` 仅供可信本地进程使用。运行时持有服务锁和账本独占栅栏，验证备份签名、加密流、保险库口令、对象和恢复账本关联，并发布全新的私有暂存容器。账本与备份的受保护关联不一致时拒绝；普通账本当前抑制状态不会被覆盖。取消与超时在分块处理时协作检查，阻塞的系统 I/O 仍无法立即中断。
+
+**暂存不是接回，也不是日用准入。** 输出的 `attached=false`、`daily_admitted=false`；缺失保险库保护仍有效，未来接回时必须重新验证。发布后若响应或清理失败，可能报告 `vault_restore_outcome_unknown`；中断后目标目录也可能已出现，须视为结果不确定，不能直接覆盖或视为可接回。执行期间会在目标目录的父目录建立 `.evernook-vault-restore-*` 私有临时目录，包含普通记忆副本、账本密钥和保险库材料。正常退出会删除临时目录，但强杀或崩溃后可能残留；使用者应在停止相关进程后检查该父目录，并安全处理残留。本机保险库销毁尚未验证能发现或覆盖这些临时目录及另存备份，不能据此承诺彻底销毁。
+
+Core 0.1.76（#214）使用隔离合成账本验证了恢复暂存、口令错误、篡改、未授权、运行中服务、账本不匹配、取消、发布故障和真实子进程发布前后崩溃；源码回归及 strict mypy 通过，非 editable wheel 的暂存 10 项和普通备份兼容 2 项通过。独立审查提出的分块取消与发布后结果不确定问题已补回归。未使用真实用户数据，未完成服务接回或日用验收。
+
 ## CLI 与未启用范围
 
 - `vault-init --config ... --access ... --inbox-dir ... --key-dir ...`：本地 TTY 隐藏输入并二次确认口令；管道、参数或环境变量不能提供口令。
