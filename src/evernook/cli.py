@@ -152,7 +152,7 @@ def _parser() -> Parser:
         ('service-protected-inventory', 'Administrator inventory of the bound encrypted inbox'),
         ('service-protected-links', 'Administrator inventory of protected ledger links'),
         ('service-protected-show-local', 'Request one native password-confirmed local display'),
-        ('service-protected-backup', 'Create an encrypted backup of the service-bound protected inbox'),
+        ('service-protected-backup', 'Create an encrypted backup of the service-bound protected inbox set'),
         ('service-transcription-submit', 'Trusted host: submit bounded ASR material from JSON stdin'),
         ('service-transcription-read', 'Read current ASR material provenance by message ID'),
         ('service-private-window', 'Enter one private note in a dedicated local window'),

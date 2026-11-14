@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import threading
 import time
 from typing import Any, Callable
 from uuid import UUID
@@ -22,8 +23,10 @@ from .vault_migration import MAX_OBJECTS, MAX_SECONDS, _authorize_admin, _file_b
 def _inspect(runtime: MemoryRuntime, access: Access | None,
              declared: tuple[tuple[ProtectedInbox, bytes | None], ...], *, decrypt: bool,
              require_complete: bool, locked: Callable[[dict[str, Any]], None] | None = None,
+             locked_stores: Callable[[dict[str, Any], sqlite3.Connection, list[Any]], None] | None = None,
              require_readable: bool = True, unbounded_objects: bool = False,
-             service_startup: bool = False) -> dict[str, Any]:
+             service_startup: bool = False, cancel: threading.Event | None = None,
+             deadline_limit: float | None = None, check_extra: Callable[[], None] | None = None) -> dict[str, Any]:
     if access is None and not (service_startup and runtime._service_owner):
         raise MemoryFailure('permission_denied')
     def authorize() -> None:
@@ -48,7 +51,13 @@ def _inspect(runtime: MemoryRuntime, access: Access | None,
             or any(left.is_relative_to(right) for left in paths for right in paths if left != right)):
         raise MemoryFailure('invalid_protected_inbox_set')
     deadline = time.monotonic() + MAX_SECONDS
+    if deadline_limit is not None:
+        deadline = min(deadline, deadline_limit)
     def check() -> None:
+        if check_extra is not None:
+            check_extra()
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure('protected_migration_canceled')
         if time.monotonic() >= deadline:
             raise MemoryFailure('protected_migration_timeout')
     def remaining() -> float:
@@ -73,7 +82,7 @@ def _inspect(runtime: MemoryRuntime, access: Access | None,
         if ledger is None:
             raise MemoryFailure('protected_cutover_requires_migration')
         has_links = bool(core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_links_v1'").fetchone())
-        core.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        core.set_progress_handler(lambda: int(time.monotonic() >= deadline or (cancel is not None and cancel.is_set())), 1000)
         try:
             links = int(core.execute('SELECT count(*) FROM protected_links_v1').fetchone()[0]) if has_links else 0
             if has_links:
@@ -184,6 +193,8 @@ def _inspect(runtime: MemoryRuntime, access: Access | None,
                         'objects': total, 'linked_references': linked}
             if locked is not None:
                 locked(snapshot)
+            if locked_stores is not None:
+                locked_stores(snapshot, core, stores)
             for _, _, store, _ in stores:
                 store.execute('COMMIT')
         core.execute('COMMIT')

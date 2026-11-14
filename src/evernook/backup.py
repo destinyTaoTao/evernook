@@ -175,7 +175,8 @@ def _unlock(path: Path, password: bytes) -> tuple[str, PrivateKey, VerifyKey]:
         raise MemoryFailure("recovery_unlock_failed") from None
 
 
-def _encrypt(source: BinaryIO, destination: Path, recipient: PublicKey, aad: bytes) -> dict[str, object]:
+def _encrypt(source: BinaryIO, destination: Path, recipient: PublicKey, aad: bytes, *,
+             check: Callable[[], None] | None = None) -> dict[str, object]:
     key = bindings.crypto_secretstream_xchacha20poly1305_keygen()
     state = bindings.crypto_secretstream_xchacha20poly1305_state()
     header = bindings.crypto_secretstream_xchacha20poly1305_init_push(state, key)
@@ -193,7 +194,7 @@ def _encrypt(source: BinaryIO, destination: Path, recipient: PublicKey, aad: byt
         output.flush()
         os.fsync(output.fileno())
     return {"stream_header": header.hex(), "wrapped_key": SealedBox(recipient).encrypt(key).hex(),
-            "sha256": _digest(destination), "plaintext_size": size}
+            "sha256": _digest(destination, check=check), "plaintext_size": size}
 
 
 def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str, Any], aad: bytes,

@@ -79,12 +79,6 @@ class MultiVaultServiceTests(MultiVaultFixture):
             client.protected_inventory(self.reader, inbox_id=self.second.inbox_id)
         with self.assertRaisesRegex(MemoryFailure, 'protected_inbox_not_found'):
             client.protected_inventory(self.owner, inbox_id='00000000-0000-4000-8000-000000000000')
-        from evernook.backup import initialize_backup_keys
-        backup_keys = self.root / 'synthetic-backup-keys'
-        initialize_backup_keys(backup_keys, b'synthetic backup password')
-        with self.assertRaisesRegex(MemoryFailure, 'protected_cutover_requires_migration'):
-            client.protected_backup(self.owner, self.root / 'not-a-multi-backup', backup_keys)
-        self.assertFalse((self.root / 'not-a-multi-backup').exists())
         duplicate = replace(self.event, source=replace(self.event.source, event='two'))
         self.assertEqual(client.protected_receive(self.owner, duplicate)['inbox_id'], self.second.inbox_id)
         streamed = replace(self.event, source=replace(self.event.source, event='three'), text='')

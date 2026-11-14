@@ -34,9 +34,10 @@ _FILES = {
 }
 _DIRS = {'': {'ledger', 'vault'}, 'vault': {'inbox', 'keys'}, 'ledger': set(),
          'vault/inbox': set(), 'vault/keys': set()}
-_MULTI_DIRS = {'': {'ledger', 'vaults'}, 'ledger': set(),
+_MULTI_DIRS = {'': {'ledger', 'vaults', 'package'}, 'ledger': set(), 'package': set(),
                'vaults': {f'{i:02d}' for i in range(16)}}
-_MULTI_FILES = {'ledger': _FILES['ledger']}
+_MULTI_FILES = {'ledger': _FILES['ledger'], 'package': {'backup.json', 'binding.enc'} |
+                {f'{i:02d}-{name}.enc' for i in range(16) for name in ('inbox', 'receiving', 'writer', 'recovery')}}
 for _slot in sorted(_MULTI_DIRS['vaults']):
     _base = f'vaults/{_slot}'
     _MULTI_DIRS[_base] = {'inbox', 'keys'}

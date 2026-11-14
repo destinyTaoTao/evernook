@@ -288,6 +288,11 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or any(not isinstance(arguments[name], str) or not 1 <= len(arguments[name]) <= 4096
                        for name in ('destination', 'backup_keys'))):
             raise MemoryFailure('invalid_vault_backup_request')
+        if protected_history:
+            from .vault_multi_backup import create_multi_backup
+            return create_multi_backup(runtime, protected_inbox, (protected_inbox, *protected_history.values()), access,
+                                       Path(arguments['destination']), Path(arguments['backup_keys']),
+                                       timeout=arguments['timeout'], cancel=cancel)
         from .vault_backup import create_vault_backup
         return create_vault_backup(runtime, protected_inbox, access, Path(arguments['destination']),
                                    Path(arguments['backup_keys']), timeout=arguments['timeout'], cancel=cancel)
