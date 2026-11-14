@@ -203,16 +203,43 @@ class RemoteReflectionTests(unittest.TestCase):
         self.assertIn('reflection_daily_budget', blocked['degraded'])
         self.assertEqual(len(self.requests), 1)
 
+    def test_daily_status_reads_consistent_snapshot_during_reservations(self) -> None:
+        engine = self.engine(daily_cost_micro_usd=100)
+        def reserve() -> None:
+            for _ in range(20):
+                engine._reserve_daily(1, 100, lambda: 10)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer = pool.submit(reserve)
+            for _ in range(20):
+                status = engine.daily_budget_status(self.access)
+                self.assertEqual(status['state'], 'ready')
+                self.assertEqual(status['reserved_micro_usd'] + status['remaining_micro_usd'], status['limit_micro_usd'])
+            writer.result()
+        self.assertEqual(engine.daily_budget_status(self.access)['reserved_micro_usd'], 20)
+
     def test_daily_budget_rollover_and_backwards_clock_fail_closed(self) -> None:
         engine = self.engine(daily_cost_micro_usd=100)
         with patch('evernook.reflection.datetime') as clock:
             clock.now.return_value = datetime(2030, 1, 2, tzinfo=timezone.utc)
             self.assertEqual(engine._reserve_daily(100, 100, lambda: 10), ('2030-01-02', 100))
+            self.assertEqual(engine.daily_budget_status(self.access)['state'], 'exhausted')
             clock.now.return_value = datetime(2030, 1, 1, tzinfo=timezone.utc)
+            self.assertEqual(engine.daily_budget_status(self.access)['state'], 'clock_rollback')
             with self.assertRaisesRegex(MemoryFailure, 'reflection_daily_clock_rollback'):
                 engine._reserve_daily(1, 100, lambda: 10)
             clock.now.return_value = datetime(2030, 1, 3, tzinfo=timezone.utc)
+            status = engine.daily_budget_status(self.access)
+            self.assertEqual((status['state'], status['reserved_micro_usd']), ('ready', 0))
             self.assertEqual(engine._reserve_daily(40, 100, lambda: 10), ('2030-01-03', 40))
+        limited = pair_client(self.runtime.root / 'runtime.json', client_id='limited-budget', entry='limited',
+            access_path=self.runtime.root / 'mcp-access-limited-budget.json', scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            engine.daily_budget_status(limited)
+        with self.runtime._connection() as db:
+            db.execute("UPDATE reflection_daily_cost_v1 SET utc_day='not-a-date' WHERE id=1")
+        self.assertEqual(engine.daily_budget_status(self.access), {'state': 'unavailable'})
+        with self.assertRaisesRegex(MemoryFailure, 'reflection_daily_budget_unavailable'):
+            engine._reserve_daily(1, 100, lambda: 10)
         for value in (0, -1, True, 1.5, 1000000001):
             with self.subTest(value=value), self.assertRaisesRegex(MemoryFailure, 'invalid_reflection_config'):
                 RemoteReflectionModel({**self.remote, 'daily_cost_micro_usd': value})
@@ -243,7 +270,15 @@ class RemoteReflectionTests(unittest.TestCase):
             return ServiceClient(config)
         try:
             client = start(True)
+            status_request = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
+            status = client.call(self.access, 'cli', status_request)['reflection_daily_budget']
+            self.assertEqual(status['state'], 'setup_required')
+            self.assertEqual(status['limit_micro_usd'], 5120)
+            self.assertNotIn('synthetic-api-secret-key', json.dumps(status))
+            self.assertNotIn('127.0.0.1', json.dumps(status))
             client.call(self.access, 'cli', {'command': 'reflect-configure', 'input': {}})
+            status = client.call(self.access, 'cli', status_request)['reflection_daily_budget']
+            self.assertEqual((status['state'], status['reserved_micro_usd'], status['remaining_micro_usd']), ('ready', 0, 5120))
             self.delay = 3
             errors: list[str] = []
             def call() -> None:
@@ -264,6 +299,8 @@ class RemoteReflectionTests(unittest.TestCase):
             self.assertTrue(errors)
             self.delay = 0
             client = start(False)
+            status = client.call(self.access, 'cli', status_request)['reflection_daily_budget']
+            self.assertEqual((status['state'], status['reserved_micro_usd'], status['remaining_micro_usd']), ('exhausted', 5120, 0))
             result = client.reflect(self.access, '钥匙', allow_remote=True)
             self.assertIn('reflection_daily_budget', result['degraded'])
             self.assertEqual(len(self.requests), 1)

@@ -8,6 +8,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const state = [], effects = [], refs = [], calls = [];
   let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
   let validation = { embedding: 'valid', context: 'invalid', reflection: 'valid', extraction: 'valid' };
+  let dailyBudget = { state: 'ready', utc_day: '2030-01-02', reserved_micro_usd: 120000, remaining_micro_usd: 380000, limit_micro_usd: 500000 };
   let graphRole = 'assistant';
   let graphConfirmation = 'not_recorded';
   let personas = [
@@ -77,6 +78,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
         supported_actions: personaSupported ? ['persona_set'] : [], ...(validation ? { configuration_validation: validation } : {}),
+        ...(dailyBudget ? { reflection_daily_budget: dailyBudget } : {}),
         ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned',
           ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
@@ -239,6 +241,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnavailable')));
+  assert.ok(find(tree, node => node.children?.includes('dailyBudget: dailyReady · UTC 2030-01-02 · dailyReserved $0.120000 · dailyRemaining $0.380000 · dailyLimit $0.500000')));
   extractionMode = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
@@ -249,11 +252,23 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticEmbeddingFormat: validationRestart')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflectionFormat: validationRestart')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtractionFormat: validationRestart')));
+  dailyBudget = { state: 'clock_rollback' };
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('dailyBudget: dailyClock')));
+  for (const [stateName, text] of [['setup_required', 'dailySetup'], ['exhausted', 'dailyExhausted'], ['restart_required', 'dailyRestart'], ['unavailable', 'dailyUnavailable'], ['disabled', 'dailyDisabled']]) {
+    dailyBudget = { state: stateName };
+    find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+    tree = render(); await flush(); tree = render();
+    assert.ok(find(tree, node => node.children?.includes('dailyBudget: ' + text)));
+  }
+  dailyBudget = undefined;
   validation = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticContextFormat: validationUnknown')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflectionFormat: validationUnknown')));
+  assert.ok(find(tree, node => node.children?.includes('dailyBudget: dailyUnknown')));
   statusModelsAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

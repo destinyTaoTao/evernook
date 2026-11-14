@@ -420,6 +420,15 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 return 'valid'
 
             reflection_model = reflector.model if reflector is not None else None
+            reflection_config_state = provider_validation(reflection_binding, reflection_error)
+            if reflection_config_state == 'restart_required':
+                budget_status: dict[str, Any] = {'state': 'restart_required'}
+            elif reflection_error is not None:
+                budget_status = {'state': 'unavailable'}
+            elif isinstance(reflector, ReflectionEngine):
+                budget_status = reflector.daily_budget_status(access)
+            else:
+                budget_status = {'state': 'disabled'}
             return {**result, 'model_configuration': {
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
                 'reflection': 'configured_unavailable' if reflection_error is not None else 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
@@ -428,7 +437,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                     'embedding': config_validation(embedding_config, context=False),
                     'context': config_validation(context_config, context=True),
                     'extraction': provider_validation(extraction_binding, extraction_error),
-                    'reflection': provider_validation(reflection_binding, reflection_error)}}
+                    'reflection': reflection_config_state}, 'reflection_daily_budget': budget_status}
         return result
     if operation == "remember":
         if set(arguments) != {"event"}:

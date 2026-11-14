@@ -89,6 +89,25 @@ retained the reservation. The installed-wheel set also rechecked protected
 source exclusion. Strict mypy passed. No real provider billing, browser UI,
 cross-device budget synchronization or production admission was tested.
 
+Core 0.1.66 / dsh preview.56 exposes `reflection_daily_budget` through the
+trusted `manage` status read. Its finite state is `disabled`, `setup_required`,
+`ready`, `exhausted`, `clock_rollback`, `restart_required` or `unavailable`.
+For a valid current day it includes UTC day, limit, reserved and remaining
+micro-USD; it does not return a provider URL, key, query or source text. This
+requires the same recall, maintain and accept scopes as management. The page
+shows this as an advisory snapshot; concurrent reservations may change it
+immediately. An old service without the field displays unknown. The status
+read does not initialize, reset or reserve any budget.
+
+#199 validation: the initial 22-test source run had 21 passes and one fixture
+error because a test placed a client access file outside the required runtime
+directory. The corrected permission/date/status cases passed in a three-test
+source run and a four-test installed-wheel run. Source and installed page
+components covered each status and old-service fallback; build and strict
+mypy passed. A separate source and installed test checked consistent status
+snapshots during concurrent reservations. No actual browser or daily model
+admission is claimed.
+
 The compatible standalone CLI (`--reflection-config` on a non-service-mode library) and trusted direct Python engine may themselves be provider hosts. Such a host explicitly owns the profile/environment key and still enforces client allowlist, call consent and the same evidence/budgets. It is distinct from a keyless service client. An active service-mode library still routes CLI through its service and cannot be bypassed with a caller-supplied profile path. Standalone/direct-host usage is not a new service-only guarantee.
 
 `allowed_clients` contains paired client IDs, not entry/session names. A caller must also send `allow_remote=true` each time. MCP additionally requires trusted launcher `--allow-remote-reflection`; a model tool argument cannot grant that permission. TypeScript `MemoryConfig.allowRemoteReflection=true` grants launcher permission. dsh's trusted `reflection=true` plus `reflectionAllowRemote=true` (both default false) forwards consent as a constant, not a model-controlled parameter. Keys/endpoints are absent from dsh options.

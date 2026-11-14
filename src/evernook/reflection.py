@@ -106,6 +106,41 @@ class ReflectionEngine:
             'provider': 'remote' if isinstance(self.model, RemoteModel) else 'local',
             'policy': asdict(self.policy), 'model_admission': 'experimental', 'publication': 'temporary_only'}
 
+    @staticmethod
+    def _daily_row(row: sqlite3.Row | None) -> tuple[str, int] | None:
+        if row is None:
+            return None
+        try:
+            day = date.fromisoformat(row['utc_day']).isoformat()
+        except (ValueError, TypeError):
+            raise MemoryFailure('reflection_daily_budget_unavailable') from None
+        value = row['reserved_micro_usd']
+        if day != row['utc_day'] or type(value) is not int or value < 0:
+            raise MemoryFailure('reflection_daily_budget_unavailable')
+        return day, value
+
+    def daily_budget_status(self, access: Access) -> dict[str, Any]:
+        identity = self.runtime._require_scope(access, 'maintain', 'reflection_budget_status')
+        if not {'recall', 'accept'}.issubset(identity.scopes):
+            raise MemoryFailure('permission_denied')
+        limit = getattr(self.model, 'daily_cost_micro_usd', None) if isinstance(self.model, RemoteModel) else None
+        if limit is None:
+            return {'state': 'disabled'}
+        today = datetime.now(timezone.utc).date().isoformat()
+        try:
+            with self.runtime._connection() as db:
+                db.execute('BEGIN')
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reflection_daily_cost_v1'").fetchone():
+                    return {'state': 'setup_required', 'limit_micro_usd': limit}
+                record = self._daily_row(db.execute('SELECT utc_day,reserved_micro_usd FROM reflection_daily_cost_v1 WHERE id=1').fetchone())
+            if record is not None and record[0] > today:
+                return {'state': 'clock_rollback', 'limit_micro_usd': limit}
+            reserved = record[1] if record is not None and record[0] == today else 0
+            return {'state': 'exhausted' if reserved >= limit else 'ready', 'utc_day': today,
+                    'limit_micro_usd': limit, 'reserved_micro_usd': reserved, 'remaining_micro_usd': max(0, limit - reserved)}
+        except MemoryFailure:
+            return {'state': 'unavailable'}
+
     def _reserve_daily(self, amount: int, limit: int, check: Callable[[], float]) -> tuple[str, int]:
         with self.runtime._connection(check=check) as db:
             while True:
@@ -119,19 +154,14 @@ class ReflectionEngine:
             day = datetime.now(timezone.utc).date().isoformat()
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reflection_daily_cost_v1'").fetchone():
                 raise MemoryFailure('reflection_daily_budget_not_configured')
-            row = db.execute('SELECT utc_day,reserved_micro_usd FROM reflection_daily_cost_v1 WHERE id=1').fetchone()
+            row = self._daily_row(db.execute('SELECT utc_day,reserved_micro_usd FROM reflection_daily_cost_v1 WHERE id=1').fetchone())
             previous = 0
             if row is not None:
-                try:
-                    previous_day = date.fromisoformat(row['utc_day']).isoformat()
-                except (ValueError, TypeError):
-                    raise MemoryFailure('reflection_daily_budget_unavailable') from None
-                if previous_day != row['utc_day'] or type(row['reserved_micro_usd']) is not int or row['reserved_micro_usd'] < 0:
-                    raise MemoryFailure('reflection_daily_budget_unavailable')
+                previous_day, previous_amount = row
                 if day < previous_day:
                     raise MemoryFailure('reflection_daily_clock_rollback')
                 if day == previous_day:
-                    previous = row['reserved_micro_usd']
+                    previous = previous_amount
             total = previous + amount
             if total > limit:
                 raise MemoryFailure('reflection_daily_budget')

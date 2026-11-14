@@ -231,6 +231,7 @@ class ServiceTests(unittest.TestCase):
         changed = self.client.call(self.access, 'cli', status)
         self.assertEqual(changed['configuration_validation']['reflection'], 'restart_required')
         self.assertEqual(changed['configuration_validation']['extraction'], 'restart_required')
+        self.assertEqual(changed['reflection_daily_budget'], {'state': 'restart_required'})
         self.assertNotIn(str(root), json.dumps(changed))
         self.assertNotIn('SYNTHETIC_KEY', json.dumps(changed))
         for command, value, code in (('reflect', {'query': '合成', 'allow_remote': True}, 'reflection_config_changed'),
