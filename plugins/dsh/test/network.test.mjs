@@ -11,6 +11,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let dailyBudget = { state: 'ready', utc_day: '2030-01-02', reserved_micro_usd: 120000, remaining_micro_usd: 380000, limit_micro_usd: 500000 };
   let graphRole = 'assistant';
   let graphConfirmation = 'not_recorded';
+  let graphMany = false;
   let personas = [
     { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
     { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
@@ -97,11 +98,15 @@ test('memory links use the confirmed profile page and re-read source on click', 
       conclusion: '合成观察', support: ['source-1'], counterevidence: ['source-2'],
     }] });
     if (body.view === 'network_graph' && delayGraph) return new Promise(resolve => { resolveGraph = resolve; });
+    if (body.view === 'network_graph' && graphMany) return respond({ next_offset: null, nodes: Array.from({ length: 15 }, (_, index) => ({
+      kind: 'fact', id: 'many-' + index, revision: 1, state: 'current', label: '合成条目 ' + index,
+      edges: [{ source_id: 'many-source-' + index, kind: 'evidence', role: 'user' }],
+    })) });
     if (body.view === 'network_graph') return respond({ next_offset: null, nodes: [
       { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', confirmation_source: graphConfirmation, label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'persona', id: 'tone', revision: 1, state: 'current', label: '合成人设语气', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'episode', id: 'episode-1', revision: null, state: 'pending_review', label: '合成经历主题', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
-      { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
+      { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }, { source_id: 'source-2', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'topic', id: 't', revision: 1, state: 'valid', inference: true, label: '合成主题', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
     ] });
@@ -130,6 +135,11 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (Array.isArray(node)) { for (const child of node) { const found = find(child, predicate); if (found) return found; } return undefined; }
     if (predicate(node)) return node;
     for (const child of node.children ?? []) { const found = find(child, predicate); if (found) return found; }
+  };
+  const all = (node, predicate) => {
+    if (!node || typeof node !== 'object') return [];
+    if (Array.isArray(node)) return node.flatMap(child => all(child, predicate));
+    return [...(predicate(node) ? [node] : []), ...(node.children ?? []).flatMap(child => all(child, predicate))];
   };
   let tree = render(); await flush(); tree = render();
   find(tree, node => node.type === 'button' && node.children.includes('privateOpen')).props.onClick();
@@ -292,6 +302,14 @@ test('memory links use the confirmed profile page and re-read source on click', 
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
   assert.equal(find(tree, node => node.props?.title === 'history'), undefined);
   assert.ok(find(tree, node => node.props?.className === 'en-network-cluster'));
+  const overview = find(tree, node => node.props?.className === 'en-map');
+  assert.ok(overview);
+  assert.equal(find(overview, node => node.props?.className === 'en-map-viewport').props.tabIndex, 0);
+  assert.equal(all(overview, node => node.type === 'rect').length, 6);
+  assert.equal(all(overview, node => node.type === 'circle').length, 2);
+  assert.equal(all(overview, node => node.type === 'path').length, 7);
+  assert.equal(all(overview, node => node.props?.className === 'en-map-line en-map-counter').length, 1);
+  assert.ok(find(overview, node => node.children?.includes('graphMapHelp')));
   assert.ok(find(tree, node => node.children?.includes('合成事实')));
   assert.ok(find(tree, node => node.children?.includes('合成人设语气')));
   assert.ok(find(tree, node => node.children?.includes(' · persona_tone')));
@@ -306,6 +324,14 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes(' · confirmationSource: not_recorded')));
   assert.ok(find(tree, node => node.children?.includes('confirmationHelp')));
   assert.ok(calls.some(call => call.view === 'network_graph'));
+  graphMany = true;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  const bounded = find(tree, node => node.props?.className === 'en-map');
+  assert.equal(all(bounded, node => node.type === 'rect').length, 12);
+  assert.equal(all(bounded, node => node.type === 'circle').length, 12);
+  assert.ok(find(tree, node => node.children?.includes('合成条目 14')));
+  graphMany = false;
   graphConfirmation = 'recorded';
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
@@ -328,6 +354,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.equal(calls.filter(call => call.view === 'network_graph').at(-1).category, null);
   delayGraph = true; windowListeners.get('focus')(); tree = render(); await flush();
   assert.ok(resolveGraph);
+  tree = render();
+  assert.equal(find(tree, node => node.props?.className === 'en-map'), undefined);
   delayGraph = false; windowListeners.get('focus')(); tree = render(); await flush();
   resolveGraph(Response.json({ result: { value: { next_offset: null, nodes: [{ kind: 'fact', id: 'old',
     revision: 1, state: 'current', label: '过期图', edges: [{ source_id: 'source-1', kind: 'evidence' }] }] }, token: 'a'.repeat(64) } }));

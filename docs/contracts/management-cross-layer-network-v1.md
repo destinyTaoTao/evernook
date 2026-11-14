@@ -24,6 +24,22 @@ installed dsh component checks and the non-editable wheel checks passed;
 strict management mypy and both package builds passed. Tests use synthetic
 data and do not establish actual browser or large-store acceptance.
 
+dsh preview.59 adds a bounded, static overview above the current-page source
+cards. Each displayed memory is drawn once and connected to its visible
+sources; counterevidence uses dashed lines. It displays at most the first 12
+sources and 12 connected memories, with shortened labels. The complete
+current-page source cards and keyboard-operable source reads remain below;
+neither view claims a graph of the entire database. The diagram is decorative
+for assistive technology because the same relations and controls are in the
+accessible list. It uses the same authorized, expiring page data and does not
+perform extra reads or change source authorization.
+
+#202 source and installed preview.59 component tests passed for shared-node
+edges, dashed counterevidence, the 12-node/source bound, the full page list,
+focusable scrolling, and clearing an in-flight stale graph. Existing simulated
+lease-expiry/background tests and the dsh build passed. No actual browser,
+screen-reader or physical device acceptance was performed in this increment.
+
 Core 0.1.68 / dsh preview.58 adds pending review episode candidates. Each is
 validated by the same canonical source/excerpt reconstruction as episode-read,
 inside the authorized graph snapshot. A rejected, stale or forged candidate is
