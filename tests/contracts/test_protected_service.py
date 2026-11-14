@@ -94,6 +94,50 @@ class ProtectedServiceTests(unittest.TestCase):
         for secret in secrets:
             self.assertNotIn(secret.encode(), contents)
 
+    def test_structured_private_capture_reports_gaps_without_submitting_materials(self) -> None:
+        from evernook import Capture
+        client = self.start(configured=True)
+        receipt = client.protected_capture(self.owner, Capture(self.event, 'message'))
+        self.assertEqual(receipt['status'], 'saved')
+        supported = {'event': asdict(replace(self.event, source=replace(self.event.source, event='cli-supported'))), 'kind': 'message'}
+        saved = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-protected-capture', '--config', str(self.config),
+            '--access', str(self.owner_path)], input=json.dumps(supported).encode(), capture_output=True, timeout=30)
+        self.assertEqual(saved.returncode, 0, saved.stderr.decode(errors='replace'))
+        self.assertEqual(json.loads(saved.stdout)['result']['status'], 'saved')
+        self.assertNotIn(self.event.text.encode(), saved.stdout + saved.stderr)
+        value = {'event': asdict(replace(self.event, source=replace(self.event.source, event='unsupported'))),
+                 'kind': 'message', 'attachments': [{'label': 'synthetic-private-label-222',
+                 'data': 'synthetic-private-attachment-222'}], 'text_chunks': ['synthetic-private-stream-222']}
+        result = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-protected-capture', '--config', str(self.config),
+            '--access', str(self.owner_path)], input=json.dumps(value).encode(), capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        parsed = json.loads(result.stdout)['result']
+        self.assertEqual(parsed['status'], 'not_submitted')
+        self.assertEqual(parsed['gaps'], ['private_attachments_unsupported', 'private_stream_unsupported'])
+        self.assertNotIn(b'synthetic-private', result.stdout + result.stderr)
+        self.assertEqual(client.call(self.owner, 'search', {'query': 'synthetic-private-attachment-222'})['hits'], [])
+        self.stop()
+        contents = b''.join(path.read_bytes() for root in (self.root / 'ordinary', self.root / 'inbox')
+                            for path in root.rglob('*') if path.is_file() and not path.name.endswith('.lock'))
+        self.assertNotIn(b'synthetic-private-attachment-222', contents)
+        self.assertNotIn(b'synthetic-private-stream-222', contents)
+
+    def test_structured_capture_response_loss_after_commit_is_unknown_then_idempotent(self) -> None:
+        from evernook import Capture
+        client = self.start(configured=True)
+        original = client.call
+        def committed_then_canceled(*args, **kwargs):  # type: ignore[no-untyped-def]
+            original(*args, **kwargs)
+            raise MemoryFailure('service_canceled')
+        request = Capture(self.event, 'message')
+        with patch.object(client, 'call', side_effect=committed_then_canceled):
+            result = client.protected_capture(self.owner, request)
+        self.assertEqual(result['status'], 'outcome_unknown')
+        self.assertIsNone(result['protected_original_saved'])
+        retry = client.protected_capture(self.owner, request)
+        self.assertEqual(retry['status'], 'saved')
+        self.assertEqual(len(client.protected_inventory(self.owner)['objects']), 1)
+
     def test_private_session_cli_rejects_invalid_resume_before_window(self) -> None:
         self.start(configured=True)
         result = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-private-session',

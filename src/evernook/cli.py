@@ -124,6 +124,7 @@ def _parser() -> Parser:
         ("service-pair", "Pair a client through the service using an existing administrator"),
         ("service-pair-unlock", "Clear service pairing lockout using an existing administrator"),
         ('service-protected-receive', 'Trusted local private Event from stdin; service configuration required'),
+        ('service-protected-capture', 'Trusted local structured private capture from stdin'),
         ('service-protected-inventory', 'Administrator inventory of the bound encrypted inbox'),
         ('service-protected-links', 'Administrator inventory of protected ledger links'),
         ('service-protected-show-local', 'Request one native password-confirmed local display'),
@@ -816,7 +817,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-private-session', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-protected-capture', 'service-private-window', 'service-private-session', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -828,6 +829,25 @@ def main() -> None:
         elif args.command == 'service-protected-receive':
             access = client_access(args.config, args.access)
             result = ServiceClient(args.config).call(access, 'protected-receive', {'event': _input()})
+        elif args.command == 'service-protected-capture':
+            from .models import AttachmentInput, Capture
+            access = client_access(args.config, args.access)
+            value = _input()
+            allowed = {'event', 'kind', 'input_id', 'tool_name', 'attachments', 'provided', 'text_chunks'}
+            if set(value) - allowed or not isinstance(value.get('event'), dict):
+                raise MemoryFailure('invalid_private_capture')
+            event = dict(value['event'])
+            event['source'] = Source(**event['source'])
+            attachments = value.get('attachments', [])
+            chunks = value.get('text_chunks')
+            if not isinstance(attachments, list) or len(attachments) > 16 or any(not isinstance(item, dict) for item in attachments):
+                raise MemoryFailure('invalid_private_capture')
+            if chunks is not None and (not isinstance(chunks, list) or len(chunks) > 4096):
+                raise MemoryFailure('invalid_private_capture')
+            capture_request = Capture(Event(**event), value.get('kind', 'message'), value.get('input_id'), value.get('tool_name'),
+                tuple(AttachmentInput('', '', '', None) for _ in attachments), value.get('provided', True),
+                tuple(chunks) if chunks is not None else None)
+            result = ServiceClient(args.config).protected_capture(access, capture_request)
         elif args.command in ('service-protected-inventory', 'service-protected-links'):
             access = client_access(args.config, args.access)
             value = _input()

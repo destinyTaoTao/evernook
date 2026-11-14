@@ -84,6 +84,14 @@ class ServiceClient:
             raise MemoryFailure('service_invalid_response')
         return value
 
+    def protected_capture(self, access: Access, request: object, *, timeout: float = 30,
+                          cancel: threading.Event | None = None) -> dict[str, Any]:
+        from .models import Capture
+        from .private_capture_receipt import capture
+        if not isinstance(request, Capture):
+            raise MemoryFailure('invalid_private_capture')
+        return capture(self, access, request, timeout=timeout, cancel=cancel)
+
     def protected_inventory(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
         value = self.call(access, 'protected-inventory', {'after': after, 'limit': limit})
         if not isinstance(value, dict):
