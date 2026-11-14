@@ -94,6 +94,7 @@ class LocalDisplayRequest:
         _identifier(purpose)
         if not purpose.strip():
             raise MemoryFailure("invalid_display_purpose")
+        inbox.runtime._require_scope(access, 'recall', 'vault_local_display')
         receipt = inbox.status(access, object_id)
         if receipt.state != "protected_linked" or receipt.message is None:
             raise MemoryFailure("protected_link_unavailable")
@@ -140,7 +141,7 @@ class LocalDisplayRequest:
                 raise MemoryFailure("local_display_expired")
             self._used = True  # Wrong password, revoked state, and downstream failure also consume this request.
         try:
-            self.inbox.runtime._authorize(self.access)
+            self.inbox.runtime._require_scope(self.access, 'recall', 'vault_local_display')
             private = _unlock(self.inbox, password)
             # ACL, derivation, verification and audit all precede the short ordinary write lock.
             with self.inbox._connection() as db:
@@ -164,7 +165,7 @@ class LocalDisplayRequest:
                 except (CryptoError, ValueError, TypeError, KeyError):
                     raise MemoryFailure("protected_object_corrupt") from None
             self._best_effort_audit("authorization_attempted")
-            self.inbox.runtime._authorize(self.access)
+            self.inbox.runtime._require_scope(self.access, 'recall', 'vault_local_display')
             with self.inbox.runtime._connection() as core:
                 core.execute("BEGIN IMMEDIATE")
                 state = self.inbox.runtime._state(core, self.message_id)
@@ -210,6 +211,13 @@ class LocalVaultWindow:
 
     def _focus_lost(self, event: tk.Event[tk.Misc]) -> None:
         if event.widget is self.root:
+            self.root.after(100, self._check_focus)
+
+    def _check_focus(self) -> None:
+        if self._closed:
+            return
+        focused = self.root.focus_displayof()
+        if focused is None or focused.winfo_toplevel() is not self.root:
             self.close()
 
     def _poll(self) -> None:

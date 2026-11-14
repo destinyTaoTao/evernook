@@ -255,6 +255,21 @@ class ProtectedServiceTests(unittest.TestCase):
             client.protected_inventory(self.owner)
         with self.assertRaisesRegex(MemoryFailure, 'protected_service_unconfigured'):
             client.protected_links(self.owner)
+        with self.assertRaisesRegex(MemoryFailure, 'protected_service_unconfigured'):
+            client.protected_show_local(self.owner, '00000000-0000-4000-8000-000000000000', 'synthetic')
+
+    def test_service_local_display_rejects_other_entry_and_plaintext_transport(self) -> None:
+        client = self.start(configured=True)
+        receipt = client.protected_receive(self.owner, self.event)
+        with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
+            client.protected_show_local(self.reader, receipt['object_id'], 'synthetic local review')
+        endpoint = json.loads((self.config.parent / 'memory-service.json').read_text(encoding='utf-8'))
+        with socket.create_connection(('127.0.0.1', endpoint['port']), timeout=5) as connection:
+            deadline = time.monotonic() + 5
+            authenticate_client(connection, bytes.fromhex(endpoint['key']), deadline)
+            send_json(connection, {'version': 1, 'access': asdict(self.owner), 'operation': 'protected-show-local',
+                'arguments': {'object_id': receipt['object_id'], 'purpose': 'synthetic'}}, deadline)
+            self.assertEqual(receive_json(connection, deadline)['error']['code'], 'protected_encryption_required')
 
     def test_missing_client_crypto_never_sends_private_request(self) -> None:
         client = self.start(configured=True)

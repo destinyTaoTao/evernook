@@ -3,14 +3,17 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
+import io
+import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import tkinter as tk
 import unittest
 from unittest.mock import patch
 
-from evernook import Change, Event, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Change, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.protected import initialize_protected_inbox
 from evernook.vault_local import LocalDisplayRequest, LocalVaultWindow
 
@@ -136,6 +139,68 @@ class LocalVaultTests(unittest.TestCase):
             db.execute("UPDATE protected_links_v1 SET reference='{}'")
         with self.assertRaisesRegex(MemoryFailure, "vault_request_changed"):
             changed.display_once(self.password, lambda _: self.fail("changed reference displayed"))
+
+    def test_service_owned_broker_delivers_only_to_its_native_pipe(self) -> None:
+        from evernook.service_vault import show
+        class KeepBytesIO(io.BytesIO):
+            def write(stream, data: bytes) -> int:
+                if b'synthetic-local-only-sentinel-123' in data:
+                    # A slow native pipe must never retain the ledger write lock.
+                    with closing(sqlite3.connect(self.runtime.root / 'memory.sqlite3', timeout=0, isolation_level=None)) as db:
+                        db.execute('BEGIN IMMEDIATE')
+                        db.execute('ROLLBACK')
+                return super().write(data)
+            def close(self) -> None: pass
+        class Child:
+            def __init__(self, password: str):
+                self.stdin = KeepBytesIO()
+                self.stdout = io.BytesIO(json.dumps({'password': password}).encode() + b'\n')
+                self.returncode = 0
+            def poll(self) -> int: return 0
+            def wait(self, timeout: float) -> int: return 0
+            def kill(self) -> None: pass
+        gate = threading.BoundedSemaphore(1)
+        real_popen = __import__('subprocess').Popen
+        for password, expected in ((self.password.decode(), True), ('synthetic-wrong-password', False)):
+            child = Child(password)
+            request = self.request()
+            def spawn_worker(*args: object, **kwargs: object) -> object:
+                command = args[0]
+                if isinstance(command, list) and 'evernook.vault_display_worker' in command:
+                    return child
+                return real_popen(*args, **kwargs)
+            with patch('evernook.service_vault.LocalDisplayRequest', return_value=request), \
+                    patch('evernook.service_vault.subprocess.Popen', side_effect=spawn_worker):
+                outcome = show(self.inbox, self.access, self.receipt.object_id, '合成本地核对', gate=gate, cancel=None)
+            payload = child.stdin.getvalue()
+            self.assertEqual(b'synthetic-local-only-sentinel-123' in payload, expected)
+            self.assertNotIn('synthetic-local-only-sentinel-123', json.dumps(outcome))
+            self.assertNotIn(password, json.dumps(outcome))
+        gate.acquire()
+        try:
+            with self.assertRaisesRegex(MemoryFailure, 'local_display_busy'):
+                show(self.inbox, self.access, self.receipt.object_id, '合成本地核对', gate=gate, cancel=None)
+        finally: gate.release()
+        canceled = threading.Event(); canceled.set()
+        request = self.request()
+        with patch('evernook.service_vault.LocalDisplayRequest', return_value=request), \
+                patch('evernook.service_vault.subprocess.Popen') as spawn:
+            with self.assertRaisesRegex(MemoryFailure, 'local_display_canceled'):
+                show(self.inbox, self.access, self.receipt.object_id, '合成本地核对', gate=gate, cancel=canceled)
+            spawn.assert_not_called()
+
+    def test_recall_scope_revoked_during_unlock_prevents_local_display(self) -> None:
+        import evernook.vault_local as helper
+        request = self.request()
+        original = helper._unlock
+        def revoke_during_unlock(*args: object) -> object:
+            private = original(self.inbox, self.password)
+            pair_client(self.runtime.root / 'runtime.json', client_id='synthetic', entry='synthetic',
+                access_path=self.runtime.root / 'mcp-access-synthetic.json', scopes=('capture',))
+            return private
+        with patch.object(helper, '_unlock', revoke_during_unlock):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                request.display_once(self.password, lambda _: self.fail('revoked scope displayed secret'))
 
     def test_ordinary_writer_can_commit_during_local_authorization_audit_before_display_lock(self) -> None:
         request = self.request()

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
-PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links'})
+PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-decide", "candidate-list", "fact-query",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
@@ -67,6 +67,13 @@ class ServiceClient:
 
     def protected_links(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
         value = self.call(access, 'protected-links', {'after': after, 'limit': limit})
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def protected_show_local(self, access: Access, object_id: str, purpose: str, *,
+                             cancel: threading.Event | None = None) -> dict[str, Any]:
+        value = self.call(access, 'protected-show-local', {'object_id': object_id, 'purpose': purpose}, timeout=170, cancel=cancel)
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -134,7 +141,7 @@ class ServiceClient:
 
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
              context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
-             protected_inbox: ProtectedInbox | None = None) -> object:
+             protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -164,6 +171,14 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if operation == 'protected-inventory':
             return protected_inbox.inventory(access, after=arguments['after'], limit=arguments['limit'])
         return protected_inbox.inventory_links(access, after=arguments['after'], limit=arguments['limit'])
+    if operation == 'protected-show-local':
+        if protected_inbox is None or display_gate is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        if (set(arguments) != {'object_id', 'purpose'} or not isinstance(arguments['object_id'], str)
+                or not isinstance(arguments['purpose'], str)):
+            raise MemoryFailure('invalid_arguments')
+        from .service_vault import show
+        return show(protected_inbox, access, arguments['object_id'], arguments['purpose'], gate=display_gate, cancel=cancel)
     if operation in ("pair-unlock", "pair-configure"):
         from .runtime import unlock_pairing, configure_lockout
         runtime._require_scope(access, "admin", "service_pair_control")
@@ -297,6 +312,7 @@ class _Server(socketserver.ThreadingTCPServer):
         self.key = key
         self.single_writer = False
         self.protected_inbox: ProtectedInbox | None = None
+        self.display_gate = threading.BoundedSemaphore(1)
         self.context_config = context_config
         self.embedding_config = embedding_config
         self.reflector: ReflectionEngine | None = None
@@ -374,7 +390,7 @@ class _Handler(socketserver.BaseRequestHandler):
             try:
                 result = dispatch(server.runtime, request, cancel=cancel,
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
-                    protected_inbox=server.protected_inbox)
+                    protected_inbox=server.protected_inbox, display_gate=server.display_gate)
             finally:
                 done.set()
                 watcher.join()
