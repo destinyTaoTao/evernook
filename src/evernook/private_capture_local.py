@@ -20,8 +20,10 @@ class LocalPrivateCapture:
     """Freeze one event across retries; closing an in-flight operation is never reported as rollback."""
 
     def __init__(self, client: _ProtectedClient, access: Access, entry: str, *,
-                 session_id: str | None = None, event_id: str | None = None):
+                 session_id: str | None = None, event_id: str | None = None, sequence: int = 0):
         _identifier(entry)
+        if type(sequence) is not int or not 0 <= sequence < 100:
+            raise MemoryFailure('invalid_private_source')
         if (session_id is None) != (event_id is None):
             raise MemoryFailure('invalid_private_source')
         try:
@@ -31,6 +33,7 @@ class LocalPrivateCapture:
             raise MemoryFailure('invalid_private_source') from None
         self.client, self.access, self.entry = client, access, entry
         self.session_id, self.event_id = session_id or str(uuid4()), event_id or str(uuid4())
+        self.sequence = sequence
         self._event: Event | None = None
         self._state = 'canceled'
         self._busy = False
@@ -53,7 +56,7 @@ class LocalPrivateCapture:
                 raise MemoryFailure('private_capture_content_changed')
             if self._event is None:
                 self._event = Event(Source(self.entry, self.session_id, 'private', self.event_id),
-                                    'user', 0, None, 'complete', text, sensitive=True)
+                                    'user', self.sequence, None, 'complete', text, sensitive=True)
             event = self._event
             self._busy = True
             self._state = 'outcome_unknown'

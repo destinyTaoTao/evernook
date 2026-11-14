@@ -131,6 +131,7 @@ def _parser() -> Parser:
         ('service-transcription-submit', 'Trusted host: submit bounded ASR material from JSON stdin'),
         ('service-transcription-read', 'Read current ASR material provenance by message ID'),
         ('service-private-window', 'Enter one private note in a dedicated local window'),
+        ('service-private-session', 'Record multiple private notes in a dedicated local window'),
         ("manage", "Trusted local UI read/preview/confirm; never a model tool"),
         ("host-recovery", "Trusted host review and read-only artifact receipts; never a model tool"),
         ("mark-important", "Trusted exact important-word mark using JSON stdin"),
@@ -231,10 +232,12 @@ def _parser() -> Parser:
             command.add_argument("--client-id", required=True)
             command.add_argument("--entry", required=True)
             command.add_argument("--scopes")
-        if name == 'service-private-window':
+        if name in ('service-private-window', 'service-private-session'):
             command.add_argument('--entry', required=True)
             command.add_argument('--session-id')
             command.add_argument('--event-id')
+            if name == 'service-private-session':
+                command.add_argument('--sequence', type=int, default=0)
         if name == 'service-protected-show-local':
             command.add_argument('--object-id', required=True)
             command.add_argument('--purpose', required=True)
@@ -813,7 +816,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-private-session', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach', 'backup-vault-workspaces', 'backup-vault-workspace-clean'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)
@@ -853,6 +856,15 @@ def main() -> None:
             request = LocalPrivateCapture(ServiceClient(args.config), access, args.entry,
                                           session_id=args.session_id, event_id=args.event_id)
             result = show_private_capture(request)
+        elif args.command == 'service-private-session':
+            try:
+                from .private_session_local import LocalPrivateSession, show_private_session
+            except ImportError:
+                raise MemoryFailure('private_capture_unavailable') from None
+            access = client_access(args.config, args.access)
+            session = LocalPrivateSession(ServiceClient(args.config), access, args.entry,
+                session_id=args.session_id, pending_event_id=args.event_id, sequence=args.sequence)
+            result = show_private_session(session)
         elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
             if args.command in {'extract', 'extract-preferences'} and args.extraction_config is not None:
                 raise MemoryFailure('service_policy_mismatch')

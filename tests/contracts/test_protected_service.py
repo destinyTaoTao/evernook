@@ -76,6 +76,32 @@ class ProtectedServiceTests(unittest.TestCase):
             time.sleep(0.05)
         return ServiceClient(self.config)
 
+    def test_private_recording_session_saves_multiple_encrypted_events(self) -> None:
+        from evernook.private_session_local import LocalPrivateSession
+        client = self.start(configured=True)
+        session = LocalPrivateSession(client, self.owner, 'owner')
+        secrets = ('synthetic-private-session-first-219', 'synthetic-private-session-second-219')
+        for secret in secrets:
+            session.submit(secret)
+        summary = session.close()
+        self.assertEqual(summary['saved_count'], 2)
+        self.assertNotIn('synthetic-private-session-', json.dumps(summary))
+        for secret in secrets:
+            self.assertEqual(client.call(self.owner, 'search', {'query': secret})['hits'], [])
+        self.stop()
+        contents = b''.join(path.read_bytes() for root in (self.root / 'ordinary', self.root / 'inbox')
+                            for path in root.rglob('*') if path.is_file() and not path.name.endswith('.lock'))
+        for secret in secrets:
+            self.assertNotIn(secret.encode(), contents)
+
+    def test_private_session_cli_rejects_invalid_resume_before_window(self) -> None:
+        self.start(configured=True)
+        result = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-private-session',
+            '--config', str(self.config), '--access', str(self.owner_path), '--entry', 'owner', '--sequence', '100'],
+            capture_output=True, timeout=20)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'invalid_private_source', result.stdout)
+
     def test_explicit_service_capture_encrypts_and_never_returns_plaintext(self) -> None:
         client = self.start(configured=True)
         self.assertTrue(client.call(self.owner, 'status', {})['service']['protected_capture'])
