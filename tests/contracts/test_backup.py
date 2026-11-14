@@ -201,6 +201,10 @@ class BackupTests(unittest.TestCase):
         (root / 'backup.json').write_text(_json(header), encoding='utf-8')
         archive = restore_backup(root, self.root / 'legacy-review', Path(self.keys.recovery_file), self.password)
         self.assertEqual(archive.status().recovery_state, 'review_required')
+        from evernook.offline_recovery import OfflineRecovery
+        with self.assertRaisesRegex(MemoryFailure, 'backup_runtime_provenance_required'):
+            OfflineRecovery(root, self.root / 'legacy-runtime', Path(self.keys.recovery_file), self.password)
+        self.assertFalse((self.root / 'legacy-runtime').exists())
 
     def test_authentication_archive_permission_existing_targets_and_nested_paths_are_rejected(self) -> None:
         wrong = Access(self.access.client_id, "synthetic-wrong-token")

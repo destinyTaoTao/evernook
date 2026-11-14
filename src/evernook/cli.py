@@ -98,6 +98,10 @@ def _parser() -> Parser:
     backup_restore.add_argument("--source", type=Path, required=True)
     backup_restore.add_argument("--destination", type=Path, required=True)
     backup_restore.add_argument("--recovery-file", type=Path, required=True)
+    backup_runtime = commands.add_parser('backup-restore-runtime', help='Review and explicitly publish an ordinary snapshot on this device')
+    backup_runtime.add_argument('--source', type=Path, required=True)
+    backup_runtime.add_argument('--destination', type=Path, required=True)
+    backup_runtime.add_argument('--recovery-file', type=Path, required=True)
     backup_retain = commands.add_parser("backup-retain", help="Plan/apply retention while preserving a locally verified recovery anchor")
     backup_retain.add_argument("--root", type=Path, required=True)
     backup_retain.add_argument("--key-dir", type=Path, required=True)
@@ -329,6 +333,16 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             if password != getpass.getpass("Repeat recovery password: ").encode("utf-8"):
                 raise MemoryFailure("recovery_password_mismatch")
             return initialize_backup_keys(args.key_dir, password)
+        if args.command == 'backup-restore-runtime':
+            from .offline_recovery import ACKNOWLEDGEMENT, OfflineRecovery
+            with OfflineRecovery(args.source, args.destination, args.recovery_file, password) as recovery:
+                print(json.dumps(recovery.review(), ensure_ascii=False), file=sys.stderr)
+                print('Later changes and deletions are unknown; vault contents are not restored.', file=sys.stderr)
+                try:
+                    acknowledgement = input('Type ' + ACKNOWLEDGEMENT + ' to open the ordinary snapshot: ')
+                except EOFError:
+                    raise MemoryFailure('backup_confirmation_required') from None
+                return recovery.publish(acknowledgement)
         return restore_backup(args.source, args.destination, args.recovery_file, password).status()
     if args.command == "init":
         config, access = initialize(args.data_dir, client_id=args.client_id, entry=args.entry,
