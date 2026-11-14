@@ -446,6 +446,8 @@ class ManagementTests(unittest.TestCase):
                         action="publish", confirmation_id=span.message_id)
         result = self.ui.read(self.access, view="network_graph", entry="owner", session_id="synthetic-session")
         self.assertEqual({node["kind"] for node in result["nodes"]}, {"profile", "fact", "observation"})
+        self.assertEqual({node['kind'] for node in self.ui.read(self.access, view='network_graph', category='interest')['nodes']}, {'profile'})
+        self.assertEqual({node['kind'] for node in self.ui.read(self.access, view='network_graph', category='experience')['nodes']}, {'observation'})
         self.assertTrue(all(span.message_id in {edge["source_id"] for edge in node["edges"]} for node in result["nodes"]))
         self.assertNotIn("expected_text", json.dumps(result, ensure_ascii=False))
         self.assertEqual(self.ui.read(self.access, view="network_graph", entry="other")["nodes"], [])

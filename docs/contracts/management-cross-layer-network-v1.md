@@ -21,6 +21,20 @@ source. The display joins shared source IDs among nodes on this page only; it
 does not claim a complete graph across pages. A source may connect multiple
 types without implying the linked conclusions are equivalent.
 
+dsh preview.48 exposes an exact category identifier input for the cross-layer,
+profile, fact and observation network views, including custom categories. The
+filter is applied on search and reset when changing layer or tab; empty input
+means all categories. The page explains that filtering by category excludes
+topics because topic nodes have no category. Time, entry, session and sparse
+slot pagination keep the semantics above. The input uses the same authorized
+versioned read and fail-closed lease as the rest of the page.
+
+#187 synthetic component tests passed for source and installed preview.48,
+including custom identifiers, clearing the filter and changing layers; two
+backend tests covered category selection and topic exclusion. TypeScript build,
+client syntax and package installation passed. No actual browser UI acceptance
+or daily admission is claimed for this change.
+
 Source and approval checks are performed at read time. In the dsh preview,
 versioned page, source and history reads use authenticated fingerprint checks
 and a 12-second fail-closed lease. A change triggers refresh; disconnect,

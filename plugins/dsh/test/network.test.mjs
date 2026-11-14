@@ -109,7 +109,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   };
   const window = { addEventListener(name, callback) { windowListeners.set(name, callback); }, removeEventListener(name) { windowListeners.delete(name); },
     __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => React); } } };
-  vm.runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'),
+  vm.runInNewContext(readFileSync(process.env.EVERNOOK_TEST_CLIENT_JS ?? new URL('../client.js', import.meta.url), 'utf8'),
     { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date, performance, crypto: { randomUUID: () => 'synthetic-topic-uuid' }, setTimeout: () => 1, clearTimeout() {} });
   plugin.apply(ctx);
   const render = () => { cursor = 0; const outer = page({ host: 'main' }); return outer.type(outer.props); };
@@ -259,6 +259,15 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('合成观察')));
   assert.ok(find(tree, node => node.children?.includes('合成主题')));
   assert.ok(calls.some(call => call.view === 'network_graph'));
+  assert.ok(find(tree, node => node.children?.includes('networkCategoryHelp')));
+  find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: '  custom-category  ' } });
+  tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.view === 'network_graph' && call.category === 'custom-category' && call.offset === 0));
+  find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: '' } });
+  tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  tree = render(); await flush(); tree = render();
+  assert.equal(calls.filter(call => call.view === 'network_graph').at(-1).category, null);
   delayGraph = true; windowListeners.get('focus')(); tree = render(); await flush();
   assert.ok(resolveGraph);
   delayGraph = false; windowListeners.get('focus')(); tree = render(); await flush();
@@ -308,6 +317,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('合成事实')));
   assert.ok(find(tree, node => node.children?.includes('disputed')));
   assert.ok(calls.some(call => call.view === 'network_facts'));
+  find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: 'milestone' } });
+  tree = render(); find(tree, node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.view === 'network_facts' && call.category === 'milestone'));
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterEntry').props.onChange({ target: { value: 'dsh' } });
   find(tree, node => node.type === 'input' && node.props['aria-label'] === 'filterSession').props.onChange({ target: { value: 'evidence-session' } });
   const springTransition = process.env.TZ === 'America/New_York';
@@ -326,6 +339,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   }
   layer.props.onChange({ target: { value: 'observations' } });
   tree = render(); await flush(); tree = render();
+  assert.equal(find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.value, '');
+  assert.equal(calls.filter(call => call.view === 'network_observations').at(-1).category, null);
   assert.ok(find(tree, node => node.children?.includes('合成观察')));
   assert.ok(find(tree, node => node.children?.includes('inference')));
   const counter = find(tree, node => node.type === 'button' && node.children?.includes('counterevidence 1'));

@@ -57,6 +57,7 @@ class TopicViewTests(unittest.TestCase):
         self.views.refresh(self.access, 'wetland', timeout=10)
         ui = MemoryManagement(self.runtime, self.views)
         page = ui.read_versioned(self.access, view='network_graph', entry='owner', session_id='history')
+        self.assertFalse(ui.read(self.access, view='network_graph', category='interest')['nodes'])
         topics = [node for node in page['value']['nodes'] if node['kind'] == 'topic']
         self.assertEqual(len(topics), 1)
         self.assertEqual(topics[0]['label'], '湿地经历')

@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
     graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察', topic: '主题视图', valid: '有效', conflict: '冲突',
     topic_settings: '专题设置', topicNew: '新建专题', topicEdit: '编辑专题', topicTitle: '标题', topicPurpose: '用途', topicQuery: '检索问题', topicEntries: '入口（每行一个，留空表示不限）', topicSessions: '会话范围（JSON 数组，每项为 [入口, 会话]）', topicSources: '来源 ID（每行一个）', topicObservations: '观察键（每行一个）', topicSince: '起始时间（ISO，含）', topicUntil: '结束时间（ISO，不含）', topicTTL: '有效秒数', topicInterval: '刷新间隔秒数', topicMaxSources: '最大来源数', topicMaxChars: '最大字符数', topicPolicy: '策略版本', topicPause: '暂停刷新', topicResume: '恢复刷新', topicDelete: '删除专题', topicConfirm: '确认更改专题', topicControlHelp: '只更改派生专题，不删除原始记录。操作结果不确定时请刷新核对，勿重复新建。', topicUnknown: '未能确认专题操作结果。请核对刷新后的列表；新建失败时也可能已保存。', topicInvalid: '请检查专题范围和数值格式。', topicPending: '待刷新', topicPaused: '已暂停',
-    networkLayer: '记忆层', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
+    networkLayer: '记忆层', networkCategory: '类别标识', networkCategoryHelp: '输入完整类别标识，例如 interest、milestone；留空显示全部。类别筛选会排除没有类别的主题。', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
     topic_needs_refresh: '需要刷新', topic_expired: '已过期', topic_pending: '待刷新', topic_paused: '已暂停', topic_empty: '暂无依据', topicEmpty: '尚无专题', topicEmptyHelp: '创建专题后，可以配置范围和刷新策略。', topicDeleteHelp: '专题定义和快照将永久删除；原始记录保留。',
     inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
@@ -56,7 +56,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
     graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation', topic: 'Topic view', valid: 'Valid', conflict: 'Conflict',
     topic_settings: 'Topic settings', topicNew: 'New topic', topicEdit: 'Edit topic', topicTitle: 'Title', topicPurpose: 'Purpose', topicQuery: 'Search question', topicEntries: 'Entries (one per line; empty means all)', topicSessions: 'Sessions (JSON array of [entry, session] pairs)', topicSources: 'Source IDs (one per line)', topicObservations: 'Observation keys (one per line)', topicSince: 'From time (ISO, inclusive)', topicUntil: 'Until time (ISO, exclusive)', topicTTL: 'Lifetime in seconds', topicInterval: 'Refresh interval in seconds', topicMaxSources: 'Maximum sources', topicMaxChars: 'Maximum characters', topicPolicy: 'Policy version', topicPause: 'Pause refresh', topicResume: 'Resume refresh', topicDelete: 'Delete topic', topicConfirm: 'Confirm topic change', topicControlHelp: 'Only the derived topic changes; original records remain. If the result is uncertain, refresh before creating another.', topicUnknown: 'The topic change could not be confirmed. Check the refreshed list; a new topic may already have been saved.', topicInvalid: 'Check the topic scope and numeric fields.', topicPending: 'Pending refresh', topicPaused: 'Paused',
-    networkLayer: 'Memory layer', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
+    networkLayer: 'Memory layer', networkCategory: 'Category identifier', networkCategoryHelp: 'Enter an exact category identifier, such as interest or milestone; leave empty for all. Topics have no category and are excluded when filtering.', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
     topic_needs_refresh: 'Needs refresh', topic_expired: 'Expired', topic_pending: 'Pending', topic_paused: 'Paused', topic_empty: 'No evidence', topicEmpty: 'No topics yet', topicEmptyHelp: 'Create a topic to configure its scope and refresh policy.', topicDeleteHelp: 'The topic definition and snapshots will be permanently deleted; original records remain.',
     inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
@@ -157,6 +157,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [tab, setTab] = useState(host === 'sidebar' ? 'timeline' : 'profiles');
       const [networkLayer, setNetworkLayer] = useState('graph');
       const [category, setCategory] = useState('');
+      const [networkCategoryInput, setNetworkCategoryInput] = useState('');
       const [query, setQuery] = useState('');
       const [filter, setFilter] = useState('');
       const [timelineInput, setTimelineInput] = useState({ entry: '', session: '', since: '', until: '' });
@@ -390,7 +391,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         if (recovery.proposal_id && !recovery.result) await call({ action: 'recovery_cancel', proposal_id: recovery.proposal_id }, signal);
         if (alive.current) setRecovery(null);
       }); }
-      const changeTab = name => { invalidateReads(); setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setFilter(''); setQuery(''); setTimelineInput({ entry: '', session: '', since: '', until: '' }); setTimelineFilter({ entry: '', session: '', since: '', until: '' }); setOffsets([0]); setNotice(''); };
+      const changeTab = name => { invalidateReads(); setData({ items: [] }); setLoading(true); setTab(name); setCategory(''); setNetworkCategoryInput(''); setFilter(''); setQuery(''); setTimelineInput({ entry: '', session: '', since: '', until: '' }); setTimelineFilter({ entry: '', session: '', since: '', until: '' }); setOffsets([0]); setNotice(''); };
       const sourceButtons = record => h('div', { className: 'en-actions' }, ...record.draft.sources.map((item, index) =>
         button(`${t('source')} ${index + 1}`, () => openSource(item.message_id), { key: item.message_id + ':' + index, disabled: busy })));
       const profileCard = record => h('article', { className: 'en-card', key: record.tag_id },
@@ -509,8 +510,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
           h(React.Fragment, null,
             tab === 'topic_settings' ? h('div', { className: 'en-toolbar' }, button(t('topicNew'), () => editTopic(null), { disabled: loading || busy }),
               button(t('refresh'), refresh, { disabled: loading || busy }), h('span', { className: 'en-muted' }, t('topicControlHelp'))) :
-            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); refresh(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
-              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { invalidateReads(); setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
+            h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); refresh(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); if (tab === 'network') setCategory(networkCategoryInput.trim()); setOffsets([0]); } },
+              tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { invalidateReads(); setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setNetworkCategoryInput(''); setOffsets([0]); } },
                 ...['graph', 'profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
               h('input', { value: query, maxLength: 256, placeholder: t('search'), 'aria-label': t('search'), onChange: event => setQuery(event.target.value) }),
               ...(tab === 'timeline' || tab === 'network' ? ['entry', ...(host === 'sidebar' && tab === 'timeline' ? [] : ['session']), 'since', 'until'].map(key => {
@@ -519,10 +520,13 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                   maxLength: key === 'entry' || key === 'session' ? 256 : undefined, value: timelineInput[key], 'aria-label': t(label),
                   onChange: event => setTimelineInput(value => ({ ...value, [key]: event.target.value })) }));
               }) : []),
-              tab !== 'timeline' && tab !== 'interests' && tab !== 'persona' && (tab !== 'network' || networkLayer === 'profiles') ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { refresh(); setCategory(event.target.value); setOffsets([0]); } },
+              tab === 'network' ? h('label', null, t('networkCategory'), h('input', { value: networkCategoryInput, maxLength: 256,
+                'aria-label': t('networkCategory'), onChange: event => setNetworkCategoryInput(event.target.value) })) : null,
+              tab !== 'timeline' && tab !== 'interests' && tab !== 'persona' && tab !== 'network' ? h('select', { value: category, 'aria-label': t('all'), onChange: event => { refresh(); setCategory(event.target.value); setOffsets([0]); } },
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
-            tab === 'network' ? h('p', { className: 'en-muted' }, t('networkHelp')) : null,
+            tab === 'network' ? h(React.Fragment, null, h('p', { className: 'en-muted' }, t('networkHelp')),
+              h('p', { className: 'en-muted' }, t('networkCategoryHelp'))) : null,
             tab === 'persona' ? h('div', { className: 'en-actions' }, h('p', { className: 'en-muted' }, t('personaIndependent')),
               button(t('personaNew'), () => setEditing({ kind: 'persona_set', block: 'identity', text: '' }), { disabled: busy || loading || !personaEditable }),
               !personaEditable ? h('p', { className: 'en-muted' }, t('personaUnsupported')) : null) : null,
