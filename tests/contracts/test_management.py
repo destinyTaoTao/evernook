@@ -459,6 +459,44 @@ class ManagementTests(unittest.TestCase):
         self.apply({"kind": "source_suppress", "message_id": span.message_id})
         self.assertEqual(self.ui.read(self.access, view="network_graph")["nodes"], [])
 
+    def test_graph_connects_persona_only_while_original_source_is_valid(self) -> None:
+        from evernook.persona import PersonaRegistry, PersonaSet
+        source = self.source('合成来源：希望语气温和。')
+        persona = PersonaRegistry(self.runtime)
+        persona.set(self.access, PersonaSet('graph-persona', 'tone', '合成人设：温和', source.message_id, 'synthetic-reason', 0))
+        graph = self.ui.read(self.access, view='network_graph', entry='owner', session_id='synthetic-session')
+        node, = graph['nodes']
+        self.assertEqual((node['kind'], node['id'], node['label'], node['revision']), ('persona', 'tone', '合成人设：温和', 1))
+        self.assertEqual(node['edges'], [{'source_id': source.message_id, 'kind': 'evidence', 'role': 'user'}])
+        self.assertNotIn('synthetic-reason', json.dumps(graph))
+        self.assertEqual(self.ui.read(self.access, view='network_graph', category='interest')['nodes'], [])
+        self.assertEqual(self.ui.read(self.access, view='network_graph', session_id='other')['nodes'], [])
+        self.apply({'kind': 'source_suppress', 'message_id': source.message_id})
+        self.assertEqual(self.ui.read(self.access, view='network_graph')['nodes'], [])
+        self.assertEqual(self.ui.read(self.access, view='persona')['items'][0]['text'], '合成人设：温和')
+
+    def test_graph_persona_pagination_revisions_clear_and_time_filters(self) -> None:
+        from evernook.persona import PersonaRegistry, PersonaSet
+        text = '合成来源：设置人设。'
+        receipt = self.runtime.submit(self.access, Event(Source('owner', 'persona-session', 'main', 'dated'),
+            'user', 1, '2024-01-01T12:00:00Z', 'complete', text))
+        persona = PersonaRegistry(self.runtime)
+        persona.set(self.access, PersonaSet('persona-identity', 'identity', '合成身份', receipt.message_id, 'synthetic', 0))
+        persona.set(self.access, PersonaSet('persona-tone', 'tone', '合成语气', receipt.message_id, 'synthetic', 0))
+        first = self.ui.read(self.access, view='network_graph', limit=1, entry='owner', session_id='persona-session',
+            since='2024-01-01T00:00:00Z', until='2024-01-02T00:00:00Z')
+        self.assertEqual([node['id'] for node in first['nodes']], ['identity'])
+        self.assertEqual(first['next_offset'], 1)
+        second = self.ui.read(self.access, view='network_graph', limit=1, offset=1)
+        self.assertEqual([node['id'] for node in second['nodes']], ['tone'])
+        self.assertIsNone(second['next_offset'])
+        self.assertEqual(self.ui.read(self.access, view='network_graph', until='2024-01-01T12:00:00Z')['nodes'], [])
+        persona.set(self.access, PersonaSet('persona-tone-edit', 'tone', '合成新语气', receipt.message_id, 'synthetic', 1))
+        self.assertEqual(next(node for node in self.ui.read(self.access, view='network_graph')['nodes']
+                              if node['id'] == 'tone')['revision'], 2)
+        persona.set(self.access, PersonaSet('persona-tone-clear', 'tone', '', receipt.message_id, 'synthetic', 2))
+        self.assertEqual([node['id'] for node in self.ui.read(self.access, view='network_graph')['nodes']], ['identity'])
+
     def test_graph_exposes_validated_roles_without_copying_sources(self) -> None:
         from evernook.observations import ObservationDraft, ObservationRegistry
         support = self.source('合成用户原话标记195')

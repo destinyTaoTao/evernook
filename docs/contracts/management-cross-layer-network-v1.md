@@ -1,11 +1,28 @@
 # Trusted cross-layer evidence network
 
 `manage` with `action: read` and `view: network_graph` reads bounded slots from
-the profile, temporal fact, observation and topic registries in one authorized SQLite
+the persona, profile, temporal fact, observation and topic registries in one authorized SQLite
 snapshot. It requires recall, maintain and accept scopes. Nodes include only
 the current validated content, revision and state. Source identifiers form
 edges labelled as evidence, support or counterevidence; source text is never
 copied into the response and opening a source performs a separate current read.
+
+Core 0.1.67 / dsh preview.57 adds current nonempty persona blocks as
+`persona` nodes when their recorded source is still a complete original user
+message at the recorded state version. The edge is checked in the same
+snapshot and participates in the same entry, session and occurrence-time
+filters. A category filter excludes persona because it has no category. If
+the source becomes unavailable, the relationship disappears; persona is an
+independent explicit setting and is not automatically erased. The graph does
+not return the reason or a separate copy of the source text; the persona value
+itself may match that source. Persona uses bounded per-layer
+slots like the other nodes, and older services simply omit these nodes.
+
+#200 source management/topic/persona suites passed 61 tests, plus an activated
+service check for the graph, authorization and change fingerprint. Source and
+installed dsh component checks and the non-editable wheel checks passed;
+strict management mypy and both package builds passed. Tests use synthetic
+data and do not establish actual browser or large-store acceptance.
 
 Core 0.1.63 / dsh preview.54 adds `confirmation_source` to profile nodes only:
 `recorded` means the current profile contains a separately recorded, currently

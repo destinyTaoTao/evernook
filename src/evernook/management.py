@@ -142,6 +142,25 @@ class MemoryManagement:
                 node['confirmation_source'] = confirmation_source
             nodes.append(node)
 
+        from .persona import PersonaRegistry
+        for row in rows('persona_versions_v1', """SELECT e.block FROM persona_versions_v1 e
+            WHERE e.revision=(SELECT max(n.revision) FROM persona_versions_v1 n WHERE n.block=e.block)
+            AND e.text<>'' ORDER BY e.block LIMIT ? OFFSET ?"""):
+            persona = PersonaRegistry._latest(db, row[0])
+            if persona is None or not persona.text:
+                continue
+            try:
+                source = self._source(db, persona.evidence_id)
+                if (source['state_version'] != persona.evidence_version or source['role'] != 'user'
+                        or source['completion'] != 'complete' or source['representation'] != 'original'):
+                    continue
+            except MemoryFailure as error:
+                if error.code in {'message_not_found', 'source_unavailable'}:
+                    continue
+                raise
+            add('persona', persona.block, persona.text, persona.revision, 'current', None,
+                [{'source_id': persona.evidence_id, 'kind': 'evidence'}])
+
         for row in rows('profile_events_v1', """SELECT e.tag_id FROM profile_events_v1 e
             WHERE e.revision=(SELECT max(n.revision) FROM profile_events_v1 n WHERE n.tag_id=e.tag_id)
             AND json_extract(e.record,'$.state')='confirmed' ORDER BY e.tag_id LIMIT ? OFFSET ?"""):
