@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
-PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local', 'transcription-submit', 'transcription-read'})
+PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inventory', 'protected-links', 'protected-show-local', 'protected-backup', 'transcription-submit', 'transcription-read'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
     "persona-read", "persona-history", "persona-set", "persona-rollback",
@@ -86,6 +86,18 @@ class ServiceClient:
 
     def protected_inventory(self, access: Access, *, after: str | None = None, limit: int = 100) -> dict[str, Any]:
         value = self.call(access, 'protected-inventory', {'after': after, 'limit': limit})
+        if not isinstance(value, dict):
+            raise MemoryFailure('service_invalid_response')
+        return value
+
+    def protected_backup(self, access: Access, destination: Path, backup_keys: Path, *, timeout: float = 120,
+                         cancel: threading.Event | None = None) -> dict[str, Any]:
+        if type(timeout) not in (int, float) or not 0 < timeout <= 120:
+            raise MemoryFailure('invalid_vault_backup_request')
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure('service_canceled')
+        value = self.call(access, 'protected-backup', {'destination': str(destination), 'backup_keys': str(backup_keys),
+                          'timeout': timeout}, timeout=timeout + 10, cancel=cancel)
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -226,6 +238,17 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if private_event.completion != 'complete':
             raise MemoryFailure('protected_incomplete_unsupported')
         return protected_inbox.submit(access, private_event)
+    if operation == 'protected-backup':
+        runtime._require_scope(access, 'admin', 'vault_backup')
+        if protected_inbox is None:
+            raise MemoryFailure('protected_service_unconfigured')
+        if (set(arguments) != {'destination', 'backup_keys', 'timeout'}
+                or any(not isinstance(arguments[name], str) or not 1 <= len(arguments[name]) <= 4096
+                       for name in ('destination', 'backup_keys'))):
+            raise MemoryFailure('invalid_vault_backup_request')
+        from .vault_backup import create_vault_backup
+        return create_vault_backup(runtime, protected_inbox, access, Path(arguments['destination']),
+                                   Path(arguments['backup_keys']), timeout=arguments['timeout'], cancel=cancel)
     if operation in {'protected-inventory', 'protected-links'}:
         if protected_inbox is None:
             raise MemoryFailure('protected_service_unconfigured')

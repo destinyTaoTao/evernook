@@ -8,6 +8,7 @@ import hmac
 import json
 from pathlib import Path
 import sqlite3
+import threading
 import time
 from typing import Any
 
@@ -49,9 +50,12 @@ def _materials(inbox: ProtectedInbox) -> list[str]:
 
 
 def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Connection, store: sqlite3.Connection, *,
-              private: PrivateKey | None, deadline: float) -> dict[str, object]:
+              private: PrivateKey | None, deadline: float, require_readable_entries: bool = True,
+              cancel: threading.Event | None = None, include_link_digest: bool = False) -> dict[str, object]:
     """Called only with the exclusive ownership gate and a core transaction held."""
     def check() -> None:
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure('vault_backup_canceled')
         if time.monotonic() >= deadline:
             raise MemoryFailure('protected_migration_timeout')
 
@@ -70,6 +74,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
     identities = _identities(_load(runtime.root / 'client.json'))
     readable_entries = {identity.entry for identity in identities.values() if 'recall' in identity.scopes}
     digest = hashlib.sha256()
+    link_digest = hashlib.sha256()
     count = 0
     settings = store.execute('SELECT * FROM settings WHERE singleton=1').fetchone()
     binding = hmac.digest(runtime._fingerprint_key, b'evernook-protected-inbox-v1', hashlib.sha256)
@@ -79,7 +84,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
         raise MemoryFailure('protected_binding_mismatch')
     has_links = core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_links_v1'").fetchone()
     link_count = int(core.execute('SELECT count(*) FROM protected_links_v1').fetchone()[0]) if has_links else 0
-    core.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+    core.set_progress_handler(lambda: int(time.monotonic() >= deadline or (cancel is not None and cancel.is_set())), 1000)
     try:
         if has_links:
             orphan = core.execute("""SELECT 1 FROM messages m LEFT JOIN protected_links_v1 l ON l.message_id=m.id
@@ -99,7 +104,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
         if count > MAX_OBJECTS or row['state'] != 'protected_linked' or row['receipt'] is None or not has_links:
             raise MemoryFailure('protected_cutover_requires_migration')
         _, projection = inbox._verified(row)
-        if projection.source.entry not in readable_entries:
+        if require_readable_entries and projection.source.entry not in readable_entries:
             raise MemoryFailure('protected_migration_unreachable_entry')
         if private is not None:
             _decrypt_event(inbox, row, private)
@@ -118,15 +123,20 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
                 or saved['reference'] != inbox._reference(str(row['id']), str(row['envelope']))):
             raise MemoryFailure('protected_link_unavailable')
         state = runtime._state(core, str(saved['id']))
+        link_digest.update((_json([row['id'], row['source'], bytes(row['fingerprint']).hex(),
+            hashlib.sha256(str(row['envelope']).encode()).hexdigest(), row['receipt'], saved['id'], saved['reference']]) + '\n').encode())
         digest.update((_json([row['id'], row['source'], bytes(row['fingerprint']).hex(),
             hashlib.sha256(str(row['envelope']).encode()).hexdigest(), row['receipt'], saved['id'], saved['reference'],
             asdict(state)]) + '\n').encode())
     if count != link_count:
         raise MemoryFailure('protected_cutover_requires_migration')
     check()
-    return {'ledger_id': str(ledger['ledger_id']), 'inbox_id': inbox.inbox_id, 'key_id': str(inbox.public['key_id']),
+    result: dict[str, object] = {'ledger_id': str(ledger['ledger_id']), 'inbox_id': inbox.inbox_id, 'key_id': str(inbox.public['key_id']),
             'path_binding': hmac.digest(runtime._fingerprint_key, _json([str(inbox.root), str(inbox.key_root)]).encode(), hashlib.sha256).hex(),
             'material': material, 'clients': client_binding, 'objects': count, 'object_digest': digest.hexdigest()}
+    if include_link_digest:
+        result['link_digest'] = link_digest.hexdigest()
+    return result
 
 
 def _authentication(runtime: MemoryRuntime, value: dict[str, Any]) -> str:

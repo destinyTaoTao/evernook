@@ -75,6 +75,7 @@ class VaultMigrationTests(unittest.TestCase):
         self.assertEqual(proof['verified_objects'], 1)
         self.assertFalse(proof['migration_completed'])
         raw = (self.runtime.root / PROOF_NAME).read_bytes()
+        self.assertNotIn('link_digest', json.loads(raw)['snapshot'])
         self.assertNotIn(self.password, raw)
         self.assertNotIn(b'synthetic-migration-secret-204', raw)
         old = subprocess.run(self.command(verified=False), capture_output=True, timeout=30)
