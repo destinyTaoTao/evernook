@@ -21,7 +21,7 @@ from evernook.service import ServiceClient
 from evernook.service import client_access
 from evernook.protected import ProtectedInbox
 from evernook.vault_local import LocalDisplayRequest
-from evernook.runtime import _identities, _load
+from evernook.runtime import _atomic_json, _identities, _load
 from evernook.vault_backup import create_vault_backup
 from evernook.vault_restore import VaultRestoreStage, restore_stage
 from evernook.vault_attach import attach
@@ -369,6 +369,18 @@ class VaultRestoreStageTests(unittest.TestCase):
         with self.assertRaises(MemoryFailure):
             attach(self.destination / 'runtime.json', Access('invalid', 'invalid'), container, b'synthetic-vault-password-212')
         attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        config = self.destination / 'runtime.json'
+        original_config = config.read_bytes()
+        _atomic_json(config, {**_load(config), 'protected_multi_binding': True})
+        try:
+            runtime = MemoryRuntime(config, service_owner=True)
+            from evernook.missing_vault import read_state
+            with runtime._connection() as core, self.assertRaisesRegex(MemoryFailure, 'protected_recovery_proof_invalid'):
+                read_state(runtime, core)
+            with self.assertRaisesRegex(MemoryFailure, 'protected_recovery_proof_invalid'):
+                ProtectedInbox(runtime, container / 'inbox', container / 'keys')
+        finally:
+            config.write_bytes(original_config)
         with closing(sqlite3.connect(self.destination / 'memory.sqlite3')) as db:
             db.execute("UPDATE restored_vault_attachment_v1 SET authentication=?", ('0' * 64,))
             db.commit()

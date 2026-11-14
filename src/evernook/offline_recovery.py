@@ -144,7 +144,7 @@ class OfflineRecovery:
                 db.execute('BEGIN IMMEDIATE')
                 # A prior device's marker is bound to its old recovery receipt/path.
                 # This fresh recovery must establish its own state at activation.
-                for marker in ('restored_missing_vault_v1', 'restored_vault_attachment_v1'):
+                for marker in ('restored_missing_vault_v1', 'restored_vault_attachment_v1', 'restored_multi_attachment_v1'):
                     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (marker,)).fetchone():
                         db.execute('DROP TABLE ' + marker)
                 if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='preference_updates_settings_v1'").fetchone():

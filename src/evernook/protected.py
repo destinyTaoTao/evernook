@@ -197,20 +197,43 @@ class ProtectedInbox:
                 ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout))
         with gate:
             _require_protected_available(self.runtime, gate_db)
-            from .missing_vault import attachment
+            from .missing_vault import attachment, multi_attachment
             if gate_db is not None:
                 attached = attachment(self.runtime, gate_db)
+                multi = multi_attachment(self.runtime, gate_db)
             else:
                 with self.runtime._unguarded_connection() as core:
                     attached = attachment(self.runtime, core)
+                    multi = multi_attachment(self.runtime, core)
             if attached is not None and (attached['inbox_dir'] != str(self.root) or attached['key_dir'] != str(self.key_root)):
                 raise MemoryFailure('protected_attachment_mismatch')
+            multi_entry = None
+            if multi is not None:
+                entries = multi['binding'].get('inboxes')
+                matches = ([item for item in entries if isinstance(item, dict)
+                            and item.get('inbox_dir') == str(self.root) and item.get('key_dir') == str(self.key_root)]
+                           if isinstance(entries, list) else [])
+                if len(matches) != 1:
+                    raise MemoryFailure('protected_attachment_mismatch')
+                multi_entry = matches[0]
             verify_private_directory(self.root, extra_files=(self.root / "inbox.sqlite3",))
             db: sqlite3.Connection | None = None
             try:
                 db = sqlite3.connect(self.root / "inbox.sqlite3", timeout=1, isolation_level=None)
                 db.row_factory = sqlite3.Row
                 db.execute("PRAGMA synchronous=FULL")
+                if multi_entry is not None:
+                    from .vault_migration import _materials
+                    settings = db.execute('SELECT inbox_id,public FROM settings WHERE singleton=1').fetchone()
+                    try:
+                        valid = (settings is not None and settings['inbox_id'] == multi_entry.get('inbox_id')
+                                 and self.public.get('key_id') == multi_entry.get('key_id')
+                                 and json.loads(settings['public'], object_pairs_hook=_unique_object) == self.public
+                                 and _materials(self) == multi_entry.get('material'))
+                    except (ValueError, TypeError, KeyError):
+                        valid = False
+                    if not valid:
+                        raise MemoryFailure('protected_attachment_mismatch')
                 yield db
             except sqlite3.Error as error:
                 code = getattr(error, "sqlite_errorcode", 0) & 255

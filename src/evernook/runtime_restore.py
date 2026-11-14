@@ -54,7 +54,7 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
     # A device-bound missing-vault marker cannot be republished under a new
     # path without a freshly authenticated recovery receipt.
     with _database(source / 'evidence.sqlite3') as archived:
-        if archived.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restored_missing_vault_v1'").fetchone():
+        if archived.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('restored_missing_vault_v1','restored_multi_attachment_v1')").fetchone():
             raise MemoryFailure('protected_restore_required')
     request: dict[str, object] = {"version": 1, "destination": str(destination), "source_sha": expected.sha256,
                "control_head": checkpoint.control_head, "ledger_id": checkpoint.ledger_id,

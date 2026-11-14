@@ -75,7 +75,8 @@ def attachment(runtime: MemoryRuntime, db: sqlite3.Connection) -> dict[str, Any]
         return None
     rows = db.execute('SELECT id,content,authentication FROM restored_vault_attachment_v1 LIMIT 2').fetchall()
     try:
-        if len(rows) != 1 or rows[0]['id'] != 1 or _has_table(db, 'restored_missing_vault_v1'):
+        if (len(rows) != 1 or rows[0]['id'] != 1 or _has_table(db, 'restored_missing_vault_v1')
+                or _has_table(db, 'restored_multi_attachment_v1')):
             raise ValueError()
         content = json.loads(rows[0]['content'], object_pairs_hook=_unique_object)
         fields = {'version', 'receipt_auth', 'inbox_dir', 'key_dir', 'inbox_id', 'key_id', 'material'}
@@ -83,6 +84,7 @@ def attachment(runtime: MemoryRuntime, db: sqlite3.Connection) -> dict[str, Any]
         if (not isinstance(content, dict) or set(content) != fields or type(content['version']) is not int
                 or content['version'] != 1 or config.get('service_mode') is not True
                 or config.get('restored_missing_vault') is not True
+                or config.get('protected_multi_binding') is True
                 or any(not isinstance(content[name], str) or not content[name] for name in
                        ('receipt_auth', 'inbox_dir', 'key_dir', 'inbox_id', 'key_id'))
                 or not isinstance(content['material'], list) or len(content['material']) != 3
@@ -98,9 +100,37 @@ def attachment(runtime: MemoryRuntime, db: sqlite3.Connection) -> dict[str, Any]
         raise MemoryFailure('protected_recovery_proof_invalid') from None
 
 
+def multi_attachment(runtime: MemoryRuntime, db: sqlite3.Connection) -> dict[str, Any] | None:
+    """Read a committed recovered multi-binding; transitional states fail closed."""
+    if not _has_table(db, 'restored_multi_attachment_v1'):
+        return None
+    rows = db.execute('SELECT id,content,authentication FROM restored_multi_attachment_v1 LIMIT 2').fetchall()
+    try:
+        if (len(rows) != 1 or rows[0]['id'] != 1 or _has_table(db, 'restored_missing_vault_v1')
+                or _has_table(db, 'restored_vault_attachment_v1')):
+            raise ValueError()
+        content = json.loads(rows[0]['content'], object_pairs_hook=_unique_object)
+        config = _load(runtime.root / 'runtime.json')
+        from .vault_multi_binding import read as read_binding
+        if (not isinstance(content, dict) or set(content) != {'version', 'receipt_auth', 'binding'}
+                or type(content['version']) is not int or content['version'] != 1
+                or config.get('service_mode') is not True or config.get('restored_missing_vault') is not True
+                or config.get('protected_multi_binding') is not True or not isinstance(content['receipt_auth'], str)
+                or not hmac.compare_digest(content['receipt_auth'], _receipt(runtime))
+                or not isinstance(content['binding'], dict) or content['binding'] != read_binding(runtime)):
+            raise ValueError()
+        expected = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-attachment-v1\0'
+                               + _json(content).encode(), hashlib.sha256).hex()
+        if not isinstance(rows[0]['authentication'], str) or not hmac.compare_digest(rows[0]['authentication'], expected):
+            raise ValueError()
+        return content
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError, MemoryFailure):
+        raise MemoryFailure('protected_recovery_proof_invalid') from None
+
+
 def _read_state(runtime: MemoryRuntime, db: sqlite3.Connection) -> bool:
     config = _load(runtime.root / 'runtime.json')
-    if attachment(runtime, db) is not None:
+    if attachment(runtime, db) is not None or multi_attachment(runtime, db) is not None:
         _check_projections(db, require_protected=False)
         return False
     if not _has_table(db, 'restored_missing_vault_v1'):
