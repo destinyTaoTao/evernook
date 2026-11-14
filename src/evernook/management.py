@@ -130,13 +130,17 @@ class MemoryManagement:
             return found[:limit]
 
         def add(kind: str, identifier: str, label: str, revision: int, state: str,
-                node_category: str | None, edges: list[dict[str, str]], inference: bool = False) -> None:
+                node_category: str | None, edges: list[dict[str, str]], inference: bool = False,
+                confirmation_source: str | None = None) -> None:
             ids = [edge['source_id'] for edge in edges]
             if ((query and query not in label) or (category is not None and category != node_category)
                     or not self._matches_sources(db, ids, entry, session_id, start, end)):
                 return
-            nodes.append({'kind': kind, 'id': identifier, 'label': label, 'revision': revision,
-                          'state': state, 'inference': inference, 'edges': edges})
+            node = {'kind': kind, 'id': identifier, 'label': label, 'revision': revision,
+                    'state': state, 'inference': inference, 'edges': edges}
+            if confirmation_source is not None:
+                node['confirmation_source'] = confirmation_source
+            nodes.append(node)
 
         for row in rows('profile_events_v1', """SELECT e.tag_id FROM profile_events_v1 e
             WHERE e.revision=(SELECT max(n.revision) FROM profile_events_v1 n WHERE n.tag_id=e.tag_id)
@@ -145,7 +149,8 @@ class MemoryManagement:
             if profile_view.record is not None and not profile_view.error_code:
                 profile = profile_view.record
                 add('profile', profile.tag_id, profile.draft.label, profile.revision, profile.state, profile.draft.category,
-                    [{'source_id': span.message_id, 'kind': 'evidence'} for span in profile.draft.sources])
+                    [{'source_id': span.message_id, 'kind': 'evidence'} for span in profile.draft.sources],
+                    confirmation_source='recorded' if profile.confirmation_id is not None else 'not_recorded')
         for row in rows('fact_heads_v1', 'SELECT subject,predicate FROM fact_heads_v1 ORDER BY subject,predicate LIMIT ? OFFSET ?'):
             fact_view = FactRegistry._query_snapshot(db, row[0], row[1])
             fact = fact_view.fact

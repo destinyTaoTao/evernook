@@ -7,6 +7,20 @@ the current validated content, revision and state. Source identifiers form
 edges labelled as evidence, support or counterevidence; source text is never
 copied into the response and opening a source performs a separate current read.
 
+Core 0.1.63 / dsh preview.54 adds `confirmation_source` to profile nodes only:
+`recorded` means the current profile contains a separately recorded, currently
+valid confirmation source; `not_recorded` means it does not. This does not
+prove identity, intent or consent, and the absence of a separate confirmation
+does not mean the profile lacks evidence. The existing gated automatic update
+path can produce confirmed profiles without a separate confirmation source.
+Other layers have different confirmation semantics and do not expose this
+field. Old services and unrecognized values display unknown. This is read-only
+metadata and does not change admission, validation, or memory contents.
+For #196, 59 source management and preference tests and three installed-wheel
+tests passed, including automatic publication and confirmation-source
+suppression. Source and installed dsh component tests, the dsh build, and
+management mypy passed. This does not establish real browser acceptance.
+
 Core 0.1.62 / dsh preview.53 adds the source role (`user`, `assistant` or `tool`)
 to each graph edge. Roles are read in bounded batches from the same authorized
 snapshot after evidence validation; missing or inconsistent sources fail closed.

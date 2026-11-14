@@ -20,6 +20,7 @@ from evernook.preference_clarifications import PreferenceClarifications, Resolve
 from evernook.scheduler import ConsolidationScheduler
 from evernook.context import ContextBuilder, ContextPolicy
 from evernook.semantic import SemanticRecall
+from evernook.management import MemoryManagement
 
 
 class PreferenceUpdateTests(unittest.TestCase):
@@ -187,6 +188,10 @@ class PreferenceUpdateTests(unittest.TestCase):
         tags = ProfileRegistry(self.runtime).summary(self.access).tags
         self.assertEqual(len(tags), 3)
         self.assertEqual({tag.draft.category for tag in tags}, {'preference', 'interest'})
+        graph = MemoryManagement(self.runtime).read(self.access, view='network_graph')
+        profiles = [node for node in graph['nodes'] if node['kind'] == 'profile']
+        self.assertEqual(len(profiles), 3)
+        self.assertTrue(all(node['confirmation_source'] == 'not_recorded' for node in profiles))
         restarted = PreferenceUpdates(MemoryRuntime(self.config))
         replay = restarted.process(self.access, ids)
         self.assertEqual(replay.updates, result.updates)

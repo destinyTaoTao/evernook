@@ -9,6 +9,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
   let validation = { embedding: 'valid', context: 'invalid' };
   let graphRole = 'assistant';
+  let graphConfirmation = 'not_recorded';
   let personas = [
     { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
     { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
@@ -95,7 +96,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
     }] });
     if (body.view === 'network_graph' && delayGraph) return new Promise(resolve => { resolveGraph = resolve; });
     if (body.view === 'network_graph') return respond({ next_offset: null, nodes: [
-      { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
+      { kind: 'profile', id: 'p', revision: 2, state: 'confirmed', confirmation_source: graphConfirmation, label: '合成画像', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'fact', id: 'f', revision: 1, state: 'current', label: '合成事实', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'observation', id: 'o', revision: 1, state: 'conflicted', inference: true, label: '合成观察', edges: [{ source_id: 'source-1', kind: 'counterevidence', ...(graphRole ? { role: graphRole } : {}) }] },
       { kind: 'topic', id: 't', revision: 1, state: 'valid', inference: true, label: '合成主题', edges: [{ source_id: 'source-1', kind: 'evidence', ...(graphRole ? { role: graphRole } : {}) }] },
@@ -276,11 +277,19 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('合成主题')));
   assert.ok(find(tree, node => node.children?.includes('sourceRole: assistant')));
   assert.ok(find(tree, node => node.children?.includes('sourceRoleHelp')));
+  assert.ok(find(tree, node => node.children?.includes(' · confirmationSource: not_recorded')));
+  assert.ok(find(tree, node => node.children?.includes('confirmationHelp')));
   assert.ok(calls.some(call => call.view === 'network_graph'));
+  graphConfirmation = 'recorded';
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes(' · confirmationSource: recorded')));
+  graphConfirmation = undefined;
   graphRole = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('sourceRole: unknown')));
+  assert.ok(find(tree, node => node.children?.includes(' · confirmationSource: unknown')));
   graphRole = 'assistant';
   assert.ok(find(tree, node => node.children?.includes('networkCategoryHelp')));
   find(tree, node => node.type === 'input' && node.props?.['aria-label'] === 'networkCategory').props.onChange({ target: { value: '  custom-category  ' } });

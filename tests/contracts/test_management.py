@@ -446,6 +446,7 @@ class ManagementTests(unittest.TestCase):
                         action="publish", confirmation_id=span.message_id)
         result = self.ui.read(self.access, view="network_graph", entry="owner", session_id="synthetic-session")
         self.assertEqual({node["kind"] for node in result["nodes"]}, {"profile", "fact", "observation"})
+        self.assertEqual(next(node for node in result['nodes'] if node['kind'] == 'profile')['confirmation_source'], 'recorded')
         self.assertEqual({node['kind'] for node in self.ui.read(self.access, view='network_graph', category='interest')['nodes']}, {'profile'})
         self.assertEqual({node['kind'] for node in self.ui.read(self.access, view='network_graph', category='experience')['nodes']}, {'observation'})
         self.assertTrue(all(span.message_id in {edge["source_id"] for edge in node["edges"]} for node in result["nodes"]))
@@ -502,6 +503,13 @@ class ManagementTests(unittest.TestCase):
         self.apply({'kind': 'profile_confirm', 'tag_id': 'whitespace-tag'})
         self.assertEqual([node['id'] for node in self.ui.read(self.access, view='network_graph', category='  custom  ')['nodes']], ['whitespace-tag'])
         self.assertEqual(self.ui.read(self.access, view='network_graph', category='custom')['nodes'], [])
+
+    def test_graph_withholds_profile_when_confirmation_source_is_suppressed(self) -> None:
+        self.draft('confirmed-source')
+        outcome = self.apply({'kind': 'profile_confirm', 'tag_id': 'confirmed-source'})
+        self.assertEqual(self.ui.read(self.access, view='network_graph')['nodes'][0]['confirmation_source'], 'recorded')
+        self.apply({'kind': 'source_suppress', 'message_id': str(outcome['confirmation_id'])})
+        self.assertEqual(self.ui.read(self.access, view='network_graph')['nodes'], [])
 
     def test_source_preview_includes_observation_evidence_and_detects_new_revision(self) -> None:
         from dataclasses import replace
