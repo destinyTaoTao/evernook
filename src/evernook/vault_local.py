@@ -4,25 +4,16 @@ from __future__ import annotations
 from collections.abc import Callable
 import ctypes
 from ctypes import wintypes
-from dataclasses import asdict
 from datetime import datetime, timezone
-import hashlib
-import hmac
-import json
 import threading
 import time
 import tkinter as tk
 from uuid import uuid4
 
-from nacl import pwhash
-from nacl.exceptions import CryptoError
-from nacl.public import PrivateKey, SealedBox
-from nacl.secret import SecretBox
-
-from .models import Access, Event, MemoryFailure, Source
-from .paths import verify_private_directory
-from .protected import ProtectedInbox, _hex, _public
-from .runtime import _identifier, _json, _unique_object
+from .models import Access, MemoryFailure
+from .protected import ProtectedInbox
+from .runtime import _identifier, _json
+from .vault_crypto import _decrypt_event, _unlock
 
 
 def input_desktop_available() -> bool:
@@ -42,48 +33,6 @@ def input_desktop_available() -> bool:
         return bool(user.GetUserObjectInformationW(handle, 2, name, ctypes.sizeof(name), ctypes.byref(required))) and name.value == "Default"
     finally:
         user.CloseDesktop(handle)
-
-
-def _json_object(raw: bytes) -> dict[str, object]:
-    if len(raw) > 65536:
-        raise MemoryFailure("invalid_vault_recovery")
-    try:
-        value: object = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=_unique_object)
-    except (ValueError, UnicodeError):
-        raise MemoryFailure("invalid_vault_recovery") from None
-    if not isinstance(value, dict):
-        raise MemoryFailure("invalid_vault_recovery")
-    return value
-
-
-def _unlock(inbox: ProtectedInbox, password: bytes) -> PrivateKey:
-    if not isinstance(password, bytes) or not 12 <= len(password) <= 1024:
-        raise MemoryFailure("vault_unlock_refused")
-    path = inbox.key_root / "recovery.json"
-    verify_private_directory(inbox.key_root, extra_files=(path,))
-    public, _, _ = _public(inbox.key_root / "receiving.json")
-    if public != inbox.public:
-        raise MemoryFailure("protected_binding_mismatch")
-    try:
-        with path.open("rb") as source:
-            value = _json_object(source.read(65537))
-        if (set(value) != {"format", "version", "kdf", "salt", "ciphertext"}
-                or value["format"] != "evernook-protected-recovery" or type(value["version"]) is not int or value["version"] != 1
-                or value["kdf"] != "argon2id-interactive-v1" or not isinstance(value["ciphertext"], str)
-                or len(value["ciphertext"]) > 32768):
-            raise MemoryFailure("invalid_vault_recovery")
-        derived = pwhash.argon2id.kdf(SecretBox.KEY_SIZE, password, _hex(value["salt"], pwhash.argon2id.SALTBYTES),
-            opslimit=pwhash.argon2id.OPSLIMIT_INTERACTIVE, memlimit=pwhash.argon2id.MEMLIMIT_INTERACTIVE)
-        payload = _json_object(SecretBox(derived).decrypt(bytes.fromhex(value["ciphertext"])))
-        if (set(payload) != {"format", "version", "public", "private"} or payload["format"] != "evernook-protected-private"
-                or type(payload["version"]) is not int or payload["version"] != 1 or payload["public"] != inbox.public):
-            raise MemoryFailure("invalid_vault_recovery")
-        private = PrivateKey(_hex(payload["private"], 32))
-        if bytes(private.public_key) != bytes(inbox.recipient):
-            raise MemoryFailure("protected_binding_mismatch")
-        return private
-    except (CryptoError, ValueError, OSError):
-        raise MemoryFailure("vault_unlock_refused") from None
 
 
 class LocalDisplayRequest:
@@ -148,22 +97,7 @@ class LocalDisplayRequest:
                 row = db.execute("SELECT * FROM objects WHERE id=?", (self.object_id,)).fetchone()
                 if row is None or row["state"] != "protected_linked":
                     raise MemoryFailure("protected_link_unavailable")
-                value, projection = self.inbox._verified(row)
-                if row["envelope"] != self._envelope or _json(value["bound"]) != self._bound:
-                    raise MemoryFailure("vault_request_changed")
-                try:
-                    clear = json.loads(SealedBox(private).decrypt(bytes.fromhex(value["ciphertext"])), object_pairs_hook=_unique_object)
-                    if not isinstance(clear, dict) or set(clear) != {"bound", "event"} or _json(clear["bound"]) != self._bound:
-                        raise ValueError()
-                    event_value = dict(clear["event"])
-                    event_value["source"] = Source(**event_value["source"])
-                    event = Event(**event_value)
-                    self.inbox.runtime._validate_event(event)
-                    actual = hmac.digest(self.inbox.runtime._fingerprint_key, b"protected-event-v1" + _json(asdict(event)).encode(), hashlib.sha256)
-                    if not hmac.compare_digest(actual, bytes(row["fingerprint"])) or event.source != projection.source:
-                        raise ValueError()
-                except (CryptoError, ValueError, TypeError, KeyError):
-                    raise MemoryFailure("protected_object_corrupt") from None
+                event = _decrypt_event(self.inbox, row, private, expected_envelope=self._envelope, expected_bound=self._bound)
             self._best_effort_audit("authorization_attempted")
             self.inbox.runtime._require_scope(self.access, 'recall', 'vault_local_display')
             with self.inbox.runtime._connection() as core:
