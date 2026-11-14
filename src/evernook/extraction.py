@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Protocol
+from typing import Protocol, cast
 
 from .candidates import CandidateDraft, CandidateRun, CandidateWorkflow, EvidenceSpan, ExtractionSource
 from .models import Access, MemoryFailure
@@ -63,6 +63,20 @@ def _admit(sources: tuple[ExtractionSource, ...]) -> None:
         raise MemoryFailure("extraction_input_not_admitted")
 
 
+def load_extraction(path: Path) -> ExtractorBackend:
+    """Select a trusted built-in backend without loading caller-specified code."""
+    config = _load(external(path))
+    if type(config.get('schema_version')) is not int:
+        raise MemoryFailure('invalid_extraction_config')
+    if config['schema_version'] == 1:
+        return LocalQwen._from_config(config)
+    if config['schema_version'] == 2 and config.get('provider') == 'local-qwen':
+        normalized = {key: value for key, value in config.items() if key != 'provider'}
+        normalized['schema_version'] = 1
+        return LocalQwen._from_config(normalized)
+    raise MemoryFailure('invalid_extraction_config')
+
+
 class LocalQwen:
     """Pinned R0 candidate, experimental and NOT quality-admitted. No automatic downloader."""
     processor_version: str
@@ -80,13 +94,17 @@ class LocalQwen:
 
     @classmethod
     def from_file(cls, path: Path) -> LocalQwen:
-        value = _load(external(path))
+        return cls._from_config(_load(external(path)))
+
+    @classmethod
+    def _from_config(cls, value: dict[str, object]) -> LocalQwen:
         if (set(value) != {"schema_version", "profile", "node", "transformers_dir", "model_dir"}
                 or type(value["schema_version"]) is not int or value["schema_version"] != 1
                 or value["profile"] != "qwen3-0.6b-experimental-extractive-v1"
                 or any(not isinstance(value[key], str) for key in ("node", "transformers_dir", "model_dir"))):
             raise MemoryFailure("invalid_extraction_config")
-        return cls(node=Path(value["node"]), transformers_dir=Path(value["transformers_dir"]), model_dir=Path(value["model_dir"]))
+        return cls(node=Path(cast(str, value["node"])), transformers_dir=Path(cast(str, value["transformers_dir"])),
+                   model_dir=Path(cast(str, value["model_dir"])))
 
     def select(self, sources: tuple[ExtractionSource, ...], *, timeout: float, cancel: threading.Event | None) -> object:
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:

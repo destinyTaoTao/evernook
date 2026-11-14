@@ -567,15 +567,15 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return clarifications.open(access, OpenClarification(**read_input()))
         return clarifications.resolve(access, ResolveClarification(**read_input()))
     if args.command in ("extract", "extract-preferences"):
-        from .extraction import ExtractionProcessor, LocalQwen
+        from .extraction import ExtractionProcessor, load_extraction
         value = read_input()
         if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
         if args.command == "extract-preferences":
             from .preferences import PreferenceProcessor
-            return PreferenceProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
-        return ExtractionProcessor(runtime, LocalQwen.from_file(args.extraction_config)).process(access, **value)
+            return PreferenceProcessor(runtime, load_extraction(args.extraction_config)).process(access, **value)
+        return ExtractionProcessor(runtime, load_extraction(args.extraction_config)).process(access, **value)
     if args.command.startswith("profile-"):
         from .candidates import EvidenceSpan
         from .profile import ProfileDecision, ProfileDraft, ProfileRegistry

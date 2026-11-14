@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
-from evernook import CandidateWorkflow, Change, Event, ExtractionSource, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import CandidateWorkflow, Change, Event, ExtractionSource, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.extraction import ExtractionProcessor, LocalQwen
 
 
@@ -45,6 +46,50 @@ class ExtractionTests(unittest.TestCase):
     @staticmethod
     def selection(source: int, quote: str, provenance: str = "user_statement") -> dict[str, object]:
         return {"selections": [{"evidence": [{"source": source, "quote": quote}], "provenance": provenance, "disputed": False}]}
+
+    def test_explicit_provider_preserves_legacy_identity_and_rejects_unknown_configuration(self) -> None:
+        from evernook.extraction import load_extraction
+
+        base = {'schema_version': 1, 'profile': 'qwen3-0.6b-experimental-extractive-v1',
+                'node': sys.executable, 'transformers_dir': str(self.root / 'packages'),
+                'model_dir': str(self.root / 'model')}
+        path = self.root / 'extraction.json'
+        path.write_text(json.dumps(base), encoding='utf-8')
+        legacy = load_extraction(path)
+        self.assertEqual(legacy.processor_version, LocalQwen.from_file(path).processor_version)
+        selected = {**base, 'schema_version': 2, 'provider': 'local-qwen'}
+        path.write_text(json.dumps(selected), encoding='utf-8')
+        self.assertEqual(load_extraction(path).processor_version, legacy.processor_version)
+        for invalid in ({**selected, 'provider': 'unknown'}, {**selected, 'provider': 'os.system'},
+                        {**selected, 'extra': 'ignored'}, {**selected, 'schema_version': True},
+                        {**base, 'provider': 'local-qwen'}, {**selected, 'profile': 'other'}):
+            with self.subTest(config=invalid):
+                path.write_text(json.dumps(invalid), encoding='utf-8')
+                with self.assertRaisesRegex(MemoryFailure, 'invalid_extraction_config'):
+                    load_extraction(path)
+
+    def test_both_cli_extraction_paths_use_explicit_provider_and_fail_closed(self) -> None:
+        access_path = self.config.parent / 'mcp-access-cli.json'
+        pair_client(self.config, client_id='synthetic', entry='synthetic', access_path=access_path)
+        profile = self.root / 'extraction.json'
+        selected = {'schema_version': 2, 'provider': 'local-qwen',
+                    'profile': 'qwen3-0.6b-experimental-extractive-v1', 'node': sys.executable,
+                    'transformers_dir': str(self.root / 'missing-packages'), 'model_dir': str(self.root / 'missing-model')}
+        for command in ('extract', 'extract-preferences'):
+            for provider in ('local-qwen', 'unknown'):
+                with self.subTest(command=command, provider=provider):
+                    profile.write_text(json.dumps({**selected, 'provider': provider}), encoding='utf-8')
+                    result = subprocess.run([sys.executable, '-m', 'evernook.cli', command,
+                        '--config', str(self.config), '--access', str(access_path), '--extraction-config', str(profile)],
+                        input=json.dumps({'source_ids': [self.receipt.message_id]}).encode(), capture_output=True, timeout=30)
+                    self.assertEqual(result.stderr, b'')
+                    response = json.loads(result.stdout)
+                    if provider == 'local-qwen':
+                        self.assertTrue(response['ok'], response)
+                        self.assertEqual(response['result']['error_code'], 'extraction_unavailable')
+                    else:
+                        self.assertFalse(response['ok'], response)
+                        self.assertEqual(response['error']['code'], 'invalid_extraction_config')
 
     def test_source_quotes_become_traceable_candidates_and_successful_task_retry_skips_model(self) -> None:
         self.backend.selection = self.selection(0, "小林🙂喜欢乌龙茶。\r\n预算37.50元。")

@@ -12,6 +12,16 @@
 {"schema_version":1,"profile":"qwen3-0.6b-experimental-extractive-v1","node":"E:/configured-node/node.exe","transformers_dir":"E:/configured-node-packages/@huggingface/transformers","model_dir":"E:/configured-local-model"}
 ```
 
+Core 0.1.48 起，可信 `extract` 与 `extract-preferences` 也支持显式选择现有本地 provider：
+
+```json
+{"schema_version":2,"provider":"local-qwen","profile":"qwen3-0.6b-experimental-extractive-v1","node":"E:/configured-node/node.exe","transformers_dir":"E:/configured-node-packages/@huggingface/transformers","model_dir":"E:/configured-local-model"}
+```
+
+schema 1 保持兼容；两种配置选择同一实现与处理器身份，不继承其他模型的质量准入。未知 provider、任意模块及额外字段均拒绝，不下载或静默退回。当前仍仅一个内置本地实现；该选择入口只用于未被独立服务接管的可信本地抽取 CLI，不是独立服务、MCP、线上摘要或用户可插入任意代码的通用 provider。模型结果仍只形成待审候选，不因配置选择自动发布。
+
+#173 在隔离合成账本上验证抽取与偏好处理源码 16 项、安装版选择器及两条 CLI 的 3 项和 strict mypy；未知 provider 拒绝，缺失模型资产明确失败并保留原文。未加载真实模型，也未改变质量或日用门禁。
+
 从UTF-8 stdin调用：
 
 ```text
