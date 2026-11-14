@@ -64,6 +64,34 @@ checks are cooperative: blocking system calls or one password derivation may
 exceed the deadline. Unknown unregistered inboxes are not discoverable, and a
 successful preflight is not a backup, multi-inbox cutover or recovery proof.
 
+Core 0.1.88 adds `vault-prepare-set` using the same repeated path arguments.
+It requires a real local console, an explicit `STOPPED_AND_INVENTORIED`
+acknowledgment and each vault's hidden password. A preparation attempt first
+invalidates its earlier multi-inbox proof; all pending objects must be reconciled.
+While holding the ledger and all declared inbox locks, it decrypts and checks
+all originals and stores a ledger-key-authenticated proof for at most ten
+minutes. The proof binds registry IDs, paths, key material, clients, every
+linked encrypted object and its ledger reference, and visibility state; it
+contains no password or original plaintext. It also checks that the on-disk
+ledger fingerprint key matches the key already loaded by the process, before
+and after verification. Validity depends on the system UTC
+clock and the stated cooperative I/O limits. `vault-check-set` and trusted
+Python `vault_multi_proof.revalidate` recheck the snapshot without passwords,
+but their return is advisory after the locks are released: it **does not**
+authorize activation. Any future multi-inbox activation must recheck inside
+its own cutover locks. A crash after proof publication may leave a valid proof
+despite an unsuccessful response; recheck it instead of assuming either result.
+This proof is not a backup, does not discover undeclared inboxes and does not
+enable multi-inbox service, recovery, destruction or daily admission.
+
+The #231 increment was checked on synthetic source and non-editable wheel
+installations. Tests cover two inboxes, pending refusal, wrong passwords,
+changed ciphertext/clients/visibility/key material, tampered or expired proof,
+local confirmation cancellation, and an actual child-process exit after proof
+publication followed by revalidation. Existing preflight and single-inbox
+cutover tests were also rerun. These checks are not a multi-inbox activation or
+restoration test; no actual user vault or operating-system lock was exercised.
+
 For #229, seven source tests and seven installed-wheel tests passed; after
 adding the non-nesting guard, two focused tests passed on each. They cover
 different passwords, linked and pending objects, a lost acknowledgment,

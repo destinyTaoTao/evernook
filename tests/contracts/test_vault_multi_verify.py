@@ -16,7 +16,7 @@ from evernook.protected import ProtectedReceipt, initialize_protected_inbox
 from evernook.vault_multi_verify import verify_declared
 
 
-class MultiVaultVerifyTests(unittest.TestCase):
+class MultiVaultFixture(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix='evernook-multi-verify-')
         self.addCleanup(temporary.cleanup)
@@ -40,6 +40,8 @@ class MultiVaultVerifyTests(unittest.TestCase):
             db.execute("UPDATE objects SET state='protected_pending_link',receipt=NULL WHERE id=?", (self.ack.object_id,))
         self.declared = ((self.first, self.passwords[0]), (self.second, self.passwords[1]))
 
+
+class MultiVaultVerifyTests(MultiVaultFixture):
     def test_all_inboxes_decrypt_and_both_pending_windows_are_reported(self) -> None:
         with self.first._connection() as db:
             before_first = [tuple(row) for row in db.execute('SELECT * FROM objects ORDER BY id')]

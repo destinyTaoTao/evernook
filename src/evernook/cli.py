@@ -104,11 +104,12 @@ def _parser() -> Parser:
     vault_known.add_argument('--access', type=Path, required=True)
     vault_known.add_argument('--after')
     vault_known.add_argument('--limit', type=int, default=100)
-    vault_multi = commands.add_parser('vault-verify-set', help='Verify an explicitly declared set of protected inboxes locally')
-    vault_multi.add_argument('--config', type=Path, required=True)
-    vault_multi.add_argument('--access', type=Path, required=True)
-    vault_multi.add_argument('--inbox-dir', type=Path, action='append', required=True)
-    vault_multi.add_argument('--key-dir', type=Path, action='append', required=True)
+    for name in ('vault-verify-set', 'vault-prepare-set', 'vault-check-set'):
+        vault_multi = commands.add_parser(name, help='Inspect an explicitly declared set of protected inboxes locally')
+        vault_multi.add_argument('--config', type=Path, required=True)
+        vault_multi.add_argument('--access', type=Path, required=True)
+        vault_multi.add_argument('--inbox-dir', type=Path, action='append', required=True)
+        vault_multi.add_argument('--key-dir', type=Path, action='append', required=True)
     backup_init = commands.add_parser("backup-init", help="Initialize separate encryption and password-protected recovery material")
     backup_init.add_argument("--key-dir", type=Path, required=True)
     backup_create = commands.add_parser("backup-create", help="Create an authenticated encrypted snapshot; no scheduled activation")
@@ -307,18 +308,35 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         access = memory.access_from_file(args.access)
         if args.command == 'vault-known':
             return known_inboxes(memory, access, after=args.after, limit=args.limit)
-        if args.command == 'vault-verify-set':
+        if args.command in ('vault-verify-set', 'vault-prepare-set', 'vault-check-set'):
             memory._require_scope(access, 'admin', 'protected_multi_verify')
-            if not _trusted_console():
+            if args.command != 'vault-check-set' and not _trusted_console():
                 raise MemoryFailure('interactive_vault_verification_required')
+            if args.command == 'vault-prepare-set':
+                from .vault_multi_proof import invalidate
+                invalidate(memory, access)
             if len(args.inbox_dir) != len(args.key_dir) or not 2 <= len(args.inbox_dir) <= 16:
                 raise MemoryFailure('invalid_protected_inbox_set')
+            if args.command == 'vault-prepare-set':
+                try:
+                    acknowledgement = input('Stop all old hosts and inventory every inbox. Type STOPPED_AND_INVENTORIED: ')
+                except EOFError:
+                    raise MemoryFailure('protected_migration_inventory_unconfirmed') from None
+                if acknowledgement != 'STOPPED_AND_INVENTORIED':
+                    raise MemoryFailure('protected_migration_inventory_unconfirmed')
+            if args.command == 'vault-check-set':
+                from .vault_multi_proof import revalidate
+                return revalidate(memory, access, tuple(ProtectedInbox(memory, inbox_path, key_path)
+                    for inbox_path, key_path in zip(args.inbox_dir, args.key_dir)))
             from .vault_multi_verify import verify_declared
             declared = []
             for inbox_path, key_path in zip(args.inbox_dir, args.key_dir):
                 inbox = ProtectedInbox(memory, inbox_path, key_path)
                 password = getpass.getpass(f'Local vault password for {inbox.inbox_id}: ').encode('utf-8')
                 declared.append((inbox, password))
+            if args.command == 'vault-prepare-set':
+                from .vault_multi_proof import prepare as prepare_multi
+                return prepare_multi(memory, access, tuple(declared), inventory_statement=acknowledgement)
             return verify_declared(memory, access, tuple(declared))
         if args.command == "vault-init":
             if not _trusted_console():
