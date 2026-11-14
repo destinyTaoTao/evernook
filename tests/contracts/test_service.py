@@ -196,6 +196,98 @@ class ServiceTests(unittest.TestCase):
         self.start(['--embedding-config', str(config_path)])
         self.assertNotEqual(self.client.call(self.access, 'mcp', args)['semantic']['state'], 'unavailable')
 
+    def test_invalid_optional_providers_do_not_prevent_capture(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        ordinary = pair_client(self.config, client_id='limited', entry='limited',
+            access_path=self.config.parent / 'mcp-access-limited.json', scopes=('capture', 'recall'))
+        self.start(['--activate-owner', str(owner)])
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        extraction = Path(self.temporary.name) / 'synthetic-extraction.json'
+        reflection = Path(self.temporary.name) / 'synthetic-reflection.json'
+        extraction.write_text('{', encoding='utf-8')
+        reflection.write_text('{', encoding='utf-8')
+        self.start(['--extraction-config', str(extraction),
+                    '--reflection-config', str(reflection)])
+        diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnosis['model_configuration']['extraction'], 'configured_unavailable')
+        self.assertEqual(diagnosis['model_configuration']['reflection'], 'configured_unavailable')
+        self.assertNotIn(str(self.temporary.name), json.dumps(diagnosis))
+        for command, value in (('extract', {'source_ids': ['synthetic']}), ('reflect', {'query': '合成'})):
+            with self.subTest(command=command), self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+                self.client.call(self.access, 'cli', {'command': command, 'input': value})
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.client.call(ordinary, 'cli', {'command': 'extract', 'input': {'source_ids': ['synthetic']}})
+        extraction.write_text('{}', encoding='utf-8')
+        reflection.write_text('{}', encoding='utf-8')
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            self.client.call(self.access, 'cli', {'command': 'reflect', 'input': {'query': '合成'}})
+        listing = self.client.call(self.access, 'mcp-list', {'profile': 'trusted-host'})
+        self.assertTrue(any(item['name'] == 'evernook_v1_reflect' for item in listing['tools']))
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_reflect',
+                'arguments': {'query': '合成'}})
+        saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_remember',
+            'arguments': {'event': self.event()}})
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message_id']})['event'], self.event())
+        paths = {'node': sys.executable, 'transformers_dir': str(Path(self.temporary.name) / 'deps'),
+                 'model_dir': str(Path(self.temporary.name) / 'model')}
+        extraction.write_text(json.dumps({'schema_version': 2, 'provider': 'local-qwen',
+            'profile': 'qwen3-0.6b-experimental-extractive-v1', **paths}), encoding='utf-8')
+        reflection.write_text(json.dumps({'schema_version': 2, 'provider': 'local', 'policy': {},
+            'local': {'profile': 'qwen3-0.6b-experimental-reflection-v1', **paths}}), encoding='utf-8')
+        unchanged = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(unchanged['model_configuration']['reflection'], 'configured_unavailable')
+        self.assertEqual(unchanged['model_configuration']['extraction'], 'configured_unavailable')
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        self.start(['--extraction-config', str(extraction), '--reflection-config', str(reflection)])
+        restarted = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(restarted['model_configuration']['reflection'], 'configured_local')
+        self.assertEqual(restarted['model_configuration']['extraction'], 'configured_local')
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message_id']})['event'], self.event())
+
+    def test_invalid_reflection_alone_does_not_prevent_startup(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        self.start(['--activate-owner', str(owner)])
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        reflection = Path(self.temporary.name) / 'bad-reflection.json'
+        reflection.write_text('{', encoding='utf-8')
+        self.start(['--reflection-config', str(reflection)])
+        status = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(status['model_configuration']['reflection'], 'configured_unavailable')
+        self.assertEqual(status['model_configuration']['extraction'], 'not_configured')
+
+    def test_invalid_embedding_with_reflection_does_not_prevent_startup(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        self.start(['--activate-owner', str(owner)])
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        embedding = Path(self.temporary.name) / 'bad-embedding.json'
+        reflection = Path(self.temporary.name) / 'valid-reflection.json'
+        embedding.write_text('{', encoding='utf-8')
+        reflection.write_text(json.dumps({'schema_version': 2, 'provider': 'local', 'policy': {}, 'local': {
+            'profile': 'qwen3-0.6b-experimental-reflection-v1', 'node': str(Path(self.temporary.name) / 'node'),
+            'transformers_dir': str(Path(self.temporary.name) / 'deps'), 'model_dir': str(Path(self.temporary.name) / 'model')}}), encoding='utf-8')
+        self.start(['--embedding-config', str(embedding), '--reflection-config', str(reflection)])
+        status = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(status['model_configuration']['reflection'], 'configured_unavailable')
+        self.assertEqual(status['configuration_validation']['embedding'], 'invalid')
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            self.client.call(self.access, 'cli', {'command': 'reflect', 'input': {'query': '合成'}})
+        saved = self.client.call(self.access, 'remember', {'event': self.event()})
+        self.assertTrue(saved['original_saved'])
+
     def test_reflection_rejects_changed_service_embedding_before_model_call(self) -> None:
         from types import SimpleNamespace
         from unittest.mock import Mock

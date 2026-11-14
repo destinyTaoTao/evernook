@@ -167,7 +167,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
              context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
              protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None,
              extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None,
-             embedding_binding: ServiceEmbedding | None = None) -> object:
+             embedding_binding: ServiceEmbedding | None = None, extraction_error: str | None = None,
+             reflection_error: str | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -269,7 +270,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                     raise
                 embedding_error = failure.code
         operations, context, restricted = build_operations(runtime, access, profile=arguments["profile"],
-            backend=backend, context_config=context_config, reflector=reflector, defer_context_validation=True)
+            backend=backend, context_config=context_config, reflector=reflector, defer_context_validation=True,
+            reflection_error=reflection_error)
         if operation == "mcp-list":
             return {"tools": [{"name": name, "schema": model.model_json_schema(), "description": description}
                 for name, (model, _, description) in operations.items()]}
@@ -305,7 +307,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if command in {'extract', 'extract-preferences'}:
             runtime._require_scope(access, 'maintain', 'service_extraction')
             if extractor is None or extraction_gate is None:
-                raise MemoryFailure('extraction_service_unconfigured')
+                raise MemoryFailure(extraction_error or 'extraction_service_unconfigured')
             value = dict(arguments['input'])
             if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
                 raise MemoryFailure('invalid_arguments')
@@ -326,7 +328,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 embedding_config=embedding_config, reflector=reflector, embedding_binding=embedding_binding)
         if command in {'reflect', 'reflect-configure'}:
             if reflector is None:
-                raise MemoryFailure('reflection_model_unconfigured')
+                raise MemoryFailure(reflection_error or 'reflection_model_unconfigured')
             value = dict(arguments['input'])
             if command == 'reflect-configure':
                 if value:
@@ -376,8 +378,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             reflection_model = reflector.model if reflector is not None else None
             return {**result, 'model_configuration': {
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
-                'reflection': 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
-                'extraction': 'configured_local' if extractor is not None else 'not_configured',
+                'reflection': 'configured_unavailable' if reflection_error is not None else 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
+                'extraction': 'configured_unavailable' if extraction_error is not None else 'configured_local' if extractor is not None else 'not_configured',
                 'speech': 'host_owned'}, 'configuration_validation': {
                     'embedding': config_validation(embedding_config, context=False),
                     'context': config_validation(context_config, context=True)}}
@@ -421,15 +423,23 @@ class _Server(socketserver.ThreadingTCPServer):
         self.embedding_config = embedding_config
         self.embedding_binding = ServiceEmbedding(embedding_config) if embedding_config is not None else None
         self.extractor: ExtractorBackend | None = None
+        self.extraction_error: str | None = None
         self.extraction_gate = threading.BoundedSemaphore(1)
         if extraction_config is not None:
             from .extraction import load_extraction
-            self.extractor = load_extraction(extraction_config)
+            try:
+                self.extractor = load_extraction(extraction_config)
+            except MemoryFailure as failure:
+                self.extraction_error = failure.code
         self.reflector: ReflectionEngine | None = None
+        self.reflection_error: str | None = None
         if reflection_config is not None:
             from .reflection_model import from_file
-            self.reflector = from_file(runtime, SemanticRecall(runtime,
-                self.embedding_binding.current() if self.embedding_binding else None), reflection_config)
+            try:
+                self.reflector = from_file(runtime, SemanticRecall(runtime,
+                    self.embedding_binding.current() if self.embedding_binding else None), reflection_config)
+            except MemoryFailure as failure:
+                self.reflection_error = failure.code
         self.slots = threading.BoundedSemaphore(8)
         self.stopping = threading.Event()
         from .service_maintenance import ServiceMaintenance
@@ -500,7 +510,8 @@ class _Handler(socketserver.BaseRequestHandler):
                 result = dispatch(server.runtime, request, cancel=cancel,
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
                     protected_inbox=server.protected_inbox, display_gate=server.display_gate,
-                    extractor=server.extractor, extraction_gate=server.extraction_gate, embedding_binding=server.embedding_binding)
+                    extractor=server.extractor, extraction_gate=server.extraction_gate, embedding_binding=server.embedding_binding,
+                    extraction_error=server.extraction_error, reflection_error=server.reflection_error)
             finally:
                 done.set()
                 watcher.join()
@@ -554,6 +565,12 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
             key = secrets.token_bytes(32)
             with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config,
                          extraction_config=extraction_config) as server:
+                # First cutover and explicit legacy mode retain their strict
+                # startup contract. Only an already activated ledger may restart
+                # with an unavailable optional provider and keep raw capture.
+                from .runtime import _load
+                if (activate_owner is not None or not _load(config).get('service_mode')) and (server.extraction_error or server.reflection_error):
+                    raise MemoryFailure(server.extraction_error or server.reflection_error or 'service_provider_unavailable')
                 if protected_root is not None and protected_keys is not None:
                     try:
                         from .protected import ProtectedInbox

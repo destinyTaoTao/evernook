@@ -233,6 +233,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerNone')));
+  extractionMode = 'configured_unavailable';
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnavailable')));
   extractionMode = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

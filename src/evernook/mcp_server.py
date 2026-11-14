@@ -211,7 +211,7 @@ def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: Sema
 
 def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
                      backend: EmbeddingBackend | None = None, context_config: Path | None = None, reflector: ReflectionEngine | None = None,
-                     defer_context_validation: bool = False
+                     defer_context_validation: bool = False, reflection_error: str | None = None
                      ) -> tuple[dict[str, tuple[type[Arguments], Callable[[Any], object], str]], HostContext | None, set[str]]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
@@ -277,6 +277,11 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
             query=args.query, mode=args.mode, topic_view_ids=tuple(args.topic_view_ids), timeout=args.timeout,
             current_input_id=args.current_input_id, allow_remote=args.allow_remote),
             'Explicit experimental memory reasoning using the trusted configured provider. Remote requires client allowlist and explicit opt-in. Temporary unverified inference; no external tools, publication, persona or vault authority.')
+    elif reflection_error is not None:
+        def unavailable_reflection(args: Reflect) -> object:
+            raise MemoryFailure(reflection_error)
+        operations['evernook_v1_reflect'] = (Reflect, unavailable_reflection,
+            'Configured reflection is unavailable; repair the trusted configuration and restart the memory service.')
     recall_tools = {"evernook_v1_reflect","evernook_v1_read_capture", "evernook_v1_search", "evernook_v1_recall", "evernook_v1_read", "evernook_v1_read_source", "evernook_v1_read_stream",
                     "evernook_v1_read_important", "evernook_v1_state", "evernook_v1_status", "evernook_v1_facts", "evernook_v1_experience", "evernook_v1_context"}
     restricted = set(operations) - recall_tools

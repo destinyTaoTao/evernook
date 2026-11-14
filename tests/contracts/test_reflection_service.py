@@ -16,6 +16,22 @@ from evernook.service import ServiceClient
 
 
 class ReflectionServiceTests(unittest.TestCase):
+    def test_invalid_provider_refuses_first_activation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix='evernook-reflection-activation-') as temporary:
+            root = Path(temporary)
+            config, access = initialize(root / 'runtime', client_id='owner', entry='owner')
+            owner_path = config.parent / 'mcp-access-owner.json'
+            owner_path.write_text(json.dumps(asdict(access)), encoding='utf-8')
+            profile = root / 'invalid-reflection.json'
+            profile.write_text('{', encoding='utf-8')
+            result = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(config),
+                '--activate-owner', str(owner_path), '--reflection-config', str(profile)], capture_output=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'invalid_config', result.stderr)
+            self.assertNotIn(str(profile).encode(), result.stderr)
+            self.assertFalse((config.parent / 'memory-service.json').exists())
+            self.assertIsNot(json.loads(config.read_text(encoding='utf-8')).get('service_mode'), True)
+
     def test_service_owned_configuration_read_only_mcp_bridge_and_secret_routing(self) -> None:
         with tempfile.TemporaryDirectory(prefix='evernook-reflection-service-') as temporary:
             root = Path(temporary)
@@ -29,7 +45,7 @@ class ReflectionServiceTests(unittest.TestCase):
             profile.write_text(json.dumps({'schema_version': 1, 'profile': 'qwen3-0.6b-experimental-reflection-v1',
                 'node': sys.executable, 'transformers_dir': str(root), 'model_dir': str(root), 'policy': {}}), encoding='utf-8')
             process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(config),
-                '--reflection-config', str(profile)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                '--activate-owner', str(owner_path), '--reflection-config', str(profile)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             try:
                 end = time.monotonic() + 15
                 while not (config.parent / 'memory-service.json').exists():
