@@ -458,6 +458,32 @@ class ManagementTests(unittest.TestCase):
         self.apply({"kind": "source_suppress", "message_id": span.message_id})
         self.assertEqual(self.ui.read(self.access, view="network_graph")["nodes"], [])
 
+    def test_graph_exposes_validated_roles_without_copying_sources(self) -> None:
+        from evernook.observations import ObservationDraft, ObservationRegistry
+        support = self.source('合成用户原话标记195')
+        spans = [support]
+        for role in ('assistant', 'tool'):
+            text = '合成' + role + '原话标记195'
+            self.seq += 1
+            receipt = self.runtime.submit(self.access, Event(Source('owner', 'synthetic-session', 'main', str(self.seq)),
+                role, self.seq, None, 'complete', text))
+            spans.append(EvidenceSpan(receipt.message_id, 1, 'original', 1, 0, len(text), text))
+        registry = ObservationRegistry(self.runtime)
+        draft = ObservationDraft('role-test', '合成观察结论', tuple(spans[:2]), (spans[2],), 'experience', None, None,
+                                 'synthetic-v1', 'synthetic-v1')
+        observation = registry.propose(self.access, 'role-observation', draft)
+        registry.decide(self.access, 'role-publish', observation.observation_id, observation.revision,
+                        action='publish', confirmation_id=support.message_id)
+        graph = self.ui.read(self.access, view='network_graph')
+        node, = graph['nodes']
+        self.assertEqual({edge['source_id']: edge['role'] for edge in node['edges']},
+                         {spans[0].message_id: 'user', spans[1].message_id: 'assistant', spans[2].message_id: 'tool'})
+        self.assertEqual({edge['source_id']: edge['kind'] for edge in node['edges']},
+                         {spans[0].message_id: 'support', spans[1].message_id: 'support', spans[2].message_id: 'counterevidence'})
+        self.assertNotIn('原话标记195', json.dumps(graph, ensure_ascii=False))
+        self.apply({'kind': 'source_suppress', 'message_id': spans[1].message_id})
+        self.assertEqual(self.ui.read(self.access, view='network_graph')['nodes'], [])
+
     def test_graph_pagination_retains_sparse_pages(self) -> None:
         for tag in ("alpha", "beta"):
             self.draft(tag)

@@ -7,6 +7,19 @@ the current validated content, revision and state. Source identifiers form
 edges labelled as evidence, support or counterevidence; source text is never
 copied into the response and opening a source performs a separate current read.
 
+Core 0.1.62 / dsh preview.53 adds the source role (`user`, `assistant` or `tool`)
+to each graph edge. Roles are read in bounded batches from the same authorized
+snapshot after evidence validation; missing or inconsistent sources fail closed.
+The console groups by source and labels the role, using unknown when an older
+service omits it or supplied roles disagree. A role does not prove truth,
+speaker identity or user confirmation; in particular a tool transcription is
+not promoted to a user statement. The graph still omits source text.
+
+#195 源码管理／主题回归 51 项、非 editable wheel 定向 4 项、源码真实已激活服务
+定向 1 项，以及源码／安装版页面组件各 2 项和 strict mypy 通过。合成测试覆盖
+用户、助手、工具、反证、撤回和旧服务缺字段；已激活服务测试确认图响应不复制
+原文。尚未对本次页面进行实际浏览器或大规模性能验收，日用门禁不变。
+
 Only active topics with a currently valid or conflicted snapshot contribute;
 topic nodes expose the definition title, snapshot revision and evidence edges,
 not the snapshot body. Paused, stale and expired topics are withheld. Topic

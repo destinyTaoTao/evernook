@@ -179,6 +179,23 @@ class MemoryManagement:
                     for stance in ('support', 'counterevidence'):
                         edges.extend({'source_id': span['message_id'], 'kind': stance} for span in observed[stance])
                 add('topic', topic.view_id, topic.definition.title, topic.snapshot_revision, topic.state, None, edges, True)
+        # Role is evidence provenance, not a claim about speaker identity or truth.
+        # Reuse this snapshot and bounded batches; never copy source text into the graph.
+        source_ids = list(dict.fromkeys(edge['source_id'] for node in nodes for edge in node['edges']))
+        roles: dict[str, str] = {}
+        for start_index in range(0, len(source_ids), 400):
+            batch = source_ids[start_index:start_index + 400]
+            placeholders = ','.join('?' for _ in batch)
+            rows_with_roles = db.execute(f"SELECT messages.id,json_extract(messages.event,'$.role') AS role FROM messages WHERE messages.id IN ({placeholders}) AND {_RECALLABLE}", batch).fetchall()
+            for row in rows_with_roles:
+                if row['role'] not in {'user', 'assistant', 'tool'}:
+                    raise MemoryFailure('source_unavailable')
+                roles[row['id']] = row['role']
+        if len(roles) != len(source_ids):
+            raise MemoryFailure('source_unavailable')
+        for node in nodes:
+            for edge in node['edges']:
+                edge['role'] = roles[edge['source_id']]
         return {'nodes': nodes, 'next_offset': offset + limit if has_more else None}
 
     def read(self, access: Access, *, view: str, offset: int = 0, limit: int = 25,

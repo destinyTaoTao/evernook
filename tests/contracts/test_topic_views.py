@@ -61,7 +61,7 @@ class TopicViewTests(unittest.TestCase):
         topics = [node for node in page['value']['nodes'] if node['kind'] == 'topic']
         self.assertEqual(len(topics), 1)
         self.assertEqual(topics[0]['label'], '湿地经历')
-        self.assertEqual(topics[0]['edges'], [{'source_id': source, 'kind': 'evidence'}])
+        self.assertEqual(topics[0]['edges'], [{'source_id': source, 'kind': 'evidence', 'role': 'user'}])
         self.assertFalse(ui.read(self.access, view='network_graph', entry='other')['nodes'])
         self.assertFalse(ui.read(self.access, view='network_graph', since='2021-01-01T00:00:00Z')['nodes'])
         with self.runtime._connection() as db:

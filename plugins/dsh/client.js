@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     privateCheck: '查看窗口结果', privateRetry: '重试未确认的记录', privateAbandon: '放弃这次重试', privateWaiting: '窗口请求已启动；结束前不能确认保存。', privateSaved: '本机窗口确认已加密保存。', privateCanceled: '窗口已关闭，本次未提交。', privateUnknown: '保存结果不确定。重试时请在本机窗口输入完全相同的内容；不同内容会被拒绝。放弃重试会丢弃编号，原记录仍可能已经保存。', privateNever: '尚未请求私密记录。', privateFailed: '窗口启动失败。', privateId: '重试编号', privateRestart: '编号只保留在当前宿主进程，重启前请记下。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
-    graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察', topic: '主题视图', valid: '有效', conflict: '冲突',
+    graph: '跨层关系', graphEvidence: '依据', sourceRole: '来源角色', sourceRoleHelp: '来源角色不证明内容真实或说话人身份；工具转写也不会自动成为用户确认。', profile: '画像', fact: '事实', observation: '观察', topic: '主题视图', valid: '有效', conflict: '冲突',
     topic_settings: '专题设置', topicNew: '新建专题', topicEdit: '编辑专题', topicTitle: '标题', topicPurpose: '用途', topicQuery: '检索问题', topicEntries: '入口（每行一个，留空表示不限）', topicSessions: '会话范围（JSON 数组，每项为 [入口, 会话]）', topicSources: '来源 ID（每行一个）', topicObservations: '观察键（每行一个）', topicSince: '起始时间（ISO，含）', topicUntil: '结束时间（ISO，不含）', topicTTL: '有效秒数', topicInterval: '刷新间隔秒数', topicMaxSources: '最大来源数', topicMaxChars: '最大字符数', topicPolicy: '策略版本', topicPause: '暂停刷新', topicResume: '恢复刷新', topicDelete: '删除专题', topicConfirm: '确认更改专题', topicControlHelp: '只更改派生专题，不删除原始记录。操作结果不确定时请刷新核对，勿重复新建。', topicUnknown: '未能确认专题操作结果。请核对刷新后的列表；新建失败时也可能已保存。', topicInvalid: '请检查专题范围和数值格式。', topicPending: '待刷新', topicPaused: '已暂停',
     networkLayer: '记忆层', networkCategory: '类别标识', networkCategoryHelp: '输入完整类别标识（含空格），例如 interest、milestone；留空显示全部。类别筛选会排除没有类别的主题。', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
     topic_needs_refresh: '需要刷新', topic_expired: '已过期', topic_pending: '待刷新', topic_paused: '已暂停', topic_empty: '暂无依据', topicEmpty: '尚无专题', topicEmptyHelp: '创建专题后，可以配置范围和刷新策略。', topicDeleteHelp: '专题定义和快照将永久删除；原始记录保留。',
@@ -55,7 +55,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     privateCheck: 'Check window result', privateRetry: 'Retry unconfirmed record', privateAbandon: 'Abandon this retry', privateWaiting: 'Window requested; the save is not confirmed until it finishes.', privateSaved: 'The local window confirmed encrypted storage.', privateCanceled: 'Window closed without submission.', privateUnknown: 'The save outcome is unknown. Retry with exactly the same text in the local window; different text is rejected. Abandoning discards the IDs; the record may already exist.', privateNever: 'No private record requested.', privateFailed: 'Window launch failed.', privateId: 'Retry IDs', privateRestart: 'IDs are held only by this host process; note them before restarting.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
-    graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation', topic: 'Topic view', valid: 'Valid', conflict: 'Conflict',
+    graph: 'Cross-layer links', graphEvidence: 'Evidence', sourceRole: 'Source role', sourceRoleHelp: 'The source role does not prove truth or speaker identity; tool transcripts are not automatically user-confirmed.', profile: 'Profile', fact: 'Fact', observation: 'Observation', topic: 'Topic view', valid: 'Valid', conflict: 'Conflict',
     topic_settings: 'Topic settings', topicNew: 'New topic', topicEdit: 'Edit topic', topicTitle: 'Title', topicPurpose: 'Purpose', topicQuery: 'Search question', topicEntries: 'Entries (one per line; empty means all)', topicSessions: 'Sessions (JSON array of [entry, session] pairs)', topicSources: 'Source IDs (one per line)', topicObservations: 'Observation keys (one per line)', topicSince: 'From time (ISO, inclusive)', topicUntil: 'Until time (ISO, exclusive)', topicTTL: 'Lifetime in seconds', topicInterval: 'Refresh interval in seconds', topicMaxSources: 'Maximum sources', topicMaxChars: 'Maximum characters', topicPolicy: 'Policy version', topicPause: 'Pause refresh', topicResume: 'Resume refresh', topicDelete: 'Delete topic', topicConfirm: 'Confirm topic change', topicControlHelp: 'Only the derived topic changes; original records remain. If the result is uncertain, refresh before creating another.', topicUnknown: 'The topic change could not be confirmed. Check the refreshed list; a new topic may already have been saved.', topicInvalid: 'Check the topic scope and numeric fields.', topicPending: 'Pending refresh', topicPaused: 'Paused',
     networkLayer: 'Memory layer', networkCategory: 'Category identifier', networkCategoryHelp: 'Enter the exact category identifier, including spaces, such as interest or milestone; leave empty for all. Topics have no category and are excluded when filtering.', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
     topic_needs_refresh: 'Needs refresh', topic_expired: 'Expired', topic_pending: 'Pending', topic_paused: 'Paused', topic_empty: 'No evidence', topicEmpty: 'No topics yet', topicEmptyHelp: 'Create a topic to configure its scope and refresh policy.', topicDeleteHelp: 'The topic definition and snapshots will be permanently deleted; original records remain.',
@@ -429,10 +429,12 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         const sources = new Map();
         for (const record of records) for (const edge of record.edges) {
           if (!sources.has(edge.source_id)) sources.set(edge.source_id, []);
-          sources.get(edge.source_id).push({ record, stance: edge.kind });
+          sources.get(edge.source_id).push({ record, stance: edge.kind, role: edge.role });
         }
         return [...sources].map(([id, linked], index) => h('article', { className: 'en-network-cluster', key: id },
           button(t('networkSource') + ' ' + (index + 1), () => openSource(id), { disabled: busy }),
+          h('span', { className: 'en-muted' }, t('sourceRole') + ': ' + t(['user', 'assistant', 'tool'].includes(linked[0].role)
+            && linked.every(item => item.role === linked[0].role) ? linked[0].role : 'unknown')),
           h('div', { className: 'en-network-edges', 'aria-label': t('sources') }, ...linked.map(({ record, stance }, n) =>
             h('div', { className: 'en-network-node', key: record.kind + ':' + record.id + ':' + n },
               h('span', { className: 'en-pill' }, t(record.kind)),
@@ -535,7 +537,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
                 ...['', 'identity', 'preference', 'interest', 'relation', 'goal', 'boundary'].map(name => h('option', { key: name, value: name }, t(name || 'all')))) : null,
               h('button', { type: 'submit', disabled: loading }, t('searchGo')), button(t('refresh'), refresh, { disabled: loading || busy })),
             tab === 'network' ? h(React.Fragment, null, h('p', { className: 'en-muted' }, t('networkHelp')),
-              h('p', { className: 'en-muted' }, t('networkCategoryHelp'))) : null,
+              h('p', { className: 'en-muted' }, t('networkCategoryHelp')),
+              networkLayer === 'graph' ? h('p', { className: 'en-muted' }, t('sourceRoleHelp')) : null) : null,
             tab === 'persona' ? h('div', { className: 'en-actions' }, h('p', { className: 'en-muted' }, t('personaIndependent')),
               button(t('personaNew'), () => setEditing({ kind: 'persona_set', block: 'identity', text: '' }), { disabled: busy || loading || !personaEditable }),
               !personaEditable ? h('p', { className: 'en-muted' }, t('personaUnsupported')) : null) : null,

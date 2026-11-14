@@ -529,6 +529,11 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(result), 2)
 
     def test_graph_topic_node_invalidates_after_second_client_write(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        self.start(['--activate-owner', str(owner)])
         def command(name: str, value: dict[str, object]) -> Any:
             return self.client.call(self.access, 'cli', {'command': name, 'input': value})
         self.client.call(self.access, 'remember', {'event': self.event()})
@@ -537,6 +542,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(command('topic-view-refresh', {'view_id': 'wetland', 'timeout': 10})['state'], 'valid')
         page = command('manage', {'action': 'read-versioned', 'view': 'network_graph'})
         self.assertTrue(any(node['kind'] == 'topic' for node in page['value']['nodes']))
+        self.assertTrue(all(edge['role'] == 'user' for node in page['value']['nodes'] for edge in node['edges']))
+        self.assertNotIn('合成：我喜欢在湿地观察白鹭。', json.dumps(page, ensure_ascii=False))
         paired = self.client.call(self.access, 'pair-client', {'client_id': 'peer-topic', 'entry': 'peer',
             'scopes': ['capture', 'recall']})
         peer = Access(**json.loads(Path(paired['access_file']).read_text(encoding='utf-8')))
