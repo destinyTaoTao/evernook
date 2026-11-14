@@ -149,7 +149,7 @@ class VaultVerifyTests(unittest.TestCase):
         def revoke(*args: Any, **kwargs: Any) -> object:
             nonlocal calls
             calls += 1
-            if calls == 3:
+            if calls == 4:
                 raise MemoryFailure('permission_denied')
             return original(*args, **kwargs)
         with patch.object(self.runtime, '_require_scope', side_effect=revoke):

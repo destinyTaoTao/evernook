@@ -12,6 +12,16 @@ from .vault_crypto import _decrypt_event, _unlock
 def verify_page(inbox: ProtectedInbox, access: Access, password: bytes, *,
                 after: str | None = None, limit: int = 10) -> dict[str, Any]:
     """Check one inbox page without returning a decrypted event or authorizing migration."""
+    from .protected import _require_protected_available
+    from .service_gate import ownership_gate
+    inbox.runtime._require_scope(access, 'admin', 'protected_verify')
+    with ownership_gate(inbox.runtime.root, exclusive=False, timeout=inbox.runtime._timeout):
+        _require_protected_available(inbox.runtime)
+        return _verify_page(inbox, access, password, after=after, limit=limit)
+
+
+def _verify_page(inbox: ProtectedInbox, access: Access, password: bytes, *,
+                 after: str | None, limit: int) -> dict[str, Any]:
     inbox.runtime._require_scope(access, 'admin', 'protected_verify')
     if type(limit) is not int or not 1 <= limit <= 20:
         raise MemoryFailure('invalid_page')

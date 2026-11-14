@@ -1,7 +1,7 @@
 """Opt-in encrypted inbox. Ordinary workers hold receiving/signing keys, never a decrypting key."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import hmac
@@ -108,6 +108,13 @@ def _public(path: Path) -> tuple[dict[str, Any], PublicKey, VerifyKey]:
 
 def initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Path, password: bytes) -> ProtectedInbox:
     """Trusted local initialization only. Neither this operation nor passwords are model tools."""
+    from .service_gate import ownership_gate
+    with ownership_gate(runtime.root, exclusive=False, timeout=runtime._timeout):
+        _require_protected_available(runtime)
+        return _initialize_protected_inbox(runtime, root, key_root, password)
+
+
+def _initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Path, password: bytes) -> ProtectedInbox:
     if not isinstance(password, bytes) or not 12 <= len(password) <= 1024:
         raise MemoryFailure("invalid_vault_password")
     root, key_root = external(root), external(key_root)
@@ -148,6 +155,18 @@ def initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Pat
     return ProtectedInbox(runtime, root, key_root)
 
 
+def _require_protected_available(runtime: MemoryRuntime, core: sqlite3.Connection | None = None) -> None:
+    from .missing_vault import read_state
+    if not runtime._service_owner and _load(runtime.root / 'runtime.json').get('service_mode'):
+        raise MemoryFailure('service_required')
+    if core is None:
+        with runtime._unguarded_connection() as db:
+            if read_state(runtime, db):
+                raise MemoryFailure('protected_restore_required')
+    elif read_state(runtime, core):
+        raise MemoryFailure('protected_restore_required')
+
+
 class ProtectedInbox:
     """Two durable stores: stage ciphertext, link the ordinary projection, then acknowledge linkage."""
 
@@ -162,21 +181,26 @@ class ProtectedInbox:
             self.inbox_id = str(row["inbox_id"])
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
-        verify_private_directory(self.root, extra_files=(self.root / "inbox.sqlite3",))
-        db: sqlite3.Connection | None = None
-        try:
-            db = sqlite3.connect(self.root / "inbox.sqlite3", timeout=1, isolation_level=None)
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA synchronous=FULL")
-            yield db
-        except sqlite3.Error as error:
-            code = getattr(error, "sqlite_errorcode", 0) & 255
-            raise MemoryFailure({sqlite3.SQLITE_BUSY: "storage_busy", sqlite3.SQLITE_LOCKED: "storage_busy",
-                sqlite3.SQLITE_FULL: "storage_full"}.get(code, "protected_storage_unavailable")) from None
-        finally:
-            if db is not None:
-                db.close()
+    def _connection(self, *, gate_db: sqlite3.Connection | None = None) -> Iterator[sqlite3.Connection]:
+        from .service_gate import ownership_gate
+        gate = (nullcontext() if gate_db is not None else
+                ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout))
+        with gate:
+            _require_protected_available(self.runtime, gate_db)
+            verify_private_directory(self.root, extra_files=(self.root / "inbox.sqlite3",))
+            db: sqlite3.Connection | None = None
+            try:
+                db = sqlite3.connect(self.root / "inbox.sqlite3", timeout=1, isolation_level=None)
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA synchronous=FULL")
+                yield db
+            except sqlite3.Error as error:
+                code = getattr(error, "sqlite_errorcode", 0) & 255
+                raise MemoryFailure({sqlite3.SQLITE_BUSY: "storage_busy", sqlite3.SQLITE_LOCKED: "storage_busy",
+                    sqlite3.SQLITE_FULL: "storage_full"}.get(code, "protected_storage_unavailable")) from None
+            finally:
+                if db is not None:
+                    db.close()
 
     def _writer(self) -> SigningKey:
         public, _, _ = _public(self.key_root / "receiving.json")
@@ -250,6 +274,7 @@ class ProtectedInbox:
             raise MemoryFailure('protected_binding_mismatch') from None
         with self.runtime._connection() as db:
             db.execute('BEGIN IMMEDIATE')
+            _require_protected_available(self.runtime, db)
             db.execute('CREATE TABLE IF NOT EXISTS protected_inbox_registry_v1 (inbox_id TEXT NOT NULL PRIMARY KEY, key_id TEXT NOT NULL)')
             db.execute('INSERT OR IGNORE INTO protected_inbox_registry_v1 VALUES (?,?)', (self.inbox_id, self.public['key_id']))
             row = db.execute('SELECT key_id FROM protected_inbox_registry_v1 WHERE inbox_id=?', (self.inbox_id,)).fetchone()

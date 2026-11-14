@@ -500,6 +500,7 @@ class _Server(socketserver.ThreadingTCPServer):
         self.key = key
         self.single_writer = False
         self.protected_inbox: ProtectedInbox | None = None
+        self.protected_state = 'unconfigured'
         self.display_gate = threading.BoundedSemaphore(1)
         self.context_config = context_config
         self.embedding_config = embedding_config
@@ -607,9 +608,14 @@ class _Handler(socketserver.BaseRequestHandler):
             if is_status and isinstance(result, dict):
                 result["service"] = {"independent": True, "single_writer": server.single_writer,
                     "protected_capture": server.protected_inbox is not None,
+                    "protected_state": server.protected_state,
                     "maintenance": server.maintenance_status()}
                 if isinstance(result.get("processing"), dict):
                     result["processing"]["consumer_running"] = server.maintenance is not None
+            elif (request.get('operation') == 'cli' and isinstance(result, dict)
+                    and request.get('arguments', {}).get('command') == 'manage'
+                    and request.get('arguments', {}).get('input') == {'action': 'read', 'view': 'status'}):
+                result['protected_state'] = server.protected_state
             from .serialization import result_value
             result = result_value(result)
             response: dict[str, object] = {"version": 1, "ok": True, "result": result}
@@ -631,13 +637,18 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
           allow_legacy_shared: bool = False, protected_root: Path | None = None,
-          protected_keys: Path | None = None, activate_verified_inbox: bool = False) -> None:
+          protected_keys: Path | None = None, activate_verified_inbox: bool = False,
+          activate_restored_without_vault: bool = False) -> None:
     if type(allow_legacy_shared) is not bool or (activate_owner is not None and allow_legacy_shared):
         raise MemoryFailure('invalid_service_mode')
     if (protected_root is None) != (protected_keys is None) or (protected_root is not None and allow_legacy_shared):
         raise MemoryFailure('invalid_protected_service_config')
     if type(activate_verified_inbox) is not bool or (activate_verified_inbox and
             (activate_owner is None or protected_root is None or protected_keys is None or allow_legacy_shared)):
+        raise MemoryFailure('invalid_protected_service_config')
+    if type(activate_restored_without_vault) is not bool or (activate_restored_without_vault and
+            (activate_owner is None or protected_root is not None or protected_keys is not None
+             or allow_legacy_shared or activate_verified_inbox)):
         raise MemoryFailure('invalid_protected_service_config')
     runtime = MemoryRuntime(config, service_owner=True)
     lock_path = runtime.root / "memory-service.lock"
@@ -661,12 +672,22 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 from .runtime import _load
                 if (activate_owner is not None or not _load(config).get('service_mode')) and (server.extraction_error or server.reflection_error):
                     raise MemoryFailure(server.extraction_error or server.reflection_error or 'service_provider_unavailable')
+                from .missing_vault import read_state, record_state
+                with runtime._connection(ownership_exclusive=True) as check:
+                    missing_vault = read_state(runtime, check)
+                if missing_vault and (protected_root is not None or allow_legacy_shared):
+                    raise MemoryFailure('protected_restore_required')
+                if missing_vault and not _load(config).get('service_mode') and not activate_restored_without_vault:
+                    raise MemoryFailure('protected_restore_required')
+                if missing_vault:
+                    server.protected_state = 'restored_missing'
                 if protected_root is not None and protected_keys is not None:
                     try:
                         from .protected import ProtectedInbox
                     except ImportError:
                         raise MemoryFailure('vault_dependency_missing') from None
                     server.protected_inbox = ProtectedInbox(runtime, protected_root, protected_keys)
+                    server.protected_state = 'configured'
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
@@ -679,12 +700,24 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         db.execute("BEGIN EXCLUSIVE")
                         if 'admin' not in runtime._authorize(owner).scopes:
                             raise MemoryFailure('permission_denied')
-                        if activate_verified_inbox:
+                        if activate_restored_without_vault:
+                            record_state(runtime, db)
+                            # The marker commits before service_mode. A crash leaves a
+                            # retryable unactivated ledger, never an unmarked active one.
+                            db.execute('COMMIT')
+                            db.execute('BEGIN EXCLUSIVE')
+                            if 'admin' not in runtime._authorize(owner).scopes or not read_state(runtime, db):
+                                raise MemoryFailure('permission_denied')
+                            value = _load(config)
+                            _atomic_json(config, {**value, 'service_mode': True, 'restored_missing_vault': True})
+                            db.execute('COMMIT')
+                            server.protected_state = 'restored_missing'
+                        elif activate_verified_inbox:
                             if _load(config).get('service_mode') is True:
                                 raise MemoryFailure('invalid_service_mode')
                             assert server.protected_inbox is not None
                             from .vault_migration import verify_for_activation
-                            with server.protected_inbox._connection() as store:
+                            with server.protected_inbox._connection(gate_db=db) as store:
                                 store.execute('BEGIN IMMEDIATE')
                                 verify_for_activation(runtime, server.protected_inbox, owner, db, store)
                                 value = _load(config)
@@ -704,7 +737,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                                     and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
                                 raise MemoryFailure('protected_cutover_requires_migration')
                             if server.protected_inbox is not None:
-                                with server.protected_inbox._connection() as inbox:
+                                with server.protected_inbox._connection(gate_db=db) as inbox:
                                     if inbox.execute('SELECT 1 FROM objects LIMIT 1').fetchone():
                                         raise MemoryFailure('protected_cutover_requires_migration')
                             value = _load(config)
@@ -712,9 +745,16 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                             db.execute("COMMIT")
                 with runtime._connection(ownership_exclusive=True) as db:
                     activated = _load(config).get('service_mode') is True
+                    if read_state(runtime, db):
+                        if server.protected_inbox is not None or allow_legacy_shared:
+                            raise MemoryFailure('protected_restore_required')
+                        server.protected_state = 'restored_missing'
                     if not activated:
                         if not allow_legacy_shared:
                             raise MemoryFailure('service_activation_required')
+                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone()
+                                and db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()):
+                            raise MemoryFailure('protected_cutover_requires_migration')
                         if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
                                 and db.execute('SELECT 1 FROM protected_links_v1 LIMIT 1').fetchone()):
                             raise MemoryFailure('protected_cutover_requires_migration')
@@ -751,6 +791,7 @@ def main() -> None:
     parser.add_argument("--protected-inbox", type=Path)
     parser.add_argument("--protected-keys", type=Path)
     parser.add_argument('--activate-verified-inbox', action='store_true')
+    parser.add_argument('--activate-restored-without-vault', action='store_true')
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
@@ -758,7 +799,8 @@ def main() -> None:
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
             allow_legacy_shared=args.allow_legacy_shared, protected_root=args.protected_inbox,
-            protected_keys=args.protected_keys, activate_verified_inbox=args.activate_verified_inbox)
+            protected_keys=args.protected_keys, activate_verified_inbox=args.activate_verified_inbox,
+            activate_restored_without_vault=args.activate_restored_without_vault)
     except KeyboardInterrupt:
         pass
     except MemoryFailure as error:

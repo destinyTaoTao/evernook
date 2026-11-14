@@ -280,7 +280,7 @@ class VaultMigrationTests(unittest.TestCase):
         self.inbox.submit(self.owner, self.event)
         prepare(self.runtime, self.inbox, self.owner, self.password)
         now = datetime.now(timezone.utc)
-        with self.runtime._connection(ownership_exclusive=True) as core, self.inbox._connection() as store:
+        with self.runtime._connection(ownership_exclusive=True) as core, self.inbox._connection(gate_db=core) as store:
             core.execute('BEGIN IMMEDIATE')
             store.execute('BEGIN IMMEDIATE')
             with patch('evernook.vault_migration.datetime') as clock:

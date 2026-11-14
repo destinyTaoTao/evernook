@@ -91,17 +91,22 @@ class LocalDisplayRequest:
             self._used = True  # Wrong password, revoked state, and downstream failure also consume this request.
         try:
             self.inbox.runtime._require_scope(self.access, 'recall', 'vault_local_display')
-            private = _unlock(self.inbox, password)
-            # ACL, derivation, verification and audit all precede the short ordinary write lock.
-            with self.inbox._connection() as db:
-                row = db.execute("SELECT * FROM objects WHERE id=?", (self.object_id,)).fetchone()
-                if row is None or row["state"] != "protected_linked":
-                    raise MemoryFailure("protected_link_unavailable")
-                event = _decrypt_event(self.inbox, row, private, expected_envelope=self._envelope, expected_bound=self._bound)
+            from .protected import _require_protected_available
+            from .service_gate import ownership_gate
+            # A missing-vault transition must not start while a key is being unlocked.
+            with ownership_gate(self.inbox.runtime.root, exclusive=False, timeout=self.inbox.runtime._timeout):
+                _require_protected_available(self.inbox.runtime)
+                private = _unlock(self.inbox, password)
+                with self.inbox._connection() as db:
+                    row = db.execute("SELECT * FROM objects WHERE id=?", (self.object_id,)).fetchone()
+                    if row is None or row["state"] != "protected_linked":
+                        raise MemoryFailure("protected_link_unavailable")
+                    event = _decrypt_event(self.inbox, row, private, expected_envelope=self._envelope, expected_bound=self._bound)
             self._best_effort_audit("authorization_attempted")
             self.inbox.runtime._require_scope(self.access, 'recall', 'vault_local_display')
             with self.inbox.runtime._connection() as core:
                 core.execute("BEGIN IMMEDIATE")
+                _require_protected_available(self.inbox.runtime, core)
                 state = self.inbox.runtime._state(core, self.message_id)
                 if state.status != "active" or state.version != self.state_version:
                     raise MemoryFailure("vault_source_unavailable")

@@ -164,8 +164,10 @@ def prepare(runtime: MemoryRuntime, inbox: ProtectedInbox, access: Access, passw
         if inventory_statement != 'STOPPED_AND_INVENTORIED':
             raise MemoryFailure('protected_migration_inventory_unconfirmed')
         material_before = _materials(inbox)
+        from .protected import _require_protected_available
+        _require_protected_available(runtime, core)
         private = _unlock(inbox, password)
-        with inbox._connection() as store:
+        with inbox._connection(gate_db=core) as store:
             store.execute('BEGIN IMMEDIATE')
             snapshot = _snapshot(runtime, inbox, core, store, private=private, deadline=deadline)
             if snapshot['material'] != material_before or _materials(inbox) != material_before:

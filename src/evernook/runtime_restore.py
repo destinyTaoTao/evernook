@@ -51,6 +51,11 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
         raise MemoryFailure("unsafe_archive_path")
     archive = EvidenceArchive(source)
     expected = archive.status()
+    # A device-bound missing-vault marker cannot be republished under a new
+    # path without a freshly authenticated recovery receipt.
+    with _database(source / 'evidence.sqlite3') as archived:
+        if archived.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restored_missing_vault_v1'").fetchone():
+            raise MemoryFailure('protected_restore_required')
     request: dict[str, object] = {"version": 1, "destination": str(destination), "source_sha": expected.sha256,
                "control_head": checkpoint.control_head, "ledger_id": checkpoint.ledger_id,
                "client_id": client_id, "entry": entry, "synchronization": "none",
@@ -69,6 +74,9 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
                 raise MemoryFailure("archive_destination_exists")
             with runtime._connection() as live:
                 live.execute("BEGIN IMMEDIATE")
+                from .missing_vault import read_state
+                if read_state(runtime, live):
+                    raise MemoryFailure('protected_restore_required')
                 if not hmac.compare_digest(_control_head(live, runtime._fingerprint_key), checkpoint.control_head):
                     raise MemoryFailure("archive_checkpoint_stale")
                 with closing(sqlite3.connect((destination / "memory.sqlite3").as_uri() + "?mode=ro", uri=True)) as existing:
@@ -86,7 +94,7 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
             previous_runtime._authorize(previous_access)
             return destination / "runtime.json", previous_access
         except MemoryFailure as error:
-            if error.code in {"archive_checkpoint_stale", "archive_forbidden", "unauthorized"}:
+            if error.code in {"archive_checkpoint_stale", "archive_forbidden", "unauthorized", "protected_restore_required", "protected_recovery_proof_invalid"}:
                 raise
             raise MemoryFailure("archive_destination_exists") from None
         except (OSError, sqlite3.Error, KeyError, TypeError):
@@ -95,6 +103,9 @@ def publish_replayed_runtime(runtime: MemoryRuntime, access: Access, source: Pat
     try:
         with runtime._connection() as live:
             live.execute("BEGIN IMMEDIATE")
+            from .missing_vault import read_state
+            if read_state(runtime, live):
+                raise MemoryFailure('protected_restore_required')
             if archive.control_coverage(runtime, access, checkpoint=checkpoint).state != "current_at_check":
                 raise MemoryFailure("archive_control_incomplete")
             with tempfile.TemporaryDirectory(prefix=".evernook-runtime-restore-", dir=destination.parent) as temporary:

@@ -9,6 +9,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
   let validation = { embedding: 'valid', context: 'invalid', reflection: 'valid', extraction: 'valid' };
   let modelIdentity = { embedding: { provider: 'local-minilm', model: 'paraphrase-multilingual-minilm-l12-v2', version: 'b'.repeat(64) } };
+  let protectedState = 'restored_missing';
   let dailyBudget = { state: 'ready', utc_day: '2030-01-02', reserved_micro_usd: 120000, remaining_micro_usd: 380000, limit_micro_usd: 500000 };
   let graphRole = 'assistant';
   let graphConfirmation = 'not_recorded';
@@ -81,6 +82,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
         supported_actions: personaSupported ? ['persona_set'] : [], ...(validation ? { configuration_validation: validation } : {}),
         ...(modelIdentity ? { model_identity: modelIdentity } : {}),
+        ...(protectedState ? { protected_state: protectedState } : {}),
         ...(dailyBudget ? { reflection_daily_budget: dailyBudget } : {}),
         ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned',
           ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
@@ -158,6 +160,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticPrivate: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerLocal')));
+  assert.ok(find(tree, node => node.children?.includes('protectedState: protectedMissing')));
   assert.ok(find(tree, node => node.props?.title === 'b'.repeat(64) && node.children?.some(child => typeof child === 'string' && child.includes('local-minilm'))));
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflection: providerRemote')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerLocal')));
@@ -286,10 +289,12 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflectionFormat: validationUnknown')));
   assert.ok(find(tree, node => node.children?.includes('dailyBudget: dailyUnknown')));
   statusModelsAvailable = false;
+  protectedState = undefined;
   modelIdentity = { embedding: { provider: 'untrusted-secret', model: 'bad', version: 'b'.repeat(64) } };
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerUnknown')));
+  assert.ok(find(tree, node => node.children?.includes('protectedState: providerUnknown')));
   assert.equal(find(tree, node => node.children?.some(child => typeof child === 'string' && child.includes('untrusted-secret'))), undefined);
   modelIdentity = null;
   statusModelsAvailable = true;
