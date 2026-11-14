@@ -142,6 +142,91 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(saved['complete'])
         self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message']['message_id']})['event'], self.event())
 
+    def test_valid_embedding_configuration_change_requires_restart(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        config_path = Path(self.temporary.name) / 'synthetic-embedding.json'
+        config = {'schema_version': 2, 'provider': 'local-minilm', 'node': str(Path(self.temporary.name) / 'node'),
+                  'transformers_dir': str(Path(self.temporary.name) / 'deps'), 'model_dir': str(Path(self.temporary.name) / 'model-a')}
+        config_path.write_text(json.dumps(config), encoding='utf-8')
+        self.start(['--activate-owner', str(owner), '--embedding-config', str(config_path)])
+        status_args = {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}}
+        self.assertNotEqual(self.client.call(self.access, 'mcp', status_args)['semantic']['state'], 'unavailable')
+        config['model_dir'] = str(Path(self.temporary.name) / 'model-b')
+        config_path.write_text(json.dumps(config), encoding='utf-8')
+        changed = self.client.call(self.access, 'mcp', status_args)
+        self.assertEqual(changed['semantic']['error_code'], 'embedding_config_changed')
+        diagnostics = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnostics['configuration_validation']['embedding'], 'restart_required')
+        saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_remember',
+            'arguments': {'event': self.event()}})
+        self.assertTrue(saved['original_saved'])
+        with self.assertRaisesRegex(MemoryFailure, 'embedding_config_changed'):
+            self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_recall',
+                'arguments': {'query': '合成'}})
+        for command, value in (('recall', {'query': '合成'}), ('topic-view-status', {}),
+                               ('manage', {'action': 'read', 'view': 'network_graph'})):
+            with self.subTest(command=command), self.assertRaisesRegex(MemoryFailure, 'embedding_config_changed'):
+                self.client.call(self.access, 'cli', {'command': command, 'input': value})
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        self.start(['--embedding-config', str(config_path)])
+        self.assertNotEqual(self.client.call(self.access, 'mcp', status_args)['semantic']['state'], 'unavailable')
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message_id']})['event'], self.event())
+
+    def test_embedding_repaired_after_invalid_start_requires_restart(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        config_path = Path(self.temporary.name) / 'synthetic-embedding.json'
+        config_path.write_text('{', encoding='utf-8')
+        self.start(['--activate-owner', str(owner), '--embedding-config', str(config_path),
+                    '--maintenance-access', str(owner), '--maintenance-interval', '0.2'])
+        args = {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}}
+        self.assertEqual(self.client.call(self.access, 'mcp', args)['semantic']['error_code'], 'invalid_config')
+        config_path.write_text(json.dumps({'schema_version': 2, 'provider': 'local-minilm',
+            'node': str(Path(self.temporary.name) / 'node'), 'transformers_dir': str(Path(self.temporary.name) / 'deps'),
+            'model_dir': str(Path(self.temporary.name) / 'model')}), encoding='utf-8')
+        self.assertEqual(self.client.call(self.access, 'mcp', args)['semantic']['error_code'], 'embedding_config_changed')
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        self.start(['--embedding-config', str(config_path)])
+        self.assertNotEqual(self.client.call(self.access, 'mcp', args)['semantic']['state'], 'unavailable')
+
+    def test_reflection_rejects_changed_service_embedding_before_model_call(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from evernook.embedding import ServiceEmbedding
+        from evernook.service import dispatch
+        config_path = Path(self.temporary.name) / 'reflection-embedding.json'
+        value = {'schema_version': 2, 'provider': 'local-minilm', 'node': str(Path(self.temporary.name) / 'node'),
+                 'transformers_dir': str(Path(self.temporary.name) / 'deps'), 'model_dir': str(Path(self.temporary.name) / 'a')}
+        config_path.write_text(json.dumps(value), encoding='utf-8')
+        binding = ServiceEmbedding(config_path)
+        model_call = Mock(return_value={'synthetic': True})
+        reflector = SimpleNamespace(reflect=model_call)
+        request = {'version': 1, 'access': asdict(self.access), 'operation': 'cli',
+                   'arguments': {'command': 'reflect', 'input': {'query': '合成'}}}
+        runtime = MemoryRuntime(self.config)
+        self.assertEqual(dispatch(runtime, request, embedding_config=config_path, embedding_binding=binding,
+                                  reflector=reflector), {'synthetic': True})  # type: ignore[arg-type]
+        mcp_request = {'version': 1, 'access': asdict(self.access), 'operation': 'mcp',
+                       'arguments': {'profile': 'trusted-host', 'name': 'evernook_v1_reflect', 'arguments': {'query': '合成'}}}
+        self.assertEqual(dispatch(runtime, mcp_request, embedding_config=config_path, embedding_binding=binding,
+                                  reflector=reflector), {'synthetic': True})  # type: ignore[arg-type]
+        value['model_dir'] = str(Path(self.temporary.name) / 'b')
+        config_path.write_text(json.dumps(value), encoding='utf-8')
+        with self.assertRaisesRegex(MemoryFailure, 'embedding_config_changed'):
+            dispatch(runtime, request, embedding_config=config_path, embedding_binding=binding,
+                     reflector=reflector)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(MemoryFailure, 'embedding_config_changed'):
+            dispatch(runtime, mcp_request, embedding_config=config_path, embedding_binding=binding,
+                     reflector=reflector)  # type: ignore[arg-type]
+        self.assertEqual(model_call.call_count, 2)
+
     def test_standalone_mcp_still_rejects_invalid_context_at_construction(self) -> None:
         from evernook.mcp_server import build_operations
         context_config = Path(self.temporary.name) / 'invalid-context.json'

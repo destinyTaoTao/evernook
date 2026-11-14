@@ -10,7 +10,7 @@ from typing import Any
 
 from .maintenance import MaintenanceBudget, NavigationMaintenance
 from .models import Access, MemoryFailure
-from .embedding import load_embedding
+from .embedding import ServiceEmbedding, load_embedding
 from .semantic import SemanticRecall
 from .runtime import MemoryRuntime
 from .scheduler import ConsolidationScheduler
@@ -20,7 +20,8 @@ from .topic_views import TopicViews
 
 class ServiceMaintenance:
     def __init__(self, runtime: MemoryRuntime, access_path: Path, interval: float,
-                 navigation_policies: tuple[str, ...], stopping: threading.Event, *, embedding_config: Path | None = None):
+                 navigation_policies: tuple[str, ...], stopping: threading.Event, *, embedding_config: Path | None = None,
+                 embedding_binding: ServiceEmbedding | None = None):
         if not math.isfinite(interval) or not 0.2 <= interval <= 3600:
             raise MemoryFailure("invalid_service_maintenance_interval")
         if len(navigation_policies) > 16 or len(set(navigation_policies)) != len(navigation_policies):
@@ -30,7 +31,15 @@ class ServiceMaintenance:
         for scope in ("recall", "maintain", "accept"):
             runtime._require_scope(access, scope, "service_maintenance")
         self.interval, self.policies, self.stopping = interval, navigation_policies, stopping
-        self.semantic = SemanticRecall(runtime, load_embedding(embedding_config)) if embedding_config is not None else None
+        self.embedding_binding = embedding_binding
+        self.semantic: SemanticRecall | None = None
+        if embedding_config is not None:
+            try:
+                backend = embedding_binding.current() if embedding_binding is not None else load_embedding(embedding_config)
+                self.semantic = SemanticRecall(runtime, backend)
+            except MemoryFailure:
+                if embedding_binding is None:
+                    raise
         self.lock = threading.Lock()
         self.state: dict[str, Any] = {"enabled": True, "ticks": 0, "error": None, "skipped": None}
         self.thread = threading.Thread(target=self.run, name="evernook-service-maintenance")
@@ -69,7 +78,14 @@ class ServiceMaintenance:
         if reason:
             return {"skipped": reason}
         semantic = None
-        if self.semantic is not None:
+        binding_error = None
+        if self.embedding_binding is not None:
+            try:
+                self.embedding_binding.current()
+            except MemoryFailure as failure:
+                binding_error = failure.code
+                semantic = {"state": "unavailable", "error_code": failure.code}
+        if self.semantic is not None and binding_error is None:
             try:
                 semantic = asdict(self.semantic.refresh(access, limit=1, timeout=5, cancel=signal))
             except MemoryFailure as failure:
@@ -91,6 +107,10 @@ class ServiceMaintenance:
             observations = {'state': 'unavailable', 'error_code': failure.code}
         views = None
         try:
+            if binding_error is not None:
+                raise MemoryFailure(binding_error)
+            if self.embedding_binding is not None:
+                self.embedding_binding.current()
             views = TopicViews(self.runtime, self.semantic).tick(access, timeout=5, cancel=signal)
         except MemoryFailure as failure:
             reason = signal.reason()

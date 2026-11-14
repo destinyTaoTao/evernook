@@ -64,7 +64,10 @@ def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
 
 def load_embedding(path: Path) -> EmbeddingBackend:
     """Select a trusted built-in local backend; never import a caller-specified module."""
-    config = _load(external(path))
+    return _embedding_from_config(_load(external(path)))
+
+
+def _embedding_from_config(config: dict[str, Any]) -> EmbeddingBackend:
     if type(config.get('schema_version')) is not int:
         raise MemoryFailure('invalid_embedding_config')
     if config['schema_version'] == 1:
@@ -74,6 +77,32 @@ def load_embedding(path: Path) -> EmbeddingBackend:
         normalized['schema_version'] = 1
         return LocalMiniLM._from_config(normalized)
     raise MemoryFailure('invalid_embedding_config')
+
+
+class ServiceEmbedding:
+    """Bind one backend to a service lifetime; changed settings need a restart."""
+
+    def __init__(self, path: Path):
+        self.path = external(path)
+        self.identity: str | None = None
+        self.backend: EmbeddingBackend | None = None
+        self.error: str | None = None
+        try:
+            config = _load(self.path)
+            self.identity = _json(config)
+            self.backend = _embedding_from_config(config)
+        except MemoryFailure as failure:
+            # Optional invalid configuration must not block unrelated raw capture.
+            self.error = failure.code
+
+    def current(self) -> EmbeddingBackend:
+        config = _load(self.path)
+        if self.identity is None or _json(config) != self.identity:
+            raise MemoryFailure('embedding_config_changed')
+        if self.error is not None:
+            raise MemoryFailure(self.error)
+        assert self.backend is not None
+        return self.backend
 
 
 # Hashes from the already prepared, pinned R0 candidate. No weights are distributed.

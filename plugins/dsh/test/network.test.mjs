@@ -237,6 +237,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnknown')));
+  validation = { embedding: 'restart_required', context: 'valid' };
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticEmbeddingFormat: validationRestart')));
   validation = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

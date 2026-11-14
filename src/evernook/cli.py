@@ -8,11 +8,11 @@ import json
 from pathlib import Path
 import sys
 import threading
-from typing import Any, NoReturn
+from typing import Any, Callable, NoReturn
 
 from .models import Access, Change, Event, ImportantMark, MemoryFailure, Source
 from .runtime import MemoryRuntime, initialize, pair_client
-from .embedding import load_embedding
+from .embedding import EmbeddingBackend, load_embedding
 from .semantic import SemanticRecall
 
 
@@ -242,9 +242,15 @@ def _parser() -> Parser:
 
 def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = None,
              service_runtime: MemoryRuntime | None = None, service_access: Access | None = None,
-             service_cancel: threading.Event | None = None) -> object:
+             service_cancel: threading.Event | None = None,
+             service_embedding: Callable[[], EmbeddingBackend] | None = None) -> object:
     def read_input() -> dict[str, Any]:
         return dict(input_value) if input_value is not None else _input()
+
+    def embedding() -> EmbeddingBackend | None:
+        if service_embedding is not None:
+            return service_embedding()
+        return load_embedding(args.embedding_config) if args.embedding_config else None
 
     if args.command.startswith("vault-"):
         try:
@@ -328,7 +334,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         from .reflection_model import from_file
         if args.reflection_config is None:
             raise MemoryFailure('reflection_model_unconfigured')
-        backend = load_embedding(args.embedding_config) if args.embedding_config else None
+        backend = embedding()
         reflector = from_file(runtime, SemanticRecall(runtime, backend), args.reflection_config)
         value = read_input()
         if args.command == 'reflect-configure':
@@ -349,7 +355,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             and any(isinstance(item, dict) and item.get('view') in {'network_graph', 'topic_settings'} for item in value['requests']))
         if graph and getattr(args, 'embedding_config', None) is not None:
             from .topic_views import TopicViews
-            backend = load_embedding(args.embedding_config)
+            backend = embedding()
             management = MemoryManagement(runtime, TopicViews(runtime, SemanticRecall(runtime, backend)))
         else:
             management = MemoryManagement(runtime)
@@ -435,7 +441,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
     if args.command.startswith('topic-view-'):
         from .topic_views import TopicViewDefinition, TopicViews
         from .topic_view_refresh import view_budget
-        backend = load_embedding(args.embedding_config) if args.embedding_config else None
+        backend = embedding()
         topic_views = TopicViews(runtime, SemanticRecall(runtime, backend))
         value = read_input()
         if args.command == 'topic-view-status':
@@ -621,7 +627,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             value["resolves"] = tuple(value["resolves"])
         return registry.decide(access, FactDecision(**value))
     if args.command in ("recall", "refresh-semantic", "semantic-status"):
-        backend = load_embedding(args.embedding_config) if args.embedding_config else None
+        backend = embedding()
         workflow = SemanticRecall(runtime, backend)
         if args.command == "recall":
             return workflow.recall(access, **read_input())

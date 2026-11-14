@@ -207,3 +207,37 @@ class ServiceMaintenanceTests(unittest.TestCase):
         result = maintenance.tick()
         self.assertEqual(result["semantic"]["error_code"], "embedding_timeout")
         self.assertEqual(result["scheduler"]["processed"], 1)
+
+    def test_changed_service_embedding_stops_semantic_and_topic_maintenance(self) -> None:
+        from evernook.embedding import ServiceEmbedding
+        self.runtime.submit(self.access, Event(Source('test', 'embedding-config', 'main', '1'),
+            'user', 1, None, 'complete', '合成：后台消息'))
+        path = self.config.parent.parent / 'embedding-config.json'
+        value = {'schema_version': 2, 'provider': 'local-minilm', 'node': str(self.config.parent.parent / 'node'),
+                 'transformers_dir': str(self.config.parent.parent / 'deps'), 'model_dir': str(self.config.parent.parent / 'a')}
+        path.write_text(json.dumps(value), encoding='utf-8')
+        binding = ServiceEmbedding(path)
+        maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
+            embedding_config=path, embedding_binding=binding)
+        value['model_dir'] = str(self.config.parent.parent / 'b')
+        path.write_text(json.dumps(value), encoding='utf-8')
+        result = maintenance.tick()
+        self.assertEqual(result['semantic']['error_code'], 'embedding_config_changed')
+        self.assertEqual(result['topic_views']['error_code'], 'embedding_config_changed')
+        self.assertEqual(result['scheduler']['processed'], 1)
+        assert maintenance.semantic is not None
+        self.assertEqual(maintenance.semantic.status(self.access).stored_vectors, 0)
+
+    def test_invalid_startup_embedding_keeps_independent_maintenance_running(self) -> None:
+        from evernook.embedding import ServiceEmbedding
+        self.runtime.submit(self.access, Event(Source('test', 'invalid-embedding', 'main', '1'),
+            'user', 1, None, 'complete', '合成：独立维护'))
+        path = self.config.parent.parent / 'invalid-embedding.json'
+        path.write_text('{', encoding='utf-8')
+        binding = ServiceEmbedding(path)
+        maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
+            embedding_config=path, embedding_binding=binding)
+        result = maintenance.tick()
+        self.assertEqual(result['semantic']['error_code'], 'invalid_config')
+        self.assertEqual(result['topic_views']['error_code'], 'invalid_config')
+        self.assertEqual(result['scheduler']['processed'], 1)

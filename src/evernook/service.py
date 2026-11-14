@@ -17,6 +17,7 @@ import time
 from typing import Any, TYPE_CHECKING
 
 from .models import Access, Event, MemoryFailure, Source
+from .embedding import ServiceEmbedding
 from .paths import external, verify_private_directory
 from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, pair_client
 from .semantic import SemanticRecall
@@ -165,7 +166,8 @@ class ServiceClient:
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
              context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
              protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None,
-             extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None) -> object:
+             extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None,
+             embedding_binding: ServiceEmbedding | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -261,7 +263,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         embedding_error = None
         if needs_embedding and embedding_config is not None:
             try:
-                backend = load_embedding(embedding_config)
+                backend = embedding_binding.current() if embedding_binding is not None else load_embedding(embedding_config)
             except MemoryFailure as failure:
                 if arguments.get('name') != 'evernook_v1_status':
                     raise
@@ -281,6 +283,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if name == "evernook_v1_recall":
             return SemanticRecall(runtime, backend).recall(access, **parsed.model_dump(), cancel=cancel)
         if name == 'evernook_v1_reflect' and reflector is not None:
+            if embedding_binding is not None:
+                embedding_binding.current()
             value = parsed.model_dump()
             value['topic_view_ids'] = tuple(value['topic_view_ids'])
             return reflector.reflect(access, **value, cancel=cancel)
@@ -319,7 +323,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             return dispatch(runtime, {**request, 'operation': 'mcp',
                 'arguments': {'name': 'evernook_v1_context', 'profile': 'trusted-host',
                     'arguments': arguments['input']}}, cancel=cancel, context_config=context_config,
-                embedding_config=embedding_config, reflector=reflector)
+                embedding_config=embedding_config, reflector=reflector, embedding_binding=embedding_binding)
         if command in {'reflect', 'reflect-configure'}:
             if reflector is None:
                 raise MemoryFailure('reflection_model_unconfigured')
@@ -328,6 +332,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 if value:
                     raise MemoryFailure('invalid_arguments')
                 return reflector.configure(access)
+            if embedding_binding is not None:
+                embedding_binding.current()
             if 'topic_view_ids' in value:
                 if not isinstance(value['topic_view_ids'], list):
                     raise MemoryFailure('invalid_arguments')
@@ -343,7 +349,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if command in ("recall", "manage") or command.startswith('topic-view-'):
             namespace.embedding_config = embedding_config
         result = _execute(namespace, input_value=arguments["input"],
-            service_runtime=runtime, service_access=access, service_cancel=cancel)
+            service_runtime=runtime, service_access=access, service_cancel=cancel,
+            service_embedding=embedding_binding.current if embedding_binding is not None else None)
         if (command == 'manage' and arguments['input'] == {'action': 'read', 'view': 'status'}
                 and isinstance(result, dict)):
             from .reflection import RemoteModel
@@ -358,7 +365,11 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                         HostContext(runtime, SemanticRecall(runtime), path).status()
                     else:
                         load_embedding(path)
-                except MemoryFailure:
+                        if embedding_binding is not None:
+                            embedding_binding.current()
+                except MemoryFailure as failure:
+                    if failure.code == 'embedding_config_changed':
+                        return 'restart_required'
                     return 'invalid'
                 return 'valid'
 
@@ -386,7 +397,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         return runtime.search(access, **arguments)
     if operation == "recall":
         from .embedding import load_embedding
-        backend = load_embedding(embedding_config) if embedding_config is not None else None
+        backend = (embedding_binding.current() if embedding_binding is not None else load_embedding(embedding_config)) if embedding_config is not None else None
         return SemanticRecall(runtime, backend).recall(access, **arguments, cancel=cancel)
     if operation == "status" and not arguments:
         return {"capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
@@ -408,6 +419,7 @@ class _Server(socketserver.ThreadingTCPServer):
         self.display_gate = threading.BoundedSemaphore(1)
         self.context_config = context_config
         self.embedding_config = embedding_config
+        self.embedding_binding = ServiceEmbedding(embedding_config) if embedding_config is not None else None
         self.extractor: ExtractorBackend | None = None
         self.extraction_gate = threading.BoundedSemaphore(1)
         if extraction_config is not None:
@@ -415,10 +427,9 @@ class _Server(socketserver.ThreadingTCPServer):
             self.extractor = load_extraction(extraction_config)
         self.reflector: ReflectionEngine | None = None
         if reflection_config is not None:
-            from .embedding import load_embedding
             from .reflection_model import from_file
             self.reflector = from_file(runtime, SemanticRecall(runtime,
-                load_embedding(embedding_config) if embedding_config else None), reflection_config)
+                self.embedding_binding.current() if self.embedding_binding else None), reflection_config)
         self.slots = threading.BoundedSemaphore(8)
         self.stopping = threading.Event()
         from .service_maintenance import ServiceMaintenance
@@ -489,7 +500,7 @@ class _Handler(socketserver.BaseRequestHandler):
                 result = dispatch(server.runtime, request, cancel=cancel,
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
                     protected_inbox=server.protected_inbox, display_gate=server.display_gate,
-                    extractor=server.extractor, extraction_gate=server.extraction_gate)
+                    extractor=server.extractor, extraction_gate=server.extraction_gate, embedding_binding=server.embedding_binding)
             finally:
                 done.set()
                 watcher.join()
@@ -552,7 +563,8 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,
-                        navigation_policies, server.stopping, embedding_config=embedding_config)
+                        navigation_policies, server.stopping, embedding_config=embedding_config,
+                        embedding_binding=server.embedding_binding)
                 if activate_owner is not None:
                     owner = runtime.access_from_file(activate_owner)
                     runtime._require_scope(owner, "admin", "activate_service")
