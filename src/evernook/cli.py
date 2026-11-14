@@ -231,7 +231,7 @@ def _parser() -> Parser:
         if name in ("recall", "refresh-semantic", "semantic-status", "manage") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
-            command.add_argument("--extraction-config", type=Path, required=True)
+            command.add_argument("--extraction-config", type=Path)
         if name in ('reflect', 'reflect-configure'):
             command.add_argument('--reflection-config', type=Path)
             command.add_argument('--embedding-config', type=Path)
@@ -568,6 +568,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         return clarifications.resolve(access, ResolveClarification(**read_input()))
     if args.command in ("extract", "extract-preferences"):
         from .extraction import ExtractionProcessor, load_extraction
+        if args.extraction_config is None:
+            raise MemoryFailure('invalid_arguments')
         value = read_input()
         if set(value) - {"source_ids", "timeout"} or not isinstance(value.get("source_ids"), list):
             raise MemoryFailure("invalid_arguments")
@@ -766,12 +768,16 @@ def main() -> None:
                                           session_id=args.session_id, event_id=args.event_id)
             result = show_private_capture(request)
         elif args.command in CLI_OPERATIONS and (required or (args.config.parent / ENDPOINT).exists()):
+            if args.command in {'extract', 'extract-preferences'} and args.extraction_config is not None:
+                raise MemoryFailure('service_policy_mismatch')
             access = client_access(args.config, args.access)
             value = {} if args.command == "status" else (
                 {"message_id": args.message_id} if args.command in ("read", "state") else _input())
             result = ServiceClient(args.config).call(access, "cli",
-                {"command": args.command, "input": value}, timeout=130 if args.command == "reflect" else 30)
+                {"command": args.command, "input": value}, timeout=130 if args.command in {"reflect", "extract", "extract-preferences"} else 30)
         else:
+            if args.command in {'extract', 'extract-preferences'} and args.extraction_config is None:
+                raise MemoryFailure('invalid_arguments')
             result = _execute(args)
         from .serialization import result_value
         result = result_value(result)

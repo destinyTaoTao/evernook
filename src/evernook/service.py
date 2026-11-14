@@ -25,6 +25,7 @@ from .service_transport import (authenticate_client, authenticate_server, open_p
                                 receive_json, seal_private_frame, send_json)
 
 if TYPE_CHECKING:
+    from .extraction import ExtractorBackend
     from .protected import ProtectedInbox
 
 ENDPOINT = "memory-service.json"
@@ -37,7 +38,7 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "episode-status", "episode-configure", "episode-propose", "episode-read",
     "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
     "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence",
-    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure", "context"})
+    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure", "context", "extract", "extract-preferences"})
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -162,7 +163,8 @@ class ServiceClient:
 
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
              context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
-             protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None) -> object:
+             protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None,
+             extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -276,6 +278,23 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or not isinstance(arguments["input"], dict)):
             raise MemoryFailure("operation_not_allowed")
         command = arguments["command"]
+        if command in {'extract', 'extract-preferences'}:
+            runtime._require_scope(access, 'maintain', 'service_extraction')
+            if extractor is None or extraction_gate is None:
+                raise MemoryFailure('extraction_service_unconfigured')
+            value = dict(arguments['input'])
+            if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
+                raise MemoryFailure('invalid_arguments')
+            if not extraction_gate.acquire(blocking=False):
+                raise MemoryFailure('extraction_service_busy')
+            try:
+                from .extraction import ExtractionProcessor
+                from .preferences import PreferenceProcessor
+                processor = PreferenceProcessor(runtime, extractor) if command == 'extract-preferences' else ExtractionProcessor(runtime, extractor)
+                value['source_ids'] = tuple(value['source_ids'])
+                return processor.process(access, **value, cancel=cancel)
+            finally:
+                extraction_gate.release()
         if command == 'context':
             return dispatch(runtime, {**request, 'operation': 'mcp',
                 'arguments': {'name': 'evernook_v1_context', 'profile': 'trusted-host',
@@ -342,7 +361,8 @@ class _Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = False
 
     def __init__(self, runtime: MemoryRuntime, key: bytes, *,
-                 context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None):
+                 context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
+                 extraction_config: Path | None = None):
         self.runtime = runtime
         self.key = key
         self.single_writer = False
@@ -350,6 +370,11 @@ class _Server(socketserver.ThreadingTCPServer):
         self.display_gate = threading.BoundedSemaphore(1)
         self.context_config = context_config
         self.embedding_config = embedding_config
+        self.extractor: ExtractorBackend | None = None
+        self.extraction_gate = threading.BoundedSemaphore(1)
+        if extraction_config is not None:
+            from .extraction import load_extraction
+            self.extractor = load_extraction(extraction_config)
         self.reflector: ReflectionEngine | None = None
         if reflection_config is not None:
             from .embedding import load_embedding
@@ -425,7 +450,8 @@ class _Handler(socketserver.BaseRequestHandler):
             try:
                 result = dispatch(server.runtime, request, cancel=cancel,
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
-                    protected_inbox=server.protected_inbox, display_gate=server.display_gate)
+                    protected_inbox=server.protected_inbox, display_gate=server.display_gate,
+                    extractor=server.extractor, extraction_gate=server.extraction_gate)
             finally:
                 done.set()
                 watcher.join()
@@ -454,6 +480,7 @@ class _Handler(socketserver.BaseRequestHandler):
 
 
 def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
+          extraction_config: Path | None = None,
           maintenance_access: Path | None = None, maintenance_interval: float = 5,
           navigation_policies: tuple[str, ...] = (), activate_owner: Path | None = None,
           allow_legacy_shared: bool = False, protected_root: Path | None = None,
@@ -476,7 +503,8 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
             raise MemoryFailure("service_already_running") from None
         try:
             key = secrets.token_bytes(32)
-            with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config) as server:
+            with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config,
+                         extraction_config=extraction_config) as server:
                 if protected_root is not None and protected_keys is not None:
                     try:
                         from .protected import ProtectedInbox
@@ -542,6 +570,7 @@ def main() -> None:
     parser.add_argument("--context-config", type=Path)
     parser.add_argument("--embedding-config", type=Path)
     parser.add_argument("--reflection-config", type=Path)
+    parser.add_argument("--extraction-config", type=Path)
     parser.add_argument("--maintenance-access", type=Path)
     parser.add_argument("--maintenance-interval", type=float, default=5)
     parser.add_argument("--navigation-policy", action="append", default=[])
@@ -552,6 +581,7 @@ def main() -> None:
     try:
         args = parser.parse_args()
         serve(args.config, context_config=args.context_config, embedding_config=args.embedding_config, reflection_config=args.reflection_config,
+            extraction_config=args.extraction_config,
             maintenance_access=args.maintenance_access, maintenance_interval=args.maintenance_interval,
             navigation_policies=tuple(args.navigation_policy), activate_owner=args.activate_owner,
             allow_legacy_shared=args.allow_legacy_shared, protected_root=args.protected_inbox,

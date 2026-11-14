@@ -76,6 +76,9 @@ class ExtractionTests(unittest.TestCase):
                     'profile': 'qwen3-0.6b-experimental-extractive-v1', 'node': sys.executable,
                     'transformers_dir': str(self.root / 'missing-packages'), 'model_dir': str(self.root / 'missing-model')}
         for command in ('extract', 'extract-preferences'):
+            missing = subprocess.run([sys.executable, '-m', 'evernook.cli', command,
+                '--config', str(self.config), '--access', str(access_path)], input=b'{}', capture_output=True, timeout=30)
+            self.assertEqual(json.loads(missing.stdout)['error']['code'], 'invalid_arguments')
             for provider in ('local-qwen', 'unknown'):
                 with self.subTest(command=command, provider=provider):
                     profile.write_text(json.dumps({**selected, 'provider': provider}), encoding='utf-8')

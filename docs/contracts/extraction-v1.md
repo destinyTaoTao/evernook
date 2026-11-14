@@ -18,9 +18,15 @@ Core 0.1.48 起，可信 `extract` 与 `extract-preferences` 也支持显式选�
 {"schema_version":2,"provider":"local-qwen","profile":"qwen3-0.6b-experimental-extractive-v1","node":"E:/configured-node/node.exe","transformers_dir":"E:/configured-node-packages/@huggingface/transformers","model_dir":"E:/configured-local-model"}
 ```
 
-schema 1 保持兼容；两种配置选择同一实现与处理器身份，不继承其他模型的质量准入。未知 provider、任意模块及额外字段均拒绝，不下载或静默退回。当前仍仅一个内置本地实现；该选择入口只用于未被独立服务接管的可信本地抽取 CLI，不是独立服务、MCP、线上摘要或用户可插入任意代码的通用 provider。模型结果仍只形成待审候选，不因配置选择自动发布。
+schema 1 保持兼容；两种配置选择同一实现与处理器身份，不继承其他模型的质量准入。未知 provider、任意模块及额外字段均拒绝，不下载或静默退回。当前仍仅一个内置本地实现，不是线上摘要或用户可插入任意代码的通用 provider。模型结果仍只形成待审候选，不因配置选择自动发布。
 
 #173 在隔离合成账本上验证抽取与偏好处理源码 16 项、安装版选择器及两条 CLI 的 3 项和 strict mypy；未知 provider 拒绝，缺失模型资产明确失败并保留原文。未加载真实模型，也未改变质量或日用门禁。
+
+Core 0.1.49 起，独立服务可由可信启动方用 `--extraction-config <profile.json>` 显式配置上述本地 provider；未指定时拒绝抽取。服务启动时读取配置，修改配置须重启；客户端不能覆盖模型路径，服务一次最多运行一个抽取请求，其余请求明确返回 `extraction_service_busy`。服务接管后，可信维护身份可经 CLI（省略 `--extraction-config` 并加 `--require-service`）或 `ServiceClient.call(access, 'cli', {'command': 'extract', 'input': {'source_ids': [...]}})` 调用；偏好抽取使用 `extract-preferences`。客户端提供 `--extraction-config` 会被拒绝，不静默忽略。请求只能指定来源 ID 与可选超时，处理器复用原有维护权限、受保护来源限制、来源版本校验与候选租约；断连或取消会向本地工作发送取消，结果不自动接纳。此能力不注册为 MCP 模型工具，不自动调度，也不允许云端回退。
+
+原先未接管的独立库 CLI 仍须显式传入 `--extraction-config`。服务 CLI 的等待上限为 130 秒，模型处理超时最多 120 秒；断连时可能已经形成持久任务记录，须按既有候选状态检查，不假定没有副作用。处理器仍未通过质量、资源及日用准入。
+
+#174 使用合成库验证源码抽取／偏好及服务新测 19 项、最终变更后针对性 5 项、独立服务 12 项、切换 15 项；最终非 editable wheel 的服务权限、禁用/错误配置、并发、受保护来源、真实子进程断连取消及两条 CLI 共 6 项通过，strict mypy 通过。首次服务与切换联合运行有 3 个 Windows 临时锁清理错误，随后三项定向和服务 12 项单独复测通过；原因尚未确定，见 [#175](https://github.com/destinyTaoTao/evernook/issues/175)。未运行真实模型或改变日用门禁。
 
 从UTF-8 stdin调用：
 
