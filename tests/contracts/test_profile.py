@@ -155,6 +155,48 @@ class ProfileTests(unittest.TestCase):
             self.profiles.decide(self.access, ProfileDecision("confirm-other", "tag-other", 1, "confirm",
                                                               confirmation_id=confirmation.message_id))
 
+    def test_history_omits_revisions_with_unavailable_evidence(self) -> None:
+        from evernook import Change
+
+        old = self.message("合成：旧来源")
+        self.propose("tag-history", self.draft("旧标签", sources=(old,)))
+        self.confirm("tag-history", 1)
+        fresh = self.message("合成：新来源")
+        self.profiles.decide(self.access, ProfileDecision("revise-history", "tag-history", 2, "revise",
+            self.draft("新标签", sources=(fresh,))))
+        self.confirm("tag-history", 3)
+        control = self.message("合成：隐藏旧来源")
+        self.runtime.change(self.access, Change("hide-history-source", old.message_id, 1, "suppress",
+                                                control.message_id, "合成"))
+        self.assertEqual(self.profiles.read(self.access, "tag-history").state, "confirmed")
+        first = self.profiles.history(self.access, "tag-history", limit=2)
+        self.assertEqual(first.records, ())
+        self.assertEqual(first.next_offset, 2)
+        second = self.profiles.history(self.access, "tag-history", limit=2, offset=first.next_offset or 0)
+        self.assertEqual([item.revision for item in second.records], [3, 4])
+        self.assertIsNone(second.next_offset)
+        cli = self.invoke("profile-history", {"tag_id": "tag-history"})
+        self.assertEqual([item["revision"] for item in cli["result"]["records"]], [3, 4])
+        self.runtime.change(self.access, Change("hide-history-current", fresh.message_id, 1, "suppress",
+                                                control.message_id, "合成"))
+        with self.assertRaisesRegex(MemoryFailure, "source_unavailable"):
+            self.profiles.history(self.access, "tag-history")
+
+    def test_history_omits_revision_with_withdrawn_confirmation(self) -> None:
+        from evernook import Change
+
+        self.propose("tag-confirmation")
+        confirmation = self.message("合成：确认画像")
+        self.profiles.decide(self.access, ProfileDecision("confirm-history", "tag-confirmation", 1, "confirm",
+                                                          confirmation_id=confirmation.message_id))
+        self.profiles.decide(self.access, ProfileDecision("revise-confirmation", "tag-confirmation", 2, "revise",
+                                                          self.draft("新标签")))
+        control = self.message("合成：隐藏确认")
+        self.runtime.change(self.access, Change("hide-history-confirmation", confirmation.message_id, 1, "suppress",
+                                                control.message_id, "合成"))
+        history = self.profiles.history(self.access, "tag-confirmation")
+        self.assertEqual([item.revision for item in history.records], [1, 3])
+
     def test_category_filters_freeform_taxonomy_and_pagination(self) -> None:
         confirmed_interest = self.propose("tag-interest", self.draft("喜欢摄影", category="interest"))
         self.confirm("tag-interest", 1)

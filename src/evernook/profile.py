@@ -401,7 +401,21 @@ class ProfileRegistry:
             db.execute("BEGIN")
             if not db.execute("SELECT 1 FROM sqlite_master WHERE name='profile_events_v1'").fetchone():
                 return ProfileHistoryPage((), None)
+            if self._latest(db, tag_id) is not None and self._view(db, tag_id).error_code:
+                raise MemoryFailure("source_unavailable")
             rows = db.execute("SELECT record FROM profile_events_v1 WHERE tag_id=? ORDER BY revision LIMIT ? OFFSET ?",
                 (tag_id, limit + 1, offset)).fetchall()
-            records = tuple(self._record(row["record"]) for row in rows[:limit])
-            return ProfileHistoryPage(records, offset + limit if len(rows) > limit else None)
+            records: list[ProfileRecord] = []
+            for row in rows[:limit]:
+                record = self._record(row["record"])
+                try:
+                    self._sources(db, record.draft)
+                    if (record.confirmation_id is not None
+                            and self._confirmation(db, record.confirmation_id) != record.confirmation_version):
+                        continue
+                except MemoryFailure as failure:
+                    if failure.code not in {"stale_profile_source", "message_not_found", "profile_span_mismatch", "profile_user_confirmation_required"}:
+                        raise
+                    continue
+                records.append(record)
+            return ProfileHistoryPage(tuple(records), offset + limit if len(rows) > limit else None)

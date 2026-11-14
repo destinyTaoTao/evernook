@@ -106,6 +106,32 @@ class ServicePersonaTests(unittest.TestCase):
         self.assertEqual(read['blocks']['tone']['text'], '合成：温和')
         self.assertEqual(read['blocks']['tone']['revision'], 3)
 
+    def test_service_profile_history_uses_source_visibility(self) -> None:
+        from dataclasses import asdict
+        from evernook import Change, EvidenceSpan
+        from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
+
+        runtime = MemoryRuntime(self.config)
+        text = '合成：请设置温和语气。'
+        span = EvidenceSpan(self.evidence, 1, 'original', 1, 0, len(text), text)
+        profiles = ProfileRegistry(runtime)
+        profiles.decide(self.owner, ProfileDecision('profile-one', 'service-tag', 0, 'propose',
+            ProfileDraft('interest', '温和语气', 0.8, (span,))))
+        control = runtime.submit(self.owner, Event(Source('owner', 's', 'main', '3'), 'user', 3, None,
+            'complete', '合成：隐藏来源')).message_id
+        client = self.start(activate=True)
+        args = {'command': 'profile-history', 'input': {'tag_id': 'service-tag'}}
+        self.assertEqual(len(client.call(self.ordinary, 'cli', args)['records']), 1)
+        cli = subprocess.run([sys.executable, '-m', 'evernook.cli', 'profile-history', '--config', str(self.config),
+            '--access', str(self.owner_path), '--require-service'], input=json.dumps(args['input']).encode(),
+            capture_output=True, timeout=30)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertEqual(len(json.loads(cli.stdout)['result']['records']), 1)
+        client.call(self.owner, 'cli', {'command': 'change', 'input':
+            asdict(Change('hide-service-profile', self.evidence, 1, 'suppress', control, '合成'))})
+        with self.assertRaisesRegex(MemoryFailure, 'source_unavailable'):
+            client.call(self.ordinary, 'cli', args)
+
     def test_concurrent_service_persona_updates_allow_only_one_matching_revision(self) -> None:
         client = self.start(activate=True)
         barrier = threading.Barrier(2)
