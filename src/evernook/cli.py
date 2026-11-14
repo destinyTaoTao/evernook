@@ -69,7 +69,7 @@ def _parser() -> Parser:
     audit_config = commands.add_parser("audit-configure", help="Configure audit log retention in days")
     audit_config.add_argument("--config", type=Path, required=True)
     audit_config.add_argument("--retention-days", type=int, required=True)
-    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-links", "vault-register", "vault-reconcile", "vault-show", "vault-verify", "vault-prepare-migration"):
+    for name in ("vault-init", "vault-receive", "vault-pending", "vault-inventory", "vault-migration-inventory", "vault-links", "vault-register", "vault-reconcile", "vault-show", "vault-verify", "vault-prepare-migration"):
         vault = commands.add_parser(name, help="Explicit protected inbox operation; no plaintext-read tool")
         vault.add_argument("--config", type=Path, required=True)
         vault.add_argument("--access", type=Path, required=True)
@@ -77,7 +77,7 @@ def _parser() -> Parser:
         vault.add_argument("--key-dir", type=Path, required=True)
         if name in ("vault-reconcile", "vault-show"):
             vault.add_argument("--object-id", required=True)
-        if name in ("vault-inventory", "vault-links", "vault-verify"):
+        if name in ("vault-inventory", "vault-migration-inventory", "vault-links", "vault-verify"):
             vault.add_argument("--after")
             vault.add_argument("--limit", type=int, default=10 if name == 'vault-verify' else 100)
         if name == "vault-show":
@@ -294,6 +294,9 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             inbox = initialize_protected_inbox(memory, args.inbox_dir, args.key_dir, password)
             return {"inbox_id": inbox.inbox_id, "key_id": inbox.public["key_id"], "plaintext_read_enabled": False}
         inbox = ProtectedInbox(memory, args.inbox_dir, args.key_dir)
+        if args.command == 'vault-migration-inventory':
+            from .vault_migration import inventory_entries
+            return inventory_entries(inbox, access, after=args.after, limit=args.limit)
         if args.command == 'vault-verify':
             memory._require_scope(access, 'admin', 'protected_verify')
             if not sys.stdin.isatty():

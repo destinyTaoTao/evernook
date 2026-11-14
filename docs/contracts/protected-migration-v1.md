@@ -13,6 +13,47 @@ detected from the ledger. A legacy program that ignores the service mode and
 ownership gate can write again after the cutover lock is released; stopping it
 is an operator prerequisite, not something this implementation can prove.
 
+Core 0.1.84 adds `vault-migration-inventory` and the trusted Python
+`vault_migration.inventory_entries` page for the declared inbox. An admin sees
+only each verified object's ID, state and source entry; use `--after` until
+`next_cursor` is null. This metadata is visible to the administrator, so entry
+names must not contain secrets. The page is advisory, does not decrypt or grant
+cutover, and concurrent changes across pages are not a consistent snapshot.
+
+With writers stopped, a concrete single-inbox sequence is:
+
+1. Use `vault-known` and the operator's own records to identify all inboxes;
+   explicitly `vault-register` the chosen inbox if needed. Unknown unregistered
+   inboxes cannot be found automatically. Extra registered inboxes block cutover.
+2. Run `vault-migration-inventory --config <runtime.json> --access <admin-access.json> --inbox-dir <inbox-dir> --key-dir <key-dir>`
+   through every page. For each `protected_pending_link`, use the **same source
+   entry's** paired capture access with `vault-reconcile --object-id <id>` and
+   the same config/inbox/key options. The admin identity does not acquire other
+   entries' rights. Each source entry also needs a paired recall-scoped identity
+   for the final preparation. Re-list after an interruption; successful reconciliations
+   are idempotent, while a lost response is not evidence of failure.
+3. Use interactive `vault-verify` with administrator access and the vault
+   password through every page; this verifies decryption without returning the
+   originals and is not an activation proof. The final preparation below repeats
+   whole-inbox verification under the exclusive gate.
+4. Explicitly prepare and activate as shown below. A service started without
+   verified activation while service mode is still off does not establish a
+   single authoritative writer; see #150. Verify the reported service state,
+   and retain original materials and a separate protected backup.
+
+This sequence supports one declared, registered inbox with multiple entries. It
+does not yet migrate multiple inboxes together or discover undeclared copies;
+it does not establish physical owner identity, real lock-screen behavior, or
+daily-use admission.
+
+The #226 increment was checked with synthetic data: four targeted migration
+tests passed on both source and the non-editable 0.1.84 wheel; two additional
+source tests covered concurrent old writers and crash after mode persistence.
+The multi-entry scenario verified linked and pending objects, per-entry
+authorization, wrong passwords, administrative rechecks, restart, decryption,
+and the old-writer fence. Strict mypy passed for the changed modules and tests.
+No real vault or uncooperative legacy writer was exercised.
+
 On the original device, a trusted administrator runs in an interactive terminal:
 
 ```powershell

@@ -12,7 +12,7 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 import unittest
 from unittest.mock import patch
 
@@ -68,6 +68,79 @@ class VaultMigrationTests(unittest.TestCase):
                 self.fail('service start timeout')
             time.sleep(.05)
         return ServiceClient(self.config)
+
+    def test_inventory_and_reconcile_multiple_entries_before_verified_cutover(self) -> None:
+        from evernook.vault_migration import inventory_entries
+        from evernook.vault_verify import verify_page
+        from evernook.vault_local import LocalDisplayRequest
+        other_path = self.config.parent / 'mcp-access-other.json'
+        other = pair_client(self.config, client_id='other', entry='other', access_path=other_path,
+                            scopes=('capture', 'recall'))
+        linked = self.inbox.submit(self.owner, self.event)
+        other_event = replace(self.event, source=Source('other', 'private', 'main', 'pending'),
+                              text='synthetic-other-pending-226')
+        pending = self.inbox.stage(other, other_event)
+        first = inventory_entries(self.inbox, self.owner, limit=1)
+        self.assertIsNotNone(first['next_cursor'])
+        second = inventory_entries(self.inbox, self.owner, after=str(first['next_cursor']), limit=1)
+        items = cast(list[dict[str, str]], first['objects']) + cast(list[dict[str, str]], second['objects'])
+        self.assertEqual({(x['object_id'], x['entry'], x['state']) for x in items},
+                         {(linked.object_id, 'owner', 'protected_linked'),
+                          (pending.object_id, 'other', 'protected_pending_link')})
+        self.assertNotIn('synthetic-other-pending-226', json.dumps(items))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            inventory_entries(self.inbox, other)
+        with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
+            self.inbox.reconcile(self.owner, pending.object_id)
+        with self.assertRaisesRegex(MemoryFailure, 'vault_unlock_refused'):
+            verify_page(self.inbox, self.owner, b'synthetic wrong password')
+        cli = subprocess.run([sys.executable, '-m', 'evernook.cli', 'vault-migration-inventory', '--config', str(self.config),
+            '--access', str(self.owner_path), '--inbox-dir', str(self.root / 'inbox'), '--key-dir', str(self.root / 'keys')],
+            capture_output=True, timeout=30)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertEqual(len(json.loads(cli.stdout)['result']['objects']), 2)
+        self.assertNotIn(other_event.text.encode(), cli.stdout + cli.stderr)
+        restarted = ProtectedInbox(MemoryRuntime(self.config), self.root / 'inbox', self.root / 'keys')
+        self.assertEqual(restarted.reconcile(other, pending.object_id).state, 'protected_linked')
+        self.assertEqual(restarted.reconcile(other, pending.object_id).object_id, pending.object_id)
+        self.assertEqual(len(verify_page(restarted, self.owner, self.password)['objects']), 2)
+        self.assertEqual(prepare(restarted.runtime, restarted, self.owner, self.password)['verified_objects'], 2)
+        client = self.start(self.command())
+        self.assertTrue(client.call(self.owner, 'status', {})['service']['single_writer'])
+        with self.assertRaisesRegex(MemoryFailure, 'service_required'):
+            self.runtime.submit(self.owner, replace(self.event, source=Source('owner', 'old', 'main', 'blocked')))
+        self.processes[-1].terminate(); self.processes[-1].wait(timeout=15)
+        installed = ProtectedInbox(MemoryRuntime(self.config, service_owner=True), self.root / 'inbox', self.root / 'keys')
+        for access, receipt, text in ((self.owner, linked, self.event.text), (other, pending, other_event.text)):
+            displayed: list[str] = []
+            LocalDisplayRequest(installed, access, receipt.object_id, 'synthetic', desktop=lambda: True).display_once(self.password, displayed.append)
+            self.assertEqual(displayed, [text])
+        with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
+            LocalDisplayRequest(installed, self.owner, pending.object_id, 'synthetic', desktop=lambda: True)
+
+    def test_migration_inventory_rejects_invalid_pages_tampering_and_revoked_admin(self) -> None:
+        from evernook.vault_migration import inventory_entries
+        staged = self.inbox.stage(self.owner, self.event)
+        for limit in (0, 101, True):
+            with self.subTest(limit=limit), self.assertRaisesRegex(MemoryFailure, 'invalid_page'):
+                inventory_entries(self.inbox, self.owner, limit=limit)
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
+            inventory_entries(self.inbox, self.owner, after='not-an-id')
+        original = self.runtime._require_scope
+        calls = 0
+        def revoked(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryFailure('permission_denied')
+            return original(*args, **kwargs)
+        with patch.object(self.runtime, '_require_scope', side_effect=revoked):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                inventory_entries(self.inbox, self.owner)
+        with self.inbox._connection() as db:
+            db.execute("UPDATE objects SET envelope='{}' WHERE id=?", (staged.object_id,))
+        with self.assertRaisesRegex(MemoryFailure, 'protected_object_corrupt'):
+            inventory_entries(self.inbox, self.owner)
 
     def test_complete_single_inbox_cutover_preserves_decryptability_and_old_writer_fence(self) -> None:
         original = self.inbox.submit(self.owner, self.event)

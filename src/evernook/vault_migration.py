@@ -11,6 +11,7 @@ import sqlite3
 import threading
 import time
 from typing import Any
+from uuid import UUID
 
 from nacl.public import PrivateKey
 
@@ -24,6 +25,32 @@ from .vault_crypto import _decrypt_event, _unlock
 PROOF_NAME = 'protected-cutover-proof.json'
 MAX_OBJECTS = 10000
 MAX_SECONDS = 120
+
+
+def inventory_entries(inbox: ProtectedInbox, access: Access, *, after: str | None = None,
+                      limit: int = 100) -> dict[str, object]:
+    """Advisory admin page for selecting each pending object's source identity."""
+    inbox.runtime._require_scope(access, 'admin', 'protected_migration_inventory')
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise MemoryFailure('invalid_page')
+    if after is not None:
+        try:
+            if str(UUID(after)) != after:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise MemoryFailure('invalid_protected_id') from None
+    objects: list[dict[str, str]] = []
+    with inbox._connection() as db:
+        rows = db.execute('SELECT * FROM objects WHERE (? IS NULL OR id>?) ORDER BY id LIMIT ?',
+                          (after, after, limit + 1)).fetchall()
+        for row in rows[:limit]:
+            receipt = inbox._receipt(row)
+            _, projection = inbox._verified(row)
+            objects.append({'object_id': receipt.object_id, 'state': receipt.state, 'entry': projection.source.entry})
+    inbox.runtime._require_scope(access, 'admin', 'protected_migration_inventory')
+    return {'inbox_id': inbox.inbox_id, 'objects': objects,
+            'next_cursor': str(rows[limit - 1]['id']) if len(rows) > limit else None,
+            'scope': 'current_page_only', 'migration_authorized': False}
 
 
 def _authorize_admin(runtime: MemoryRuntime, access: Access) -> None:
