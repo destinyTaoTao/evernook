@@ -267,7 +267,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                     raise
                 embedding_error = failure.code
         operations, context, restricted = build_operations(runtime, access, profile=arguments["profile"],
-            backend=backend, context_config=context_config, reflector=reflector)
+            backend=backend, context_config=context_config, reflector=reflector, defer_context_validation=True)
         if operation == "mcp-list":
             return {"tools": [{"name": name, "schema": model.model_json_schema(), "description": description}
                 for name, (model, _, description) in operations.items()]}

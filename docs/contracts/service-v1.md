@@ -10,6 +10,10 @@ Core 0.1.57 起，MCP 工具发现及不使用语义模型的原文保存／采�
 
 #189 在实际隔离服务中先复现配置损坏阻断 MCP 发现，修复后验证工具发现、状态错误、两种原文采集和回读，同时确认语义召回报错。初版服务／桥接套件 20 项通过；加入状态故障标记后，源码与非 editable wheel 各 2 项定向回归及 strict mypy 通过。期间一次定向命令因测试名写错未运行该项，改正后通过；未验证损坏上下文配置或真实 dsh 页面。
 
+Core 0.1.58 起，独立服务也将可选预算上下文配置校验延迟到状态读取或上下文构建。配置损坏时 MCP 状态返回 `context.configured=true, available=false` 和固定错误码，工具发现与不依赖上下文的原文采集仍可运行；上下文构建仍拒绝，不以未验证 tokenizer 或其他模型代替。独立服务外的直接 MCP 构建保持原有启动校验。此隔离不涵盖配置路径本身非法、账本或身份故障，也不代表已完成模型配置原子切换。
+
+#190 先在隔离服务复现上下文配置损坏阻断 MCP 发现；修复后源码两个故障隔离用例、28 项服务桥接／直接 MCP 回归、非 editable wheel 3 项定向回归及 strict mypy 通过。测试覆盖嵌入和上下文配置同时损坏、状态分别报错、原文采集回读和直接 MCP 原有提前拒绝；未进行真实 dsh 页面或模型准入验收。
+
 Python 客户端 `ServiceClient(config).call(access, operation, arguments, timeout=30)` 支持 remember/read/search/recall/status，参数映射已有 Core 操作。已提交但响应丢失时须按来源重投或按ID回查，网络异常不证明提交失败。截止时间或认证失败不回退直写库。
 
 Core 0.1.51 起，已激活服务还支持可信 CLI `persona-read`、`persona-history`、`persona-set` 和 `persona-rollback`；通过 `--require-service` 强制走服务，Python 可调用 `ServiceClient.call(access, 'cli', {'command': 'persona-read', 'input': {}})`。读取沿用 recall 权限，设置与回滚沿用 accept 权限、有效用户来源、预期版本及幂等请求 ID。设置／回滚是可信调用端的维护操作：调用端必须自行建立实际用户确认，不能把模型的声明或布尔字段当作确认；MCP 模型工具不提供这些操作。它们不自动扩展人设权限，也不意味着 dsh 已提供人设编辑界面或日用准入。

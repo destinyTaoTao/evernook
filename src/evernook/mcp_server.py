@@ -194,24 +194,31 @@ def _capture(runtime: MemoryRuntime, access: Access, arguments: CaptureWire) -> 
 
 
 def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: SemanticRecall,
-            host_context: HostContext | None = None) -> dict[str, object]:
+            host_context: HostContext | None = None, *, tolerate_context_error: bool = False) -> dict[str, object]:
     lexical = runtime.lexical_status(access)
+    try:
+        context_status = host_context.status() if host_context else {"configured": False}
+    except MemoryFailure as failure:
+        if not tolerate_context_error:
+            raise
+        context_status = {"configured": True, "available": False, "error_code": failure.code}
     return {"adapter": {"profile": profile, "writes_allowed": profile == "trusted-host"},
             "capabilities": runtime.handshake(access), "ledger": asdict(runtime.status(access)),
             "semantic": asdict(semantic.status(access)),
-            "context": host_context.status() if host_context else {"configured": False},
+            "context": context_status,
             "processing": {"consumer_running": False, "index_ready": lexical.state == "ready", "lexical": asdict(lexical)}}
 
 
 def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "recall",
-                     backend: EmbeddingBackend | None = None, context_config: Path | None = None, reflector: ReflectionEngine | None = None
+                     backend: EmbeddingBackend | None = None, context_config: Path | None = None, reflector: ReflectionEngine | None = None,
+                     defer_context_validation: bool = False
                      ) -> tuple[dict[str, tuple[type[Arguments], Callable[[Any], object], str]], HostContext | None, set[str]]:
     if profile not in ("recall", "trusted-host"):
         raise MemoryFailure("invalid_profile")
     runtime.handshake(access)
     semantic = SemanticRecall(runtime, backend)
     host_context = HostContext(runtime, semantic, context_config) if context_config is not None else None
-    if host_context is not None:
+    if host_context is not None and not defer_context_validation:
         host_context.status()
     operations: dict[str, tuple[type[Arguments], Callable[[Any], object], str]] = {
         "evernook_v1_continuation_save": (SaveContinuation,
@@ -255,7 +262,8 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
             "Explicit correct/revoke/suppress with state-version CAS and a complete saved user evidence_id. Retains originals; no physical deletion."),
         "evernook_v1_state": (Read, lambda args: runtime.state(access, args.message_id),
             "Read current message state/version and correction reference without archived words."),
-        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access, profile, semantic, host_context),
+        "evernook_v1_status": (Arguments, lambda args: _status(runtime, access, profile, semantic, host_context,
+            tolerate_context_error=defer_context_validation),
             "Read capabilities, committed counts, lexical coverage/watermarks and unavailable consumer state. No dialogue, credential or configuration paths."),
     }
     if host_context is not None:

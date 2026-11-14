@@ -91,6 +91,43 @@ class ServiceTests(unittest.TestCase):
             self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_recall',
                 'arguments': {'query': '合成'}})
 
+    def test_context_config_failure_does_not_block_mcp_capture_or_discovery(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        context_config = Path(self.temporary.name) / 'synthetic-context.json'
+        context_config.write_text('{', encoding='utf-8')
+        model_config = Path(self.temporary.name) / 'synthetic-embedding.json'
+        model_config.write_text(json.dumps({'schema_version': 2, 'provider': 'local-minilm',
+            'node': str(Path(self.temporary.name) / 'node'), 'transformers_dir': str(Path(self.temporary.name) / 'deps'),
+            'model_dir': str(Path(self.temporary.name) / 'model')}), encoding='utf-8')
+        self.start(['--activate-owner', str(owner), '--context-config', str(context_config), '--embedding-config', str(model_config)])
+        listing = self.client.call(self.access, 'mcp-list', {'profile': 'trusted-host'})
+        self.assertTrue(any(item['name'] == 'evernook_v1_context' for item in listing['tools']))
+        status = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
+        self.assertEqual(status['context'], {'configured': True, 'available': False, 'error_code': 'invalid_config'})
+        self.assertNotEqual(status['semantic']['state'], 'unavailable')
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_context',
+                'arguments': {'query': '合成', 'model_id': 'synthetic', 'max_tokens': 512,
+                              'as_of': '2024-01-01T00:00:00Z'}})
+        model_config.write_text('{', encoding='utf-8')
+        both = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
+        self.assertEqual(both['context']['error_code'], 'invalid_config')
+        self.assertEqual(both['semantic']['state'], 'unavailable')
+        saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_capture',
+            'arguments': {'event': self.event(), 'kind': 'message'}})
+        self.assertTrue(saved['complete'])
+        self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message']['message_id']})['event'], self.event())
+
+    def test_standalone_mcp_still_rejects_invalid_context_at_construction(self) -> None:
+        from evernook.mcp_server import build_operations
+        context_config = Path(self.temporary.name) / 'invalid-context.json'
+        context_config.write_text('{', encoding='utf-8')
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
+            build_operations(MemoryRuntime(self.config), self.access, context_config=context_config)
+
     def test_two_clients_receipts_conflict_and_restart(self) -> None:
         self.assertFalse(self.client.call(self.access, 'status', {})['service']['single_writer'])
         event = self.event()
