@@ -1,6 +1,6 @@
 # T23 单次本地查看增量
 
-对应 [#24](https://github.com/destinyTaoTao/evernook/issues/24)，在 [受保护收件箱](protected-inbox-v1.md) 之上提供显式启动的本地 Tk 窗口。它不是模型工具、服务端解锁会话或 harness 明文交付协议。
+对应 [#24](https://github.com/destinyTaoTao/evernook/issues/24)，在 [受保护收件箱](protected-inbox-v1.md) 之上提供显式启动的本地 Tk 窗口。它不是模型工具、持续解锁会话或 harness 明文交付协议。以下直接访问命令适用于服务切换前；切换后使用该契约中 Core 0.1.43 的服务持有窗口入口。
 
 ```text
 <python> -m evernook.cli vault-show --config <runtime.json> --access <access.json> --inbox-dir <inbox> --key-dir <keys> --object-id <UUID> --purpose <本次非敏感用途>
@@ -16,6 +16,6 @@ ACL检查、主口令派生、密文解密与授权尝试审计发生在普通�
 
 该桌面检查是保守护栏，**不等于已完成锁屏/断开会话联动验收**；官方API特别说明断开会话可能返回恢复连接后使用的桌面。尚无WTS事件联动、远程会话验收或安全桌面。Python内存释放不保证所有口令/私钥/明文副本清零；Tk窗口也不隔离同账户恶意程序或截图。
 
-`evernook.vault_local` 只由本地CLI helper进程加载，普通MCP/查询进程不加载解密能力。内部 `LocalDisplayRequest` 为可信窗口和测试提供单次交付对象，不是经过认证的对外RPC接口；普通客户端无法通过查询参数获得它。目的地固定本地，没有 harness准入开关、IPC、跨进程授权token或字段级授予。因此本次不关闭完整T23，不启用日常凭证能力。
+直接访问模式中，`LocalDisplayRequest` 为可信窗口和测试提供单次交付对象；服务模式中，由独立服务持有该对象并通过匿名管道向其本机窗口子进程交接。受认证、加密的服务请求只启动本地窗口并返回关闭回执，普通查询和 MCP 不交付原文。两种模式的目的地均固定本地，没有 harness 明文授权或字段级授予，因此不关闭完整 T23，也不启用日常凭证能力。
 
 测试采用真实隐藏Tk控件和合成口令，不假称人类点击、可见界面或OS锁屏已验收。后续仍须验证实际窗口、WTS锁屏、harness注册/认证IPC、凭证换版/轮换及撤销后恢复。
