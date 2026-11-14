@@ -1,11 +1,17 @@
 # Trusted cross-layer evidence network
 
 `manage` with `action: read` and `view: network_graph` reads bounded slots from
-the profile, temporal fact and observation registries in one authorized SQLite
+the profile, temporal fact, observation and topic registries in one authorized SQLite
 snapshot. It requires recall, maintain and accept scopes. Nodes include only
 the current validated content, revision and state. Source identifiers form
 edges labelled as evidence, support or counterevidence; source text is never
 copied into the response and opening a source performs a separate current read.
+
+Only active topics with a currently valid or conflicted snapshot contribute;
+topic nodes expose the definition title, snapshot revision and evidence edges,
+not the snapshot body. Paused, stale and expired topics are withheld. Topic
+validity uses the service-configured topic processor and embedding identity.
+Topic nodes have no category, so a category filter excludes them.
 
 Each layer consumes up to `limit` slots at the shared offset. A non-null next
 offset means at least one layer has more slots; pages may be empty after
@@ -15,8 +21,11 @@ source. The display joins shared source IDs among nodes on this page only; it
 does not claim a complete graph across pages. A source may connect multiple
 types without implying the linked conclusions are equivalent.
 
-Source and approval checks are performed at read time. A second client can
-change controls after the response; existing visible node labels are refreshed
-on focus or manual refresh, not instantly invalidated. Topic snapshots and
-reflection paths are not yet included, and this endpoint does not change daily
-admission.
+Source and approval checks are performed at read time. In the dsh preview,
+versioned page, source and history reads use authenticated fingerprint checks
+and a 12-second fail-closed lease. A change triggers refresh; disconnect,
+expiry or backgrounding clears visible data when the browser can execute the
+handler. The checks are bounded polling, not push or instant revocation: an
+already delivered value cannot be taken back, and a suspended event loop cannot
+clear it until execution resumes. The graph is page-local, does not show
+one-off reflection paths, and does not change daily admission.
