@@ -117,6 +117,14 @@ class RemoteReflectionTests(unittest.TestCase):
         self.assertNotIn('tools', request['body'])
         self.assertNotIn('synthetic-api-secret-key', json.dumps([request['body'], result, engine.configure(self.access)]))
 
+    def test_changed_provider_at_dispatch_prevents_http_egress(self) -> None:
+        engine = self.engine()
+        def changed() -> None:
+            raise MemoryFailure('reflection_config_changed')
+        result = engine.reflect(self.access, '钥匙', allow_remote=True, provider_check=changed)
+        self.assertIn('reflection_config_changed', result['degraded'])
+        self.assertEqual(self.requests, [])
+
     def test_remote_transcript_evidence_keeps_unverified_marker_without_model_identity(self) -> None:
         from evernook import Transcription
         from evernook.transcription import submit

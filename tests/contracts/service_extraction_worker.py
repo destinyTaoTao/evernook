@@ -20,5 +20,7 @@ class BlockingSelector:
         raise MemoryFailure('extraction_canceled')
 
 
-with patch('evernook.extraction.load_extraction', return_value=BlockingSelector()):
-    serve(Path(sys.argv[1]), activate_owner=Path(sys.argv[2]), extraction_config=Path(sys.argv[3]))
+profile = Path(sys.argv[3]).with_name('worker-profile.json')
+profile.write_text('{}', encoding='utf-8')
+with patch('evernook.extraction._extraction_from_config', return_value=BlockingSelector()):
+    serve(Path(sys.argv[1]), activate_owner=Path(sys.argv[2]), extraction_config=profile)

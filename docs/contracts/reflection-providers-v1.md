@@ -4,6 +4,25 @@ In the recommended independent-service deployment, the service owns provider con
 
 Local is the default. Existing schema1 profiles remain compatible; omission of `--reflection-config` disables reflection. Normal recall/context never calls a chat model. Choose one provider at trusted startup; changing it requires an explicit config change and service restart. There is no automatic fallback, difficulty router, request-level endpoint/key override or model-selected provider. “Local first” means the default is local, not an automatic local-to-cloud cascade.
 
+Core 0.1.64 binds the service provider to the parsed configuration used at
+startup. A changed, deleted or unreadable reflection config rejects new service
+reflection calls with `reflection_config_changed`; it is also checked immediately
+before each model turn. The trusted management diagnostic reports that a restart
+is required without exposing the configuration. Restoring the original parsed
+configuration resumes it; to apply a different one, restart the service. This
+is not an atomic file-watcher or a revocation guarantee: a change can race the
+last check, and an already dispatched request or data cannot be recalled.
+Standalone/direct hosts remain responsible for their own provider lifecycle.
+
+#197 validation used synthetic data and a loopback fixture. The initial
+44-test service/extraction/reflection run had one failure because its synthetic
+blocking worker mocked the former loader and supplied a nonexistent config;
+the other 43 passed. After correcting that fixture, its disconnect/cancellation
+regression and the new source and installed-wheel provider-drift checks passed.
+The remote-dispatch guard was also checked against a loopback server with zero
+requests. Source and installed dsh component checks, builds and strict mypy
+passed. This does not establish browser acceptance or model/daily admission.
+
 ## Configuration outside the checkout
 
 Schema2 local form wraps the old profile:

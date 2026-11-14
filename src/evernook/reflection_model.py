@@ -102,7 +102,10 @@ class LocalReflectionModel:
 
 
 def from_file(runtime: MemoryRuntime, recall: SemanticRecall, path: Path) -> ReflectionEngine:
-    value = _load(external(path))
+    return _from_config(runtime, recall, _load(external(path)))
+
+
+def _from_config(runtime: MemoryRuntime, recall: SemanticRecall, value: dict[str, Any]) -> ReflectionEngine:
     model: ReflectionModel
     if type(value.get('schema_version')) is int and value['schema_version'] == 2:
         if value.get('provider') == 'local' and set(value) == {'schema_version', 'provider', 'local', 'policy'} and isinstance(value['local'], dict):

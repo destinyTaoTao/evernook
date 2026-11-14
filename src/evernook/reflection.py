@@ -8,7 +8,7 @@ import hashlib
 import math
 import threading
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from .models import Access, MemoryFailure
 from .query_plan import plan_query
@@ -178,7 +178,7 @@ class ReflectionEngine:
 
     def reflect(self, access: Access, query: str, *, mode: str = 'deep', topic_view_ids: tuple[str, ...] = (),
                 timeout: float | None = None, cancel: threading.Event | None = None, current_input_id: str | None = None,
-                allow_remote: bool = False) -> dict[str, Any]:
+                allow_remote: bool = False, provider_check: Callable[[], None] | None = None) -> dict[str, Any]:
         self.runtime._require_scope(access, 'recall', 'reflection')
         if not isinstance(mode, str) or mode not in {'normal', 'deep'} or not isinstance(query, str) or not 1 <= len(query) <= 1048576:
             raise MemoryFailure('invalid_reflection_request')
@@ -278,6 +278,8 @@ class ReflectionEngine:
                     if type(reserve) is not int or reserve < 0 or usage['cost_reserved_micro_usd'] + reserve > remote.max_cost_micro_usd:
                         raise MemoryFailure('reflection_cost_budget')
                     usage['cost_reserved_micro_usd'] += reserve
+                if provider_check is not None:
+                    provider_check()
                 usage['model_rounds'] += 1
                 usage['metering_incomplete'] = True
                 turn = self.model.turn(payload, input_tokens=input_cap, output_tokens=output_cap, timeout=check(), cancel=cancel)

@@ -109,7 +109,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(status['context'], {'configured': True, 'available': False, 'error_code': 'invalid_config'})
         self.assertNotEqual(status['semantic']['state'], 'unavailable')
         diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
-        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'invalid'})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'invalid', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         self.assertNotIn(str(self.temporary.name), json.dumps(diagnosis))
         counter = Path(self.temporary.name) / 'synthetic-counter.json'
         counter.write_text(json.dumps({'schema_version': 1, 'node': str(Path(self.temporary.name) / 'node'),
@@ -122,7 +122,7 @@ class ServiceTests(unittest.TestCase):
                        'recent_days': 7, 'recent_target_chars': 8192}})
         context_config.write_text(valid_context, encoding='utf-8')
         diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
-        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'valid'})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'valid', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         context_config.write_text('{', encoding='utf-8')
         with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
             self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_context',
@@ -133,10 +133,10 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(both['context']['error_code'], 'invalid_config')
         self.assertEqual(both['semantic']['state'], 'unavailable')
         diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
-        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'invalid'})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'invalid', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         context_config.write_text(valid_context, encoding='utf-8')
         diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
-        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'valid'})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'valid', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_capture',
             'arguments': {'event': self.event(), 'kind': 'message'}})
         self.assertTrue(saved['complete'])
@@ -195,6 +195,78 @@ class ServiceTests(unittest.TestCase):
         self.processes[-1].wait(timeout=15)
         self.start(['--embedding-config', str(config_path)])
         self.assertNotEqual(self.client.call(self.access, 'mcp', args)['semantic']['state'], 'unavailable')
+
+    def test_provider_configuration_drift_blocks_new_model_calls_until_restart(self) -> None:
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / 'mcp-access-synthetic.json'
+        pair_client(self.config, client_id='synthetic', entry='test', access_path=owner)
+        root = Path(self.temporary.name)
+        extraction = root / 'synthetic-extraction.json'
+        reflection = root / 'synthetic-reflection.json'
+        paths = {'node': sys.executable, 'transformers_dir': str(root / 'deps'), 'model_dir': str(root / 'model')}
+        extraction_value = {'schema_version': 2, 'provider': 'local-qwen',
+            'profile': 'qwen3-0.6b-experimental-extractive-v1', **paths}
+        remote_value = {'schema_version': 2, 'provider': 'openai-compatible', 'policy': {}, 'remote': {
+            'base_url': 'http://127.0.0.1:9/v1', 'model': 'synthetic', 'api_key_env': 'SYNTHETIC_KEY',
+            'allowed_clients': ['synthetic'], 'allow_loopback_http': True, 'output_limit': 'max_tokens',
+            'pricing': {'input_micro_usd_per_million': 1, 'output_micro_usd_per_million': 1, 'request_micro_usd': 0},
+            'max_cost_micro_usd': 100}}
+        local_value = {'schema_version': 2, 'provider': 'local', 'policy': {}, 'local': {
+            'profile': 'qwen3-0.6b-experimental-reflection-v1', **paths}}
+        extraction.write_text(json.dumps(extraction_value), encoding='utf-8')
+        reflection.write_text(json.dumps(remote_value), encoding='utf-8')
+        args = ['--extraction-config', str(extraction), '--reflection-config', str(reflection)]
+        self.start(['--activate-owner', str(owner), *args])
+        status = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
+        initial = self.client.call(self.access, 'cli', status)
+        self.assertEqual(initial['model_configuration']['reflection'], 'configured_remote')
+        self.assertEqual(initial['configuration_validation']['reflection'], 'valid')
+        with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
+            self.client.call(self.access, 'cli', {'command': 'reflect', 'input': {'query': '合成', 'provider_check': None}})
+        reflection.write_text(json.dumps(remote_value, indent=2), encoding='utf-8')
+        self.assertEqual(self.client.call(self.access, 'cli', status)['configuration_validation']['reflection'], 'valid')
+        reflection.write_text(json.dumps(local_value), encoding='utf-8')
+        extraction.write_text('{', encoding='utf-8')
+        changed = self.client.call(self.access, 'cli', status)
+        self.assertEqual(changed['configuration_validation']['reflection'], 'restart_required')
+        self.assertEqual(changed['configuration_validation']['extraction'], 'restart_required')
+        self.assertNotIn(str(root), json.dumps(changed))
+        self.assertNotIn('SYNTHETIC_KEY', json.dumps(changed))
+        for command, value, code in (('reflect', {'query': '合成', 'allow_remote': True}, 'reflection_config_changed'),
+                                     ('extract', {'source_ids': ['synthetic']}, 'extraction_config_changed')):
+            with self.subTest(command=command), self.assertRaisesRegex(MemoryFailure, code):
+                self.client.call(self.access, 'cli', {'command': command, 'input': value})
+        with self.assertRaisesRegex(MemoryFailure, 'reflection_config_changed'):
+            self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_reflect',
+                'arguments': {'query': '合成', 'allow_remote': True}})
+        reflection.unlink()
+        self.assertEqual(self.client.call(self.access, 'cli', status)['configuration_validation']['reflection'], 'restart_required')
+        reflection.write_text(json.dumps(remote_value), encoding='utf-8')
+        self.assertEqual(self.client.call(self.access, 'cli', status)['configuration_validation']['reflection'], 'valid')
+        reflection.write_text(json.dumps(local_value), encoding='utf-8')
+        saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_remember',
+            'arguments': {'event': self.event()}})
+        self.assertTrue(saved['original_saved'])
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        extraction.write_text(json.dumps(extraction_value), encoding='utf-8')
+        self.start(args)
+        restarted = self.client.call(self.access, 'cli', status)
+        self.assertEqual(restarted['model_configuration']['reflection'], 'configured_local')
+        self.assertEqual(restarted['configuration_validation']['reflection'], 'valid')
+        self.assertEqual(restarted['configuration_validation']['extraction'], 'valid')
+
+    def test_provider_binding_rejects_a_changed_resolved_target(self) -> None:
+        from unittest.mock import patch
+        from evernook.service import _ProviderBinding
+        profile = Path(self.temporary.name) / 'binding-profile.json'
+        profile.write_text('{}', encoding='utf-8')
+        binding = _ProviderBinding(profile, 'reflection')
+        binding.check()
+        with patch('evernook.service.external', return_value=profile.with_name('different-target.json')):
+            with self.assertRaisesRegex(MemoryFailure, 'reflection_config_changed'):
+                binding.check()
 
     def test_invalid_optional_providers_do_not_prevent_capture(self) -> None:
         self.processes[-1].terminate()
@@ -363,7 +435,7 @@ class ServiceTests(unittest.TestCase):
         from evernook.service import dispatch
         command = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
         status = self.client.call(self.access, 'cli', command)
-        self.assertEqual(status['configuration_validation'], {'embedding': 'not_configured', 'context': 'not_configured'})
+        self.assertEqual(status['configuration_validation'], {'embedding': 'not_configured', 'context': 'not_configured', 'reflection': 'not_configured', 'extraction': 'not_configured'})
         self.assertEqual(status['model_configuration'], {'embedding': 'not_configured',
             'reflection': 'not_configured', 'extraction': 'not_configured', 'speech': 'host_owned'})
         ordinary = pair_client(self.config, client_id='ordinary-status', entry='ordinary-status',

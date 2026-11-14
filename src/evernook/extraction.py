@@ -65,7 +65,10 @@ def _admit(sources: tuple[ExtractionSource, ...]) -> None:
 
 def load_extraction(path: Path) -> ExtractorBackend:
     """Select a trusted built-in backend without loading caller-specified code."""
-    config = _load(external(path))
+    return _extraction_from_config(_load(external(path)))
+
+
+def _extraction_from_config(config: dict[str, object]) -> ExtractorBackend:
     if type(config.get('schema_version')) is not int:
         raise MemoryFailure('invalid_extraction_config')
     if config['schema_version'] == 1:

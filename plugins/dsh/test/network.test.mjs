@@ -7,7 +7,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
   let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
-  let validation = { embedding: 'valid', context: 'invalid' };
+  let validation = { embedding: 'valid', context: 'invalid', reflection: 'valid', extraction: 'valid' };
   let graphRole = 'assistant';
   let graphConfirmation = 'not_recorded';
   let personas = [
@@ -243,14 +243,17 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnknown')));
-  validation = { embedding: 'restart_required', context: 'valid' };
+  validation = { embedding: 'restart_required', context: 'valid', reflection: 'restart_required', extraction: 'restart_required' };
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticEmbeddingFormat: validationRestart')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticReflectionFormat: validationRestart')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticExtractionFormat: validationRestart')));
   validation = undefined;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticContextFormat: validationUnknown')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticReflectionFormat: validationUnknown')));
   statusModelsAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

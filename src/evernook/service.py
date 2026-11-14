@@ -19,7 +19,7 @@ from typing import Any, TYPE_CHECKING
 from .models import Access, Event, MemoryFailure, Source
 from .embedding import ServiceEmbedding
 from .paths import external, verify_private_directory
-from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, pair_client
+from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, _json, pair_client
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
 from .service_transport import (authenticate_client, authenticate_server, open_private_frame,
@@ -163,12 +163,33 @@ class ServiceClient:
             raise MemoryFailure("service_unavailable") from None
 
 
+class _ProviderBinding:
+    """The exact parsed configuration used to construct a service provider."""
+    def __init__(self, path: Path, kind: str):
+        self.requested_path = path
+        self.path = external(path)
+        self.kind = kind
+        self.config = _load(self.path)
+        self.identity = _json(self.config)
+
+    def check(self) -> None:
+        try:
+            if external(self.requested_path) != self.path:
+                raise MemoryFailure(self.kind + '_config_changed')
+            current = _json(_load(self.path))
+        except MemoryFailure:
+            raise MemoryFailure(self.kind + '_config_changed') from None
+        if current != self.identity:
+            raise MemoryFailure(self.kind + '_config_changed')
+
+
 def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threading.Event | None = None,
              context_config: Path | None = None, embedding_config: Path | None = None, reflector: ReflectionEngine | None = None,
              protected_inbox: ProtectedInbox | None = None, display_gate: threading.BoundedSemaphore | None = None,
              extractor: ExtractorBackend | None = None, extraction_gate: threading.BoundedSemaphore | None = None,
              embedding_binding: ServiceEmbedding | None = None, extraction_error: str | None = None,
-             reflection_error: str | None = None) -> object:
+             reflection_error: str | None = None, extraction_binding: _ProviderBinding | None = None,
+             reflection_binding: _ProviderBinding | None = None) -> object:
     if set(request) != {"version", "access", "operation", "arguments"} or request["version"] != 1:
         raise MemoryFailure("invalid_service_request")
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
@@ -285,11 +306,14 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if name == "evernook_v1_recall":
             return SemanticRecall(runtime, backend).recall(access, **parsed.model_dump(), cancel=cancel)
         if name == 'evernook_v1_reflect' and reflector is not None:
+            if reflection_binding is not None:
+                reflection_binding.check()
             if embedding_binding is not None:
                 embedding_binding.current()
             value = parsed.model_dump()
             value['topic_view_ids'] = tuple(value['topic_view_ids'])
-            return reflector.reflect(access, **value, cancel=cancel)
+            return reflector.reflect(access, **value, cancel=cancel,
+                                     provider_check=reflection_binding.check if reflection_binding else None)
         if name == 'evernook_v1_status' and embedding_error is not None:
             status_result = invoke(parsed)
             assert isinstance(status_result, dict)
@@ -308,12 +332,16 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             runtime._require_scope(access, 'maintain', 'service_extraction')
             if extractor is None or extraction_gate is None:
                 raise MemoryFailure(extraction_error or 'extraction_service_unconfigured')
+            if extraction_binding is not None:
+                extraction_binding.check()
             value = dict(arguments['input'])
             if set(value) - {'source_ids', 'timeout'} or not isinstance(value.get('source_ids'), list):
                 raise MemoryFailure('invalid_arguments')
             if not extraction_gate.acquire(blocking=False):
                 raise MemoryFailure('extraction_service_busy')
             try:
+                if extraction_binding is not None:
+                    extraction_binding.check()
                 from .extraction import ExtractionProcessor
                 from .preferences import PreferenceProcessor
                 processor = PreferenceProcessor(runtime, extractor) if command == 'extract-preferences' else ExtractionProcessor(runtime, extractor)
@@ -329,7 +357,11 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if command in {'reflect', 'reflect-configure'}:
             if reflector is None:
                 raise MemoryFailure(reflection_error or 'reflection_model_unconfigured')
+            if reflection_binding is not None:
+                reflection_binding.check()
             value = dict(arguments['input'])
+            if 'provider_check' in value:
+                raise MemoryFailure('invalid_arguments')
             if command == 'reflect-configure':
                 if value:
                     raise MemoryFailure('invalid_arguments')
@@ -340,7 +372,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 if not isinstance(value['topic_view_ids'], list):
                     raise MemoryFailure('invalid_arguments')
                 value['topic_view_ids'] = tuple(value['topic_view_ids'])
-            return reflector.reflect(access, **value, cancel=cancel)
+            return reflector.reflect(access, **value, cancel=cancel,
+                                     provider_check=reflection_binding.check if reflection_binding else None)
         parser_arguments = [command, "--config", str(runtime.root / "runtime.json"),
             "--access", str(runtime.root / "unused-service-access.json")]
         if command in ("read", "state"):
@@ -375,6 +408,17 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                     return 'invalid'
                 return 'valid'
 
+            def provider_validation(binding: _ProviderBinding | None, error: str | None) -> str:
+                if error is not None:
+                    return 'invalid'
+                if binding is None:
+                    return 'not_configured'
+                try:
+                    binding.check()
+                except MemoryFailure:
+                    return 'restart_required'
+                return 'valid'
+
             reflection_model = reflector.model if reflector is not None else None
             return {**result, 'model_configuration': {
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
@@ -382,7 +426,9 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 'extraction': 'configured_unavailable' if extraction_error is not None else 'configured_local' if extractor is not None else 'not_configured',
                 'speech': 'host_owned'}, 'configuration_validation': {
                     'embedding': config_validation(embedding_config, context=False),
-                    'context': config_validation(context_config, context=True)}}
+                    'context': config_validation(context_config, context=True),
+                    'extraction': provider_validation(extraction_binding, extraction_error),
+                    'reflection': provider_validation(reflection_binding, reflection_error)}}
         return result
     if operation == "remember":
         if set(arguments) != {"event"}:
@@ -424,20 +470,24 @@ class _Server(socketserver.ThreadingTCPServer):
         self.embedding_binding = ServiceEmbedding(embedding_config) if embedding_config is not None else None
         self.extractor: ExtractorBackend | None = None
         self.extraction_error: str | None = None
+        self.extraction_binding: _ProviderBinding | None = None
         self.extraction_gate = threading.BoundedSemaphore(1)
         if extraction_config is not None:
-            from .extraction import load_extraction
+            from .extraction import _extraction_from_config
             try:
-                self.extractor = load_extraction(extraction_config)
+                self.extraction_binding = _ProviderBinding(extraction_config, 'extraction')
+                self.extractor = _extraction_from_config(self.extraction_binding.config)
             except MemoryFailure as failure:
                 self.extraction_error = failure.code
         self.reflector: ReflectionEngine | None = None
         self.reflection_error: str | None = None
+        self.reflection_binding: _ProviderBinding | None = None
         if reflection_config is not None:
-            from .reflection_model import from_file
+            from .reflection_model import _from_config
             try:
-                self.reflector = from_file(runtime, SemanticRecall(runtime,
-                    self.embedding_binding.current() if self.embedding_binding else None), reflection_config)
+                self.reflection_binding = _ProviderBinding(reflection_config, 'reflection')
+                self.reflector = _from_config(runtime, SemanticRecall(runtime,
+                    self.embedding_binding.current() if self.embedding_binding else None), self.reflection_binding.config)
             except MemoryFailure as failure:
                 self.reflection_error = failure.code
         self.slots = threading.BoundedSemaphore(8)
@@ -511,7 +561,8 @@ class _Handler(socketserver.BaseRequestHandler):
                     context_config=server.context_config, embedding_config=server.embedding_config, reflector=server.reflector,
                     protected_inbox=server.protected_inbox, display_gate=server.display_gate,
                     extractor=server.extractor, extraction_gate=server.extraction_gate, embedding_binding=server.embedding_binding,
-                    extraction_error=server.extraction_error, reflection_error=server.reflection_error)
+                    extraction_error=server.extraction_error, reflection_error=server.reflection_error,
+                    extraction_binding=server.extraction_binding, reflection_binding=server.reflection_binding)
             finally:
                 done.set()
                 watcher.join()
