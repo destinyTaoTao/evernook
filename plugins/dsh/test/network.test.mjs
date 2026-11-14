@@ -7,6 +7,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
   let topics = [], failTopicControl = false, extractionMode = 'configured_local', personaAvailable = true, personaSupported = true, failPersonaConfirm = false;
+  let validation = { embedding: 'valid', context: 'invalid' };
   let personas = [
     { block: 'tone', revision: 2, text: '合成人设', evidence_id: 'source-1' },
     { block: 'address', revision: 1, text: '合成称呼', evidence_id: null },
@@ -73,7 +74,7 @@ test('memory links use the confirmed profile page and re-read source on click', 
     }
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
-        supported_actions: personaSupported ? ['persona_set'] : [],
+        supported_actions: personaSupported ? ['persona_set'] : [], ...(validation ? { configuration_validation: validation } : {}),
         ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned',
           ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
@@ -142,6 +143,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflection: providerRemote')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerLocal')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticSpeech: providerHost')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticEmbeddingFormat: validationValid')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticContextFormat: validationInvalid')));
   assert.ok(calls.some(call => call.view === 'status'));
   find(tree, node => node.type === 'button' && node.children.includes('persona')).props.onClick();
   tree = render(); await flush(); tree = render();
@@ -234,6 +237,10 @@ test('memory links use the confirmed profile page and re-read source on click', 
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnknown')));
+  validation = undefined;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticContextFormat: validationUnknown')));
   statusModelsAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

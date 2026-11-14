@@ -347,12 +347,29 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         if (command == 'manage' and arguments['input'] == {'action': 'read', 'view': 'status'}
                 and isinstance(result, dict)):
             from .reflection import RemoteModel
+            from .embedding import load_embedding
+            from .host_context import HostContext
+
+            def config_validation(path: Path | None, *, context: bool) -> str:
+                if path is None:
+                    return 'not_configured'
+                try:
+                    if context:
+                        HostContext(runtime, SemanticRecall(runtime), path).status()
+                    else:
+                        load_embedding(path)
+                except MemoryFailure:
+                    return 'invalid'
+                return 'valid'
+
             reflection_model = reflector.model if reflector is not None else None
             return {**result, 'model_configuration': {
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
                 'reflection': 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
                 'extraction': 'configured_local' if extractor is not None else 'not_configured',
-                'speech': 'host_owned'}}
+                'speech': 'host_owned'}, 'configuration_validation': {
+                    'embedding': config_validation(embedding_config, context=False),
+                    'context': config_validation(context_config, context=True)}}
         return result
     if operation == "remember":
         if set(arguments) != {"event"}:

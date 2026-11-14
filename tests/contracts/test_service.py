@@ -108,6 +108,22 @@ class ServiceTests(unittest.TestCase):
         status = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
         self.assertEqual(status['context'], {'configured': True, 'available': False, 'error_code': 'invalid_config'})
         self.assertNotEqual(status['semantic']['state'], 'unavailable')
+        diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'invalid'})
+        self.assertNotIn(str(self.temporary.name), json.dumps(diagnosis))
+        counter = Path(self.temporary.name) / 'synthetic-counter.json'
+        counter.write_text(json.dumps({'schema_version': 1, 'node': str(Path(self.temporary.name) / 'node'),
+            'package_dir': str(Path(self.temporary.name) / 'deps'), 'model_id': 'synthetic',
+            'tokenizer_file': str(Path(self.temporary.name) / 'missing-tokenizer'),
+            'config_file': str(Path(self.temporary.name) / 'missing-model-config'),
+            'tokenizer_sha256': '0' * 64, 'config_sha256': '1' * 64}), encoding='utf-8')
+        valid_context = json.dumps({'schema_version': 1, 'tokenizer_config': str(counter),
+            'policy': {'normal_tokens': 512, 'deep_tokens': 1024, 'pinned_tokens': 0,
+                       'recent_days': 7, 'recent_target_chars': 8192}})
+        context_config.write_text(valid_context, encoding='utf-8')
+        diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'valid', 'context': 'valid'})
+        context_config.write_text('{', encoding='utf-8')
         with self.assertRaisesRegex(MemoryFailure, 'invalid_config'):
             self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_context',
                 'arguments': {'query': '合成', 'model_id': 'synthetic', 'max_tokens': 512,
@@ -116,6 +132,11 @@ class ServiceTests(unittest.TestCase):
         both = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_status', 'arguments': {}})
         self.assertEqual(both['context']['error_code'], 'invalid_config')
         self.assertEqual(both['semantic']['state'], 'unavailable')
+        diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'invalid'})
+        context_config.write_text(valid_context, encoding='utf-8')
+        diagnosis = self.client.call(self.access, 'cli', {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}})
+        self.assertEqual(diagnosis['configuration_validation'], {'embedding': 'invalid', 'context': 'valid'})
         saved = self.client.call(self.access, 'mcp', {'profile': 'trusted-host', 'name': 'evernook_v1_capture',
             'arguments': {'event': self.event(), 'kind': 'message'}})
         self.assertTrue(saved['complete'])
@@ -165,6 +186,7 @@ class ServiceTests(unittest.TestCase):
         from evernook.service import dispatch
         command = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
         status = self.client.call(self.access, 'cli', command)
+        self.assertEqual(status['configuration_validation'], {'embedding': 'not_configured', 'context': 'not_configured'})
         self.assertEqual(status['model_configuration'], {'embedding': 'not_configured',
             'reflection': 'not_configured', 'extraction': 'not_configured', 'speech': 'host_owned'})
         ordinary = pair_client(self.config, client_id='ordinary-status', entry='ordinary-status',
