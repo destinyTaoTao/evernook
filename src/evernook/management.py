@@ -195,6 +195,21 @@ class MemoryManagement:
             raise MemoryFailure("invalid_query")
         with self.runtime._connection() as db:
             db.execute("BEGIN")
+            if view == 'topic_settings':
+                from .topic_views import TopicViews
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE name='topic_view_definitions_v1'").fetchone():
+                    return {'items': [], 'next_offset': None}
+                topics = self.topic_views or TopicViews(self.runtime)
+                rows = db.execute('''SELECT d.view_id FROM topic_view_definitions_v1 d
+                    WHERE NOT EXISTS (SELECT 1 FROM topic_view_definitions_v1 n
+                        WHERE n.view_id=d.view_id AND n.revision>d.revision)
+                    AND d.state<>'deleted' ORDER BY d.view_id LIMIT ? OFFSET ?''', (limit + 1, offset)).fetchall()
+                items = []
+                for row in rows[:limit]:
+                    topic = topics._read(db, row[0])
+                    items.append({'view_id': topic.view_id, 'revision': topic.definition_revision,
+                        'state': topic.state, 'definition': asdict(topic.definition) if topic.definition else None})
+                return {'items': items, 'next_offset': offset + limit if len(rows) > limit else None}
             if view == "network_graph":
                 return self._network_graph(db, offset, limit, query, category, entry, session_id, start, end)
             if view == "source":

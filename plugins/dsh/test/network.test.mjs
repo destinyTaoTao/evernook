@@ -6,6 +6,7 @@ import vm from 'node:vm';
 test('memory links use the confirmed profile page and re-read source on click', async () => {
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
+  let topics = [], failTopicControl = false;
   const windowListeners = new Map();
   const React = {
     Fragment: Symbol('fragment'),
@@ -44,11 +45,21 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.action === 'private_status') return Response.json({ result: { state: 'outcome_unknown',
       session_id: '12345678-1234-4123-8123-123456789abc', event_id: '87654321-4321-4321-8321-cba987654321' } });
     if (body.action === 'private_retry') return Response.json({ result: { requested: true } });
+    if (body.action === 'topic_define') {
+      topics = [{ view_id: body.view_id, revision: body.expected_revision + 1, state: 'pending', definition: body.definition }];
+      return Response.json({ result: { view_id: body.view_id, revision: body.expected_revision + 1, state: 'pending' } });
+    }
+    if (body.action === 'topic_control') {
+      if (failTopicControl) throw new Error('synthetic_timeout');
+      topics = body.control === 'delete' ? [] : topics.map(item => ({ ...item, revision: item.revision + 1, state: body.control === 'pause' ? 'paused' : 'pending' }));
+      return Response.json({ result: { view_id: body.view_id, revision: body.expected_revision + 1, state: body.control } });
+    }
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
         ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned' } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
+    if (body.view === 'topic_settings') return respond({ items: topics, next_offset: null });
     if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
       tag_id: 'tag-1', revision: 2, state: 'confirmed', recorded_at: null,
       draft: { category: 'interest', label: body.offset === 0 ? '合成画像' : '第二页画像', sources: [{ message_id: 'source-1' }] },
@@ -79,15 +90,17 @@ test('memory links use the confirmed profile page and re-read source on click', 
   const window = { addEventListener(name, callback) { windowListeners.set(name, callback); }, removeEventListener(name) { windowListeners.delete(name); },
     __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => React); } } };
   vm.runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'),
-    { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date, performance, setTimeout: () => 1, clearTimeout() {} });
+    { window, fetch, Response, EventTarget, Event, AbortController, AbortSignal, Date, performance, crypto: { randomUUID: () => 'synthetic-topic-uuid' }, setTimeout: () => 1, clearTimeout() {} });
   plugin.apply(ctx);
   const render = () => { cursor = 0; const outer = page({ host: 'main' }); return outer.type(outer.props); };
+  const renderModal = modal => { refs[cursor] = { current: { showModal() {}, close() {} } }; return modal.type({ ...modal.props, children: modal.children }); };
   const flush = async () => {
     for (const entry of effects) if (entry?.effect) { const fn = entry.effect; entry.effect = null; entry.cleanup = fn(); }
     await new Promise(resolve => setTimeout(resolve, 10));
   };
   const find = (node, predicate) => {
     if (!node || typeof node !== 'object') return undefined;
+    if (Array.isArray(node)) { for (const child of node) { const found = find(child, predicate); if (found) return found; } return undefined; }
     if (predicate(node)) return node;
     for (const child of node.children ?? []) { const found = find(child, predicate); if (found) return found; }
   };
@@ -218,6 +231,41 @@ test('memory links use the confirmed profile page and re-read source on click', 
   tree = render(); await flush(); tree = render();
   assert.ok(find(tree, node => node.type === 'h2' && node.children.includes('empty')));
   assert.ok(find(tree, node => node.props?.className === 'en-page'));
+  find(tree, node => node.type === 'button' && node.children.includes('topic_settings')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.action === 'read-versioned' && call.view === 'topic_settings'));
+  find(tree, node => node.type === 'button' && node.children.includes('topicNew')).props.onClick();
+  tree = render();
+  let topicModal = find(tree, node => node.props?.title === 'topicNew');
+  for (const [label, value] of [['topicTitle', '合成主题'], ['topicPurpose', '合成用途'], ['topicQuery', '合成问题']]) {
+    topicModal = find(tree, node => node.props?.title === 'topicNew');
+    const content = renderModal(topicModal);
+    find(content, node => node.props?.['aria-label'] === label).props.onChange({ target: { value } });
+    tree = render();
+  }
+  topicModal = find(tree, node => node.props?.title === 'topicNew');
+  let content = renderModal(topicModal);
+  find(content, node => node.type === 'button' && node.children.includes('topicConfirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.action === 'topic_define' && call.definition.title === '合成主题' && call.expected_revision === 0));
+  assert.ok(find(tree, node => node.children?.includes('合成主题')));
+  find(tree, node => node.type === 'button' && node.children.includes('topicPause')).props.onClick();
+  tree = render(); topicModal = find(tree, node => node.props?.title === 'topicConfirm');
+  content = renderModal(topicModal);
+  find(content, node => node.type === 'button' && node.children.includes('topicConfirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.ok(calls.some(call => call.action === 'topic_control' && call.control === 'pause' && call.expected_revision === 1));
+  assert.ok(find(tree, node => node.type === 'button' && node.children.includes('topicResume')));
+  failTopicControl = true;
+  find(tree, node => node.type === 'button' && node.children.includes('topicResume')).props.onClick();
+  tree = render(); topicModal = find(tree, node => node.props?.title === 'topicConfirm');
+  content = renderModal(topicModal);
+  find(content, node => node.type === 'button' && node.children.includes('topicConfirm')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('topicUnknown')));
+  assert.ok(find(tree, node => node.type === 'button' && node.children.includes('topicResume')));
+  find(tree, node => node.type === 'button' && node.children.includes('timeline')).props.onClick();
+  tree = render(); await flush();
   cursor = 0; const scoped = page({ host: 'sidebar', sessionId: 'sidebar-session' }); scoped.type(scoped.props); await flush();
   assert.ok(calls.some(call => call.view === 'timeline' && call.session_id === 'sidebar-session'));
   const before = calls.length;

@@ -10,7 +10,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
     graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察', topic: '主题视图', valid: '有效', conflict: '冲突',
+    topic_settings: '专题设置', topicNew: '新建专题', topicEdit: '编辑专题', topicTitle: '标题', topicPurpose: '用途', topicQuery: '检索问题', topicEntries: '入口（每行一个，留空表示不限）', topicSessions: '会话范围（JSON 数组，每项为 [入口, 会话]）', topicSources: '来源 ID（每行一个）', topicObservations: '观察键（每行一个）', topicSince: '起始时间（ISO，含）', topicUntil: '结束时间（ISO，不含）', topicTTL: '有效秒数', topicInterval: '刷新间隔秒数', topicMaxSources: '最大来源数', topicMaxChars: '最大字符数', topicPolicy: '策略版本', topicPause: '暂停刷新', topicResume: '恢复刷新', topicDelete: '删除专题', topicConfirm: '确认更改专题', topicControlHelp: '只更改派生专题，不删除原始记录。操作结果不确定时请刷新核对，勿重复新建。', topicUnknown: '未能确认专题操作结果。请核对刷新后的列表；新建失败时也可能已保存。', topicInvalid: '请检查专题范围和数值格式。', topicPending: '待刷新', topicPaused: '已暂停',
     networkLayer: '记忆层', facts: '事实', observations: '综合观察', disputed: '存在争议', conflicted: '存在冲突', published: '已发布', current: '当前', unknown_time: '时间未知',
+    topic_needs_refresh: '需要刷新', topic_expired: '已过期', topic_pending: '待刷新', topic_paused: '已暂停', topic_empty: '暂无依据', topicEmpty: '尚无专题', topicEmptyHelp: '创建专题后，可以配置范围和刷新策略。', topicDeleteHelp: '专题定义和快照将永久删除；原始记录保留。',
     inference: '推断', support: '支持依据', counterevidence: '反证', networkFilterUnavailable: '事实和观察层暂不支持搜索及分类筛选。', networkEmpty: '当前页没有可显示的记忆；如有下一页，可继续查看。',
     filterEntry: '入口', filterSession: '会话 ID', filterSince: '发生日期从（含）', filterUntil: '发生日期至（不含）', filterTimeHelp: '日期按本机时区；未提供发生时间的记录在日期筛选时不显示。', invalidTimeRange: '结束日期必须晚于起始日期。',
     diagnostics: '连接与配置诊断', diagnosticScope: '宿主配置与本次可信管理读取；不代表模型或日用能力已通过验收。', diagnosticSchema: 'Core 配置格式版本', diagnosticService: '管理服务', diagnosticOnline: '读取成功', diagnosticLoading: '检查中', diagnosticUnavailable: '读取失败或不可用', diagnosticStream: '宿主流模式', diagnosticRecovery: '只读续接', diagnosticEnabled: '可用', diagnosticDisabled: '未启用或不支持',
@@ -52,7 +54,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
     graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation', topic: 'Topic view', valid: 'Valid', conflict: 'Conflict',
+    topic_settings: 'Topic settings', topicNew: 'New topic', topicEdit: 'Edit topic', topicTitle: 'Title', topicPurpose: 'Purpose', topicQuery: 'Search question', topicEntries: 'Entries (one per line; empty means all)', topicSessions: 'Sessions (JSON array of [entry, session] pairs)', topicSources: 'Source IDs (one per line)', topicObservations: 'Observation keys (one per line)', topicSince: 'From time (ISO, inclusive)', topicUntil: 'Until time (ISO, exclusive)', topicTTL: 'Lifetime in seconds', topicInterval: 'Refresh interval in seconds', topicMaxSources: 'Maximum sources', topicMaxChars: 'Maximum characters', topicPolicy: 'Policy version', topicPause: 'Pause refresh', topicResume: 'Resume refresh', topicDelete: 'Delete topic', topicConfirm: 'Confirm topic change', topicControlHelp: 'Only the derived topic changes; original records remain. If the result is uncertain, refresh before creating another.', topicUnknown: 'The topic change could not be confirmed. Check the refreshed list; a new topic may already have been saved.', topicInvalid: 'Check the topic scope and numeric fields.', topicPending: 'Pending refresh', topicPaused: 'Paused',
     networkLayer: 'Memory layer', facts: 'Facts', observations: 'Observations', disputed: 'Disputed', conflicted: 'Conflicted', published: 'Published', current: 'Current', unknown_time: 'Time unknown',
+    topic_needs_refresh: 'Needs refresh', topic_expired: 'Expired', topic_pending: 'Pending', topic_paused: 'Paused', topic_empty: 'No evidence', topicEmpty: 'No topics yet', topicEmptyHelp: 'Create a topic to configure its scope and refresh policy.', topicDeleteHelp: 'The topic definition and snapshots will be permanently deleted; original records remain.',
     inference: 'Inference', support: 'Supporting evidence', counterevidence: 'Counterevidence', networkFilterUnavailable: 'Search and category filters are not yet available for facts or observations.', networkEmpty: 'No visible memories on this page. Continue if a next page is available.',
     filterEntry: 'Entry', filterSession: 'Session ID', filterSince: 'Occurred from (inclusive)', filterUntil: 'Occurred before (exclusive)', filterTimeHelp: 'Dates use the local time zone. Records without occurrence time are excluded when dates are set.', invalidTimeRange: 'The end date must be later than the start date.',
     diagnostics: 'Connection and configuration', diagnosticScope: 'Host configuration and this trusted management read; not model or daily-use admission.', diagnosticSchema: 'Core configuration schema', diagnosticService: 'Management service', diagnosticOnline: 'Read succeeded', diagnosticLoading: 'Checking', diagnosticUnavailable: 'Read failed or unavailable', diagnosticStream: 'Host stream mode', diagnosticRecovery: 'Read-only continuation', diagnosticEnabled: 'Available', diagnosticDisabled: 'Disabled or unsupported',
@@ -103,6 +107,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
     .en-empty{padding:55px 20px;text-align:center;border:1px dashed color-mix(in srgb,currentColor 20%,transparent);border-radius:12px}.en-empty p{max-width:440px;margin:12px auto;font-size:13px;opacity:.65}.en-page{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin:18px 0}.en-meta{font-size:11px;opacity:.6;display:flex;gap:10px;flex-wrap:wrap}
     .en-error{padding:12px;border:1px solid #c66c62;border-radius:8px;margin:10px 0;font-size:13px}.en-success{padding:12px;background:color-mix(in srgb,var(--en-accent) 12%,transparent);border-radius:8px;margin-bottom:12px;font-size:13px}.en-rows{display:grid;gap:10px}
     .en-mem dialog{color:var(--dsw-alias-label-primary,#1d2220);background:var(--dsw-alias-bg-module-platform,#fff);border:1px solid #8885;border-radius:14px;width:min(720px,92vw);max-height:86vh;padding:24px;box-shadow:0 20px 70px #0003;overflow:auto}.en-mem dialog::backdrop{background:#0006}.en-mem dialog header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:10px}
+    .en-topic-field{display:flex;flex-direction:column;gap:5px;margin:12px 0}.en-topic-field textarea{min-height:70px}
     .en-mem pre{font:inherit;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0;background:var(--en-soft);border-radius:8px;padding:14px}.en-mem textarea{width:100%;min-height:110px;resize:vertical}.en-mem .en-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}.en-side{padding:16px}.en-side .en-head{margin-bottom:12px}.en-side .en-grid{grid-template-columns:1fr}.en-side .en-values{display:none}.en-side h1{font-size:19px}.en-side .en-tabs{gap:6px}.en-side .en-notice{font-size:11px}
     @media(max-width:650px){.en-mem{padding:16px}.en-head{align-items:flex-start}.en-values{gap:12px}.en-mem dialog{padding:18px}}
   `;
@@ -132,8 +137,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       if (!response.ok) { if (response.status === 403) bootstrap = undefined; throw new Error(body.error ?? 'management_unavailable'); }
       return body.result;
     }
-    const errorText = code => t(['management_preview_stale', 'recovery_stale'].includes(code) ? 'changed' : ['management_preview_expired', 'recovery_expired'].includes(code) ? 'expired'
+    const errorText = code => t(['management_preview_stale', 'recovery_stale', 'topic_view_revision_conflict'].includes(code) ? 'changed' : ['management_preview_expired', 'recovery_expired'].includes(code) ? 'expired'
       : code === 'forbidden' ? 'forbidden' : code === 'source_unavailable' ? 'sourceUnavailable'
+      : code === 'invalid_topic_form' ? 'topicInvalid'
       : code === 'invalid_time_range' ? 'invalidTimeRange' : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
     const time = value => value ? new Date(value).toLocaleString() : t('unknown');
     const button = (label, action, props = {}) => h('button', { type: 'button', onClick: action, ...props }, label);
@@ -172,6 +178,8 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [currentEntry, setCurrentEntry] = useState('dsh');
       const [review, setReview] = useState(null);
       const [editing, setEditing] = useState(null);
+      const [topicEdit, setTopicEdit] = useState(null);
+      const [topicControl, setTopicControl] = useState(null);
       const [source, setSource] = useState(null);
       const [history, setHistory] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -190,9 +198,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         leaseTimer.current = null; leaseAbort.current?.abort(); leaseAbort.current = null;
         setSource(null); setHistory(null);
       };
-      const refresh = (resetStreak = true) => { if (resetStreak) changeStreak.current = 0; invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); };
+      const refresh = (resetStreak = true) => { if (resetStreak) changeStreak.current = 0; invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); setTopicEdit(null); setTopicControl(null); };
       const expire = () => {
-        invalidateReads(); setData({ items: [] }); setReview(null); setEditing(null); setLoading(false); setError(t('unavailable'));
+        invalidateReads(); setData({ items: [] }); setReview(null); setEditing(null); setTopicEdit(null); setTopicControl(null); setLoading(false); setError(t('unavailable'));
       };
       function armLease(slot, lease) {
         if (lease.watchdog !== undefined) clearTimeout(lease.watchdog);
@@ -263,7 +271,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       useEffect(() => {
         alive.current = true;
         const listener = () => refresh();
-        const dispose = () => { invalidateReads(); setEnabled(false); setData({ items: [] }); setReview(null);
+        const dispose = () => { invalidateReads(); setEnabled(false); setData({ items: [] }); setReview(null); setTopicEdit(null); setTopicControl(null);
           for (const controller of controllers.current) controller.abort(); };
         updates.addEventListener('changed', listener);
         updates.addEventListener('disposed', dispose);
@@ -317,6 +325,39 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         catch (cause) { if (alive.current && !controller.signal.aborted) setError(errorText(cause.message)); }
         finally { controllers.current.delete(controller); if (alive.current) setBusy(false); }
       }
+      function editTopic(item) {
+        const definition = item?.definition ?? { title: '', purpose: '', query: '', entries: [], sessions: [], source_ids: [], observation_keys: [], since: null, until: null,
+          ttl_seconds: 86400, refresh_interval_seconds: 5, max_sources: 16, max_chars: 8192, policy_version: 'topic-view-v1' };
+        setTopicEdit({ view_id: item?.view_id ?? crypto.randomUUID(), revision: item?.revision ?? 0,
+          definition: { ...definition, entries: definition.entries.join('\n'), sessions: JSON.stringify(definition.sessions),
+            source_ids: definition.source_ids.join('\n'), observation_keys: definition.observation_keys.join('\n'),
+            since: definition.since ?? '', until: definition.until ?? '' } });
+      }
+      function saveTopic() { return perform(async signal => {
+        let definition;
+        try {
+          const value = topicEdit.definition;
+          const lines = input => input.split('\n').map(item => item.trim()).filter(Boolean);
+          const sessions = JSON.parse(value.sessions);
+          if (!Array.isArray(sessions) || sessions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => typeof part !== 'string'))) throw new Error();
+          definition = { ...value, entries: lines(value.entries), sessions, source_ids: lines(value.source_ids), observation_keys: lines(value.observation_keys),
+            since: value.since.trim() || null, until: value.until.trim() || null };
+          for (const key of ['ttl_seconds', 'refresh_interval_seconds', 'max_sources', 'max_chars']) {
+            if (!/^\d+$/.test(String(value[key])) || !Number.isSafeInteger(Number(value[key]))) throw new Error();
+            definition[key] = Number(value[key]);
+          }
+        } catch { throw new Error('invalid_topic_form'); }
+        try { await call({ action: 'topic_define', request_id: crypto.randomUUID(), view_id: topicEdit.view_id,
+          expected_revision: topicEdit.revision, definition }, signal); }
+        catch (cause) { if (alive.current && !signal.aborted) { refresh(); setNotice(t('topicUnknown')); } throw cause; }
+        if (alive.current && !signal.aborted) { refresh(); setNotice(t('saved')); }
+      }); }
+      function confirmTopicControl() { return perform(async signal => {
+        try { await call({ action: 'topic_control', request_id: crypto.randomUUID(), view_id: topicControl.view_id,
+          expected_revision: topicControl.revision, control: topicControl.control }, signal); }
+        catch (cause) { if (alive.current && !signal.aborted) { refresh(); setNotice(t('topicUnknown')); } throw cause; }
+        if (alive.current && !signal.aborted) { refresh(); setNotice(t('saved')); }
+      }); }
       function preview(operation) { return perform(async signal => {
         const epoch = readEpoch.current;
         const result = await call({ action: 'preview', operation }, signal);
@@ -457,12 +498,14 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               : sessionStatus.stream_mode === 'durable_tools' ? 'durableTools'
               : sessionStatus.tool_publication === 'saved_before_publish' ? 'bufferedTools' : 'buffered')),
             h('p', null, t('gaps') + ': ' + (sessionStatus.capture_gaps?.join(', ') || t('noGaps')))) : null,
-          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'network', 'drafts', 'suppressed', 'rejected'].map(name =>
+          h('nav', { className: 'en-tabs', role: 'tablist', 'aria-label': t('title') }, ...['profiles', 'interests', 'timeline', 'network', 'topic_settings', 'drafts', 'suppressed', 'rejected'].map(name =>
             button(t(name), () => changeTab(name), { key: name, role: 'tab', 'aria-selected': name === tab }))),
           notice ? h('div', { className: 'en-success', role: 'status' }, notice) : null,
           error ? h('div', { className: 'en-error', role: 'alert' }, error) : null,
           configured === false ? h('div', { className: 'en-empty' }, h('h2', null, t('config')), h('p', null, t('configHelp'))) :
           h(React.Fragment, null,
+            tab === 'topic_settings' ? h('div', { className: 'en-toolbar' }, button(t('topicNew'), () => editTopic(null), { disabled: loading || busy }),
+              button(t('refresh'), refresh, { disabled: loading || busy }), h('span', { className: 'en-muted' }, t('topicControlHelp'))) :
             h('form', { className: 'en-toolbar', onSubmit: event => { event.preventDefault(); refresh(); setFilter(query); if (tab === 'timeline' || tab === 'network') setTimelineFilter(timelineInput); setOffsets([0]); } },
               tab === 'network' ? h('select', { value: networkLayer, 'aria-label': t('networkLayer'), onChange: event => { invalidateReads(); setData({ items: [] }); setLoading(true); setNetworkLayer(event.target.value); setQuery(''); setFilter(''); setCategory(''); setOffsets([0]); } },
                 ...['graph', 'profiles', 'facts', 'observations'].map(name => h('option', { key: name, value: name }, t(name)))) : null,
@@ -480,12 +523,35 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             tab === 'timeline' || tab === 'network' ? h('p', { className: 'en-muted' }, t('filterTimeHelp')) : null,
             loading ? h('p', { role: 'status' }, t('loading')) : data.items.length ?
               h('div', { className: tab === 'network' ? 'en-network' : tab === 'timeline' ? 'en-rows' : 'en-grid' },
-                ...(tab === 'network' && networkLayer === 'graph' ? graphCards(data.items) : data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard))) :
-              error ? null : h('div', { className: 'en-empty' }, h('h2', null, t('empty')), h('p', null, t(tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
+                ...(tab === 'topic_settings' ? data.items.map(item => h('article', { key: item.view_id, className: 'en-card' },
+                  h('h2', null, item.definition?.title ?? item.view_id), h('p', null, item.definition?.purpose),
+                  h('p', { className: 'en-muted' }, t('version') + ' ' + item.revision + ' · ' + t(['valid', 'conflict'].includes(item.state) ? item.state : 'topic_' + item.state)),
+                  h('div', { className: 'en-actions' }, button(t('topicEdit'), () => editTopic(item), { disabled: busy }),
+                    button(t(item.state === 'paused' ? 'topicResume' : 'topicPause'), () => setTopicControl({ ...item, control: item.state === 'paused' ? 'resume' : 'pause' }), { disabled: busy }),
+                    button(t('topicDelete'), () => setTopicControl({ ...item, control: 'delete' }), { disabled: busy })))) :
+                  tab === 'network' && networkLayer === 'graph' ? graphCards(data.items) : data.items.map(tab === 'network' ? networkCard : tab === 'timeline' ? timelineCard : profileCard))) :
+              error ? null : h('div', { className: 'en-empty' }, h('h2', null, t(tab === 'topic_settings' ? 'topicEmpty' : 'empty')), h('p', null, t(tab === 'topic_settings' ? 'topicEmptyHelp' : tab === 'network' ? 'networkEmpty' : 'emptyHelp'))),
             error && !data.items.length ? null : h('div', { className: 'en-page' }, h('span', { className: 'en-muted' }, `${t('page')} ${offsets.length} · ${t('currentPage')} ${data.items.length}`),
               button(t('previous'), () => { refresh(); setOffsets(value => value.slice(0, -1)); }, { disabled: loading || offsets.length < 2 }),
               button(t('next'), () => { const next = data.next_offset; refresh(); setOffsets(value => [...value, next]); }, { disabled: loading || data.next_offset == null }))),
           h('p', { className: 'en-muted' }, t('encryption')),
+          topicEdit ? h(Modal, { title: t(topicEdit.revision ? 'topicEdit' : 'topicNew'), close: () => setTopicEdit(null), busy, error },
+            h('p', { className: 'en-muted' }, t('topicControlHelp')),
+            ...[['title', 'topicTitle'], ['purpose', 'topicPurpose'], ['query', 'topicQuery'], ['entries', 'topicEntries'],
+              ['sessions', 'topicSessions'], ['source_ids', 'topicSources'], ['observation_keys', 'topicObservations'],
+              ['since', 'topicSince'], ['until', 'topicUntil'], ['ttl_seconds', 'topicTTL'], ['refresh_interval_seconds', 'topicInterval'],
+              ['max_sources', 'topicMaxSources'], ['max_chars', 'topicMaxChars'], ['policy_version', 'topicPolicy']].map(([key, label]) =>
+                h('label', { key, className: 'en-topic-field' }, t(label), h(['entries', 'sessions', 'source_ids', 'observation_keys'].includes(key) ? 'textarea' : 'input',
+                  { value: topicEdit.definition[key], 'aria-label': t(label), onChange: event => setTopicEdit(previous => ({ ...previous,
+                    definition: { ...previous.definition, [key]: event.target.value } })) }))),
+            h('div', { className: 'en-footer' }, button(t('cancel'), () => setTopicEdit(null), { disabled: busy }),
+              button(t('topicConfirm'), saveTopic, { className: 'en-primary', disabled: busy }))) : null,
+          topicControl ? h(Modal, { title: t('topicConfirm'), close: () => setTopicControl(null), busy, error },
+            h('p', null, t(({ pause: 'topicPause', resume: 'topicResume', delete: 'topicDelete' })[topicControl.control]) + ' · ' + topicControl.definition.title),
+            topicControl.control === 'delete' ? h('p', null, t('topicDeleteHelp')) : null,
+            h('p', { className: 'en-muted' }, t('topicControlHelp')),
+            h('div', { className: 'en-footer' }, button(t('cancel'), () => setTopicControl(null), { disabled: busy }),
+              button(t('topicConfirm'), confirmTopicControl, { className: 'en-primary', disabled: busy }))) : null,
           editing ? h(Modal, { title: t('revise'), close: () => setEditing(null), busy, error },
             h('p', { className: 'en-muted' }, t('reviseHelp')),
             h('textarea', { value: editing.label ?? editing.text, maxLength: editing.kind === 'profile_revise' ? 256 : 16384, 'aria-label': t('replacement'),

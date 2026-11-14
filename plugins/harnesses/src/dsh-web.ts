@@ -57,7 +57,7 @@ export async function installWeb(ctx: Context, config: Config) {
   const options: MemoryOptions = { python: config.python, config: config.config, access: config.access,
     entry: config.entry, streamMode: config.streamMode, toolPublication: config.toolPublication, reflection: config.reflection,
     reflectionAllowRemote: config.reflectionAllowRemote, serviceRequired: true };
-  async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' = 'manage') {
+  async function manage(input: RecordValue, signal?: AbortSignal, operation: 'manage' | 'host-recovery' | 'topic-view-define' | 'topic-view-control' = 'manage') {
     if (running.size >= 4) throw new Error('evernook:management_busy');
     const requestSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
     const promise = fingerprintBridge && operation === 'manage' && input.action === 'fingerprints' && Object.keys(input).length === 2
@@ -142,6 +142,26 @@ export async function installWeb(ctx: Context, config: Config) {
         if (input.action === 'private_abandon') { privateWindow.abandon(); return json({ result: privateWindow.status() }); }
         await privateWindow.open(input.action === 'private_retry');
         return json({ result: { requested: true } });
+      }
+      if (input.action === 'topic_define' || input.action === 'topic_control') {
+        const { action, ...arguments_ } = input;
+        const expected = action === 'topic_define'
+          ? ['definition', 'expected_revision', 'request_id', 'view_id']
+          : ['control', 'expected_revision', 'request_id', 'view_id'];
+        if (Object.keys(arguments_).sort().join(',') !== expected.join(',')
+            || typeof arguments_.view_id !== 'string' || typeof arguments_.request_id !== 'string'
+            || !Number.isSafeInteger(arguments_.expected_revision)
+            || (action === 'topic_define' && !object(arguments_.definition))
+            || (action === 'topic_control' && !['pause', 'resume', 'delete'].includes(String(arguments_.control)))) {
+          return json({ error: 'invalid_request' }, 400);
+        }
+        const command = action === 'topic_define' ? 'topic-view-define' : 'topic-view-control';
+        if (action === 'topic_control') { arguments_.action = arguments_.control; delete arguments_.control; }
+        const result = await manage(arguments_, request.signal, command);
+        if (typeof result.view_id !== 'string' || !Number.isSafeInteger(result.definition_revision) || typeof result.state !== 'string') {
+          throw new Error('evernook:management_unavailable');
+        }
+        return json({ result: { view_id: result.view_id, revision: result.definition_revision, state: result.state } });
       }
       if (String(input.action).startsWith('recovery_')) {
         if (!recovery) throw new Error('evernook:recovery_patch_required');

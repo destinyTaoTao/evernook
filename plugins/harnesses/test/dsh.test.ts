@@ -2393,6 +2393,43 @@ test('web service page corrects and suppresses evidence used by fresh native dsh
   assert.deepEqual(host.errors, []);
 });
 
+test('web service topic controls use CSRF, revisions and a leased settings projection', async t => {
+  const host = await boot(new Synthetic(), false, true, { service: true });
+  t.after(() => host.close());
+  await host.memory.close();
+  host.ctx.provide('connection', { fetch: { register: () => () => {} } });
+  const web = await installWeb(host.ctx, { python: python!, config: host.config.config,
+    access: host.config.access, maintenanceAccess: join(host.root, 'memory/mcp-access-owner.json'),
+    entry: 'dsh', streamMode: 'durable_text' });
+  t.after(() => web.close());
+  let csrf = '';
+  async function send(input: Record<string, unknown>, includeCsrf = true) {
+    const response = await web.handle(new Request('http://dsh.internal/api/evernook/manage', {
+      method: 'POST', headers: { host: '127.0.0.1:37849', origin: 'http://127.0.0.1:37849',
+        'content-type': 'application/json', ...(csrf && includeCsrf ? { 'x-evernook-csrf': csrf } : {}) }, body: JSON.stringify(input) }));
+    return { status: response.status, body: await response.json() as Record<string, any> };
+  }
+  csrf = (await send({ action: 'bootstrap' })).body.csrf;
+  const define = { action: 'topic_define', request_id: 'topic-define', view_id: 'topic-synthetic', expected_revision: 0,
+    definition: { title: '合成专题', purpose: '合成验证', query: '合成问题', entries: ['dsh'], sessions: [], source_ids: [], observation_keys: [] } };
+  assert.equal((await send(define, false)).status, 403);
+  assert.equal((await send({ ...define, extra: true })).status, 400);
+  const created = await send(define); assert.equal(created.status, 200); assert.equal(created.body.result.revision, 1);
+  assert.deepEqual(Object.keys(created.body.result).sort(), ['revision', 'state', 'view_id']);
+  const page = await send({ action: 'read-versioned', view: 'topic_settings' });
+  assert.equal(page.status, 200); assert.equal(page.body.result.value.items[0].definition.title, '合成专题');
+  const oldToken = page.body.result.token;
+  const pause = { action: 'topic_control', request_id: 'topic-pause', view_id: 'topic-synthetic', expected_revision: 1, control: 'pause' };
+  assert.equal((await send({ ...pause, control: 'unsupported' })).status, 400);
+  assert.equal((await send(pause)).body.result.state, 'paused');
+  assert.equal((await send({ ...pause, request_id: 'topic-stale', control: 'resume' })).body.error, 'topic_view_revision_conflict');
+  const fingerprint = await send({ action: 'fingerprints', requests: [{ view: 'topic_settings' }] });
+  assert.notEqual(fingerprint.body.result.tokens[0], oldToken);
+  assert.equal((await send({ ...pause, request_id: 'topic-resume', expected_revision: 2, control: 'resume' })).status, 200);
+  assert.equal((await send({ ...pause, request_id: 'topic-delete', expected_revision: 3, control: 'delete' })).status, 200);
+  assert.deepEqual((await send({ action: 'read', view: 'topic_settings' })).body.result.items, []);
+});
+
 test('web service startup rejects an ordinary identity missing capture', async t => {
   const host = await boot(new Synthetic(), false, false, { service: true });
   t.after(() => host.close());

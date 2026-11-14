@@ -39,6 +39,40 @@ class ManagementTests(unittest.TestCase):
         preview = self.ui.preview(self.access, operation)
         return self.ui.confirm(self.access, preview["proposal_id"], operation)
 
+    def test_topic_settings_projection_tracks_versions_and_never_returns_snapshot_text(self) -> None:
+        from evernook.topic_views import TopicViewDefinition, TopicViews
+        views = TopicViews(self.runtime)
+        definition = TopicViewDefinition('合成专题', '合成用途', '合成问题', entries=('owner',))
+        views.configure(self.access, 'topic-create', 'topic-synthetic', 0, definition)
+        first = self.ui.read_versioned(self.access, view='topic_settings')
+        item = first['value']['items'][0]
+        self.assertEqual((item['view_id'], item['revision'], item['state']), ('topic-synthetic', 1, 'pending'))
+        self.assertEqual(item['definition']['entries'], ('owner',))
+        self.assertNotIn('data', item)
+        self.assertEqual(self.ui.fingerprint(self.access, view='topic_settings')['token'], first['token'])
+        self.source('合成问题：隐藏的专题证据正文')
+        views.refresh(self.access, 'topic-synthetic', timeout=10)
+        current = self.ui.read_versioned(self.access, view='topic_settings')
+        self.assertEqual(current['value']['items'][0]['state'], 'valid')
+        self.assertNotIn('隐藏的专题证据正文', json.dumps(current['value'], ensure_ascii=False))
+        self.assertNotEqual(current['token'], first['token'])
+        self.source('合成：使专题快照失效')
+        invalidated = self.ui.read_versioned(self.access, view='topic_settings')
+        self.assertEqual(invalidated['value']['items'][0]['state'], 'needs_refresh')
+        self.assertNotEqual(invalidated['token'], current['token'])
+        views.control(self.access, 'topic-pause', 'topic-synthetic', 1, action='pause')
+        paused = self.ui.read_versioned(self.access, view='topic_settings')
+        self.assertNotEqual(first['token'], paused['token'])
+        self.assertEqual(paused['value']['items'][0]['state'], 'paused')
+        with self.assertRaisesRegex(MemoryFailure, 'topic_view_revision_conflict'):
+            views.control(self.access, 'topic-stale', 'topic-synthetic', 1, action='resume')
+        ordinary = pair_client(self.config, client_id='ordinary-topic', entry='ordinary-topic',
+            access_path=self.config.parent / 'mcp-access-ordinary-topic.json', scopes=('capture', 'recall'))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.ui.read(ordinary, view='topic_settings')
+        views.control(self.access, 'topic-delete', 'topic-synthetic', 2, action='delete')
+        self.assertEqual(self.ui.read(self.access, view='topic_settings')['items'], [])
+
     def test_profile_review_revision_suppression_and_original_retention(self) -> None:
         source_id = self.draft()
         self.assertEqual(len(self.ui.read(self.access, view="drafts")["items"]), 1)

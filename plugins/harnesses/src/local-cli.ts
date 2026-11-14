@@ -4,7 +4,7 @@ import type { MemoryConfig } from './client.ts';
 type RecordValue = Record<string, unknown>;
 export type MaintenanceOperation = 'status' | 'mark-important' | 'change' | 'purge-preview' | 'purge' | 'profile-read' | 'profile-decide'
   | 'candidate-list' | 'fact-query' | 'fact-decide';
-export type LocalOperation = MaintenanceOperation | 'scheduler-trigger' | 'scheduler-status' | 'scheduler-session-end' | 'manage' | 'host-recovery';
+export type LocalOperation = MaintenanceOperation | 'scheduler-trigger' | 'scheduler-status' | 'scheduler-session-end' | 'manage' | 'host-recovery' | 'topic-view-define' | 'topic-view-control';
 function object(value: unknown): value is RecordValue { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
 /** Fixed local CLI operations. Evidence goes through stdin, never a shell or process arguments. */

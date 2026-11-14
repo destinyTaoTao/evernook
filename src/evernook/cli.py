@@ -331,9 +331,9 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         from .management import MemoryManagement
         value = read_input()
         action = value.pop("action", None)
-        graph = value.get('view') == 'network_graph' or (action == 'fingerprints'
+        graph = value.get('view') in {'network_graph', 'topic_settings'} or (action == 'fingerprints'
             and isinstance(value.get('requests'), list)
-            and any(isinstance(item, dict) and item.get('view') == 'network_graph' for item in value['requests']))
+            and any(isinstance(item, dict) and item.get('view') in {'network_graph', 'topic_settings'} for item in value['requests']))
         if graph and getattr(args, 'embedding_config', None) is not None:
             from .topic_views import TopicViews
             backend = load_embedding(args.embedding_config)
