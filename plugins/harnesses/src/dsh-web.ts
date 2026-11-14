@@ -136,9 +136,11 @@ export async function installWeb(ctx: Context, config: Config) {
         return json({ error: 'forbidden' }, 403);
       }
       if (!configured) return json({ error: 'configuration_required' }, 409);
-      if (input.action === 'private_open' && Object.keys(input).length === 1) {
+      if (typeof input.action === 'string' && ['private_open', 'private_retry', 'private_status', 'private_abandon'].includes(input.action) && Object.keys(input).length === 1) {
         if (!privateWindow) throw new Error('evernook:private_window_unavailable');
-        await privateWindow.open();
+        if (input.action === 'private_status') return json({ result: privateWindow.status() });
+        if (input.action === 'private_abandon') { privateWindow.abandon(); return json({ result: privateWindow.status() }); }
+        await privateWindow.open(input.action === 'private_retry');
         return json({ result: { requested: true } });
       }
       if (String(input.action).startsWith('recovery_')) {

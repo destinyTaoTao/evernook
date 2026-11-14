@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const zh = {
     title: '忆栖', subtitle: '让重要的话有据可寻', preview: '预览版', notice: '当前版本尚未通过正式日用验收，工具工作流与可靠流式仍有支持限制。', leaseNotice: '页面定期核验记忆；连接失效时隐藏内容。已交付的内容无法撤回。',
     privateOpen: '私密记录（本机窗口）', privateHelp: '独立记录，不属于当前聊天；请仅在本机窗口输入。', privateRequested: '已请求启动本机窗口；请在窗口中确认保存结果。',
+    privateCheck: '查看窗口结果', privateRetry: '重试未确认的记录', privateAbandon: '放弃这次重试', privateWaiting: '窗口请求已启动；结束前不能确认保存。', privateSaved: '本机窗口确认已加密保存。', privateCanceled: '窗口已关闭，本次未提交。', privateUnknown: '保存结果不确定。重试时请在本机窗口输入完全相同的内容；不同内容会被拒绝。放弃重试会丢弃编号，原记录仍可能已经保存。', privateNever: '尚未请求私密记录。', privateFailed: '窗口启动失败。', privateId: '重试编号', privateRestart: '编号只保留在当前宿主进程，重启前请记下。',
     profiles: '我的画像', interests: '兴趣与偏好', timeline: '记忆时间线', network: '记忆关系', drafts: '待审草案', suppressed: '已移出画像', rejected: '已拒绝',
     networkHelp: '每层按槽位分页；共同来源连接本页关联记忆，结果并非全库。点击来源会重新检查可见性。', networkSource: '来源',
     graph: '跨层关系', graphEvidence: '依据', profile: '画像', fact: '事实', observation: '观察', topic: '主题视图', valid: '有效', conflict: '冲突',
@@ -47,6 +48,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
   const en = {
     title: 'EverNook', subtitle: 'Important words, backed by evidence', preview: 'Preview', notice: 'Daily-use admission is pending. Tool workflows and reliable streaming have explicit limitations.', leaseNotice: 'Visible memories are rechecked periodically and hidden if the connection fails. Previously delivered content cannot be recalled.',
     privateOpen: 'Private record (local window)', privateHelp: 'A separate record, not this chat. Enter it only in the local window.', privateRequested: 'Local window launch requested; confirm the save result in the window.',
+    privateCheck: 'Check window result', privateRetry: 'Retry unconfirmed record', privateAbandon: 'Abandon this retry', privateWaiting: 'Window requested; the save is not confirmed until it finishes.', privateSaved: 'The local window confirmed encrypted storage.', privateCanceled: 'Window closed without submission.', privateUnknown: 'The save outcome is unknown. Retry with exactly the same text in the local window; different text is rejected. Abandoning discards the IDs; the record may already exist.', privateNever: 'No private record requested.', privateFailed: 'Window launch failed.', privateId: 'Retry IDs', privateRestart: 'IDs are held only by this host process; note them before restarting.',
     profiles: 'Your profile', interests: 'Interests & preferences', timeline: 'Memory timeline', network: 'Memory links', drafts: 'Review drafts', suppressed: 'Removed from profile', rejected: 'Rejected',
     networkHelp: 'Each layer is paged by slot. Shared sources link memories on this page; this is not the full database. Opening a source checks visibility again.', networkSource: 'Source',
     graph: 'Cross-layer links', graphEvidence: 'Evidence', profile: 'Profile', fact: 'Fact', observation: 'Observation', topic: 'Topic view', valid: 'Valid', conflict: 'Conflict',
@@ -165,6 +167,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       const [recovery, setRecovery] = useState(null);
       const [recoverySupported, setRecoverySupported] = useState(false);
       const [privateCapture, setPrivateCapture] = useState(null);
+      const [privateResult, setPrivateResult] = useState(null);
       const [fingerprintBridge, setFingerprintBridge] = useState(null);
       const [currentEntry, setCurrentEntry] = useState('dsh');
       const [review, setReview] = useState(null);
@@ -406,8 +409,27 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
             h('span', { className: 'en-pill' }, t('preview'))),
           h('div', { className: 'en-notice' }, t('notice')), h('p', { className: 'en-muted' }, t('leaseNotice')),
           privateCapture ? h('div', { className: 'en-actions' }, button(t('privateOpen'), () => perform(async signal => {
-            await call({ action: 'private_open' }, signal); if (alive.current) setNotice(t('privateRequested'));
+            await call({ action: 'private_open' }, signal); if (alive.current) { setPrivateResult(null); setNotice(t('privateRequested')); }
+          }), { disabled: busy }), button(t('privateCheck'), () => perform(async signal => {
+            const result = await call({ action: 'private_status' }, signal);
+            const allowed = ['not_started', 'requested', 'saved', 'canceled', 'outcome_unknown', 'launch_failed'];
+            const id = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+            if (!result || !allowed.includes(result.state) || (['requested', 'saved', 'canceled', 'outcome_unknown'].includes(result.state)
+                && (!id.test(result.session_id) || !id.test(result.event_id)))) throw new Error('management_unavailable');
+            if (alive.current) setPrivateResult(result);
           }), { disabled: busy }), h('span', { className: 'en-muted' }, t('privateHelp'))) : null,
+          privateCapture && privateResult ? h('div', { className: 'en-notice', role: 'status' },
+            h('p', null, t(({ not_started: 'privateNever', requested: 'privateWaiting', saved: 'privateSaved', canceled: 'privateCanceled',
+              outcome_unknown: 'privateUnknown', launch_failed: 'privateFailed' })[privateResult.state])),
+            privateResult.state === 'outcome_unknown' ? h(React.Fragment, null,
+              h('p', null, t('privateId') + ': ' + privateResult.session_id + ' / ' + privateResult.event_id),
+              h('p', null, t('privateRestart')),
+              button(t('privateRetry'), () => perform(async signal => {
+                await call({ action: 'private_retry' }, signal); if (alive.current) { setPrivateResult(null); setNotice(t('privateRequested')); }
+              }), { disabled: busy }), button(t('privateAbandon'), () => perform(async signal => {
+                const result = await call({ action: 'private_abandon' }, signal);
+                if (alive.current && result?.state === 'not_started') setPrivateResult(result);
+              }), { disabled: busy })) : null) : null,
           configured ? h('div', { className: 'en-notice' }, t('budgetMode') + ': ' + t(budgetMode === 'target_tokenizer'
             ? 'budgetTarget' : budgetMode === 'legacy_character_cap' ? 'budgetLegacy' : 'budgetUnknown')) : null,
           h('details', { className: 'en-notice' }, h('summary', null, t('diagnostics')),

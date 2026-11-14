@@ -41,6 +41,9 @@ test('memory links use the confirmed profile page and re-read source on click', 
     const respond = value => Response.json({ result: body.action === 'read-versioned' ? { value, token: 'a'.repeat(64) } : value });
     if (body.action === 'bootstrap') return Response.json({ csrf: 'test', configured: true, entry: 'dsh', private_capture: true, fingerprint_bridge: true });
     if (body.action === 'private_open') return Response.json({ result: { requested: true } });
+    if (body.action === 'private_status') return Response.json({ result: { state: 'outcome_unknown',
+      session_id: '12345678-1234-4123-8123-123456789abc', event_id: '87654321-4321-4321-8321-cba987654321' } });
+    if (body.action === 'private_retry') return Response.json({ result: { requested: true } });
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
@@ -93,6 +96,12 @@ test('memory links use the confirmed profile page and re-read source on click', 
   await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
   assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_open' })));
   assert.ok(find(tree, node => node.children?.includes('privateRequested')));
+  find(tree, node => node.type === 'button' && node.children.includes('privateCheck')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('privateUnknown')));
+  find(tree, node => node.type === 'button' && node.children.includes('privateRetry')).props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 10)); tree = render();
+  assert.ok(calls.some(call => JSON.stringify(call) === JSON.stringify({ action: 'private_retry' })));
   assert.ok(find(tree, node => node.children?.includes('diagnostics')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticPrivate: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));
