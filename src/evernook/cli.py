@@ -105,6 +105,9 @@ def _parser() -> Parser:
     vault_stage = commands.add_parser('backup-vault-stage', help='Verify an encrypted vault backup into an offline staging container')
     for flag in ('config', 'access', 'source', 'destination', 'recovery-file'):
         vault_stage.add_argument('--' + flag, type=Path, required=True)
+    vault_attach = commands.add_parser('backup-vault-attach', help='Reverify and bind a staged vault to an offline restored service')
+    for flag in ('config', 'access', 'container'):
+        vault_attach.add_argument('--' + flag, type=Path, required=True)
     backup_retain = commands.add_parser("backup-retain", help="Plan/apply retention while preserving a locally verified recovery anchor")
     backup_retain.add_argument("--root", type=Path, required=True)
     backup_retain.add_argument("--key-dir", type=Path, required=True)
@@ -335,6 +338,11 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             return retain_backups(args.root, args.key_dir, recovery_verified_id=args.recovery_verified_id, apply=args.apply)
         if not sys.stdin.isatty():
             raise MemoryFailure("interactive_recovery_required")
+        if args.command == 'backup-vault-attach':
+            from .service import client_access
+            from .vault_attach import attach
+            vault_password = getpass.getpass('Local vault password: ').encode('utf-8')
+            return attach(args.config, client_access(args.config, args.access), args.container, vault_password)
         password = getpass.getpass("Local recovery password: ").encode("utf-8")
         if args.command == 'backup-vault-stage':
             from .service import client_access
@@ -784,7 +792,7 @@ def main() -> None:
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
         if configured:
             required = True
-        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage'):
+        if required and args.command not in CLI_OPERATIONS and args.command not in ("service-pair", "service-pair-unlock", 'service-protected-receive', 'service-private-window', 'service-protected-inventory', 'service-protected-links', 'service-protected-show-local', 'service-protected-backup', 'service-transcription-submit', 'service-transcription-read', 'backup-vault-stage', 'backup-vault-attach'):
             raise MemoryFailure("service_unavailable")
         if args.command == "service-pair":
             access = client_access(args.config, args.access)

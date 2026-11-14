@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -10,13 +12,18 @@ import time
 import unittest
 from unittest.mock import patch
 
-from evernook import Access, Event, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook import Access, Change, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.backup import _decrypt, _encrypt, _unlock, _writer, create_backup, initialize_backup_keys
 from evernook.offline_recovery import ACKNOWLEDGEMENT, OfflineRecovery
 from evernook.protected import initialize_protected_inbox
 from evernook.service import ServiceClient
+from evernook.service import client_access
+from evernook.protected import ProtectedInbox
+from evernook.vault_local import LocalDisplayRequest
+from evernook.runtime import _identities, _load
 from evernook.vault_backup import create_vault_backup
 from evernook.vault_restore import VaultRestoreStage, restore_stage
+from evernook.vault_attach import attach
 
 
 class VaultRestoreStageTests(unittest.TestCase):
@@ -31,7 +38,7 @@ class VaultRestoreStageTests(unittest.TestCase):
         self.inbox = initialize_protected_inbox(self.runtime, self.root / 'vault', self.root / 'vault-keys', b'synthetic-vault-password-212')
         self.private = Event(Source('owner', 'private', 'main', 'one'), 'user', 1, None, 'complete',
                              'synthetic-private-sentinel-212', sensitive=True)
-        self.inbox.submit(self.owner, self.private)
+        self.private_receipt = self.inbox.submit(self.owner, self.private)
         create_backup(self.runtime, self.owner, self.root / 'backup', self.root / 'backup-keys')
         self.destination = self.root / 'restored'
         with OfflineRecovery(self.root / 'backup', self.destination, Path(self.keys.recovery_file), self.password) as review:
@@ -196,3 +203,177 @@ class VaultRestoreStageTests(unittest.TestCase):
         self.assertTrue(list(self.root.glob('.evernook-vault-restore-*')))
         client = self.start()
         self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'restored_missing')
+
+    def test_attach_reverifies_and_service_binds_exact_paths(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        attached = attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        self.assertEqual(attached.protected_objects, 1)
+        self.assertFalse(attached.daily_admitted)
+        retry = attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        self.assertEqual(attached, retry)
+        no_vault = subprocess.run([sys.executable, '-m', 'evernook.service', '--config',
+            str(self.destination / 'runtime.json')], capture_output=True, timeout=30)
+        self.assertNotEqual(no_vault.returncode, 0)
+        self.assertIn(b'protected_attachment_mismatch', no_vault.stderr)
+        client = self.start('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
+        status = client.call(self.new_owner, 'status', {})['service']
+        self.assertEqual(status['protected_state'], 'configured')
+        self.assertTrue(status['protected_capture'])
+        page = client.protected_inventory(self.new_owner)
+        self.assertEqual(len(page['objects']), 1)
+
+    def test_attach_rejects_bad_password_and_modified_material(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        with self.assertRaises(MemoryFailure):
+            attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-wrong-password')
+        writer = container / 'keys' / 'writer.key'
+        saved = writer.read_bytes()
+        writer.write_bytes(bytes([saved[0] ^ 1]) + saved[1:])
+        with self.assertRaises(MemoryFailure):
+            attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        writer.write_bytes(saved)
+        client = self.start()
+        self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'restored_missing')
+
+    def test_service_rejects_old_inbox_snapshot_after_new_private_event(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        inbox_db = container / 'inbox' / 'inbox.sqlite3'
+        old = self.root / 'old-synthetic-inbox.sqlite3'
+        with closing(sqlite3.connect(inbox_db)) as source, closing(sqlite3.connect(old)) as target:
+            source.backup(target)
+        flags = ('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
+        client = self.start(*flags)
+        entry = _identities(_load(self.destination / 'client.json'))[self.new_owner.client_id].entry
+        client.protected_receive(self.new_owner, Event(Source(entry, 'private', 'main', 'later'), 'user', 3, None,
+                                 'complete', 'synthetic-later-secret', sensitive=True))
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        with closing(sqlite3.connect(old)) as source, closing(sqlite3.connect(inbox_db)) as target:
+            source.backup(target)
+        result = subprocess.run([sys.executable, '-m', 'evernook.service', '--config',
+            str(self.destination / 'runtime.json'), *flags], capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(b'protected_cutover_requires_migration' in result.stderr or b'protected_link_unavailable' in result.stderr)
+
+    def test_attach_crash_on_either_side_of_commit_is_fail_closed(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        worker = Path(__file__).with_name('vault_attach_worker.py')
+        before = subprocess.run([sys.executable, str(worker), str(self.root), 'before'], capture_output=True, timeout=90)
+        self.assertEqual(before.returncode, 91, before.stderr.decode(errors='replace'))
+        client = self.start()
+        self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'restored_missing')
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        after = subprocess.run([sys.executable, str(worker), str(self.root), 'after'], capture_output=True, timeout=90)
+        self.assertEqual(after.returncode, 91, after.stderr.decode(errors='replace'))
+        container = self.root / 'staged-vault'
+        client = self.start('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
+        self.assertEqual(client.call(self.new_owner, 'status', {})['service']['protected_state'], 'configured')
+
+    def test_pending_private_write_survives_restart_before_and_after_link(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        worker = Path(__file__).with_name('vault_attach_pending_worker.py')
+        crash = subprocess.run([sys.executable, str(worker), str(self.root)], capture_output=True, timeout=60)
+        self.assertEqual(crash.returncode, 91, crash.stderr.decode(errors='replace'))
+        flags = ('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
+        entry = _identities(_load(self.destination / 'client.json'))[self.new_owner.client_id].entry
+        event = Event(Source(entry, 'private', 'main', 'crash-pending'), 'user', 4, None,
+                      'complete', 'synthetic-pending-secret', sensitive=True)
+        client = self.start(*flags)
+        receipt = client.protected_receive(self.new_owner, event)
+        self.assertEqual(receipt['state'], 'protected_linked')
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        # Simulate interruption after ordinary link commit but before inbox acknowledgement.
+        with closing(sqlite3.connect(container / 'inbox' / 'inbox.sqlite3')) as db:
+            db.execute("UPDATE objects SET state='protected_pending_link',receipt=NULL WHERE id=?", (receipt['object_id'],))
+            db.commit()
+        client = self.start(*flags)
+        self.assertEqual(client.protected_receive(self.new_owner, event)['state'], 'protected_linked')
+
+    def test_subsequent_ordinary_backup_does_not_reuse_old_attachment_proof(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        attach(self.destination / 'runtime.json', self.new_owner, self.root / 'staged-vault', b'synthetic-vault-password-212')
+        old_runtime = MemoryRuntime(self.destination / 'runtime.json', service_owner=True)
+        backup = self.root / 'subsequent-backup'
+        create_backup(old_runtime, self.new_owner, backup, self.root / 'backup-keys')
+        second = self.root / 'second-restored'
+        with OfflineRecovery(backup, second, Path(self.keys.recovery_file), self.password) as review:
+            review.publish(ACKNOWLEDGEMENT)
+        process = subprocess.Popen([sys.executable, '-m', 'evernook.service', '--config', str(second / 'runtime.json'),
+            '--activate-owner', str(second / 'mcp-access-owner.json'), '--activate-restored-without-vault'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.processes.append(process)
+        endpoint, deadline = second / 'memory-service.json', time.monotonic() + 30
+        while not endpoint.exists():
+            if process.poll() is not None or time.monotonic() >= deadline:
+                detail = process.stderr.read().decode(errors='replace') if process.poll() is not None and process.stderr else 'timeout'
+                self.fail('second recovery failed: ' + detail)
+            time.sleep(.05)
+        access = MemoryRuntime(second / 'runtime.json', service_owner=True).access_from_file(second / 'mcp-access-owner.json')
+        self.assertEqual(ServiceClient(second / 'runtime.json').call(access, 'status', {})['service']['protected_state'], 'restored_missing')
+
+    def test_tampered_attachment_receipt_blocks_startup(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        with self.assertRaises(MemoryFailure):
+            attach(self.destination / 'runtime.json', Access('invalid', 'invalid'), container, b'synthetic-vault-password-212')
+        attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        with closing(sqlite3.connect(self.destination / 'memory.sqlite3')) as db:
+            db.execute("UPDATE restored_vault_attachment_v1 SET authentication=?", ('0' * 64,))
+            db.commit()
+        result = subprocess.run([sys.executable, '-m', 'evernook.service', '--config', str(self.destination / 'runtime.json'),
+            '--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys')],
+            capture_output=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'protected_recovery_proof_invalid', result.stderr)
+
+    def test_repaired_source_identity_can_open_old_secret_locally(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        container = self.root / 'staged-vault'
+        attach(self.destination / 'runtime.json', self.new_owner, container, b'synthetic-vault-password-212')
+        client = self.start('--protected-inbox', str(container / 'inbox'), '--protected-keys', str(container / 'keys'))
+        object_id = client.protected_inventory(self.new_owner)['objects'][0]['object_id']
+        paired = client.call(self.new_owner, 'pair-client', {'client_id': 'synthetic-repaired-entry',
+                             'entry': 'owner', 'scopes': ['capture', 'recall']})
+        access = client_access(self.destination / 'runtime.json', Path(paired['access_file']))
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        runtime = MemoryRuntime(self.destination / 'runtime.json', service_owner=True)
+        inbox = ProtectedInbox(runtime, container / 'inbox', container / 'keys')
+        displayed: list[str] = []
+        request = LocalDisplayRequest(inbox, access, object_id, 'synthetic-recovery-test', desktop=lambda: True)
+        request.display_once(b'synthetic-vault-password-212', displayed.append)
+        self.assertEqual(displayed, [self.private.text])
+
+    def test_suppression_after_backup_remains_effective_after_attach(self) -> None:
+        self.prepare_stage()
+        self.restore()
+        config = self.destination / 'runtime.json'
+        access = pair_client(config, client_id='synthetic-old-entry', entry='owner',
+                             access_path=self.destination / 'mcp-access-old-entry.json', service_owner=True)
+        runtime = MemoryRuntime(config, service_owner=True)
+        instruction = runtime.submit(access, Event(Source('owner', 'private', 'main', 'suppress'), 'user', 5, None,
+                                     'complete', 'synthetic suppression instruction'))
+        assert self.private_receipt.message is not None
+        runtime.change(access, Change('synthetic-suppress-after-backup', self.private_receipt.message.message_id,
+                                    1, 'suppress', instruction.message_id, 'synthetic'))
+        container = self.root / 'staged-vault'
+        attach(config, self.new_owner, container, b'synthetic-vault-password-212')
+        inbox = ProtectedInbox(runtime, container / 'inbox', container / 'keys')
+        with self.assertRaisesRegex(MemoryFailure, 'vault_source_unavailable'):
+            LocalDisplayRequest(inbox, access, self.private_receipt.object_id, 'synthetic-recovery-test', desktop=lambda: True)

@@ -187,6 +187,14 @@ class ProtectedInbox:
                 ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout))
         with gate:
             _require_protected_available(self.runtime, gate_db)
+            from .missing_vault import attachment
+            if gate_db is not None:
+                attached = attachment(self.runtime, gate_db)
+            else:
+                with self.runtime._unguarded_connection() as core:
+                    attached = attachment(self.runtime, core)
+            if attached is not None and (attached['inbox_dir'] != str(self.root) or attached['key_dir'] != str(self.key_root)):
+                raise MemoryFailure('protected_attachment_mismatch')
             verify_private_directory(self.root, extra_files=(self.root / "inbox.sqlite3",))
             db: sqlite3.Connection | None = None
             try:

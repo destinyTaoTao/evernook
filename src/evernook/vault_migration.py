@@ -51,7 +51,8 @@ def _materials(inbox: ProtectedInbox) -> list[str]:
 
 def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Connection, store: sqlite3.Connection, *,
               private: PrivateKey | None, deadline: float, require_readable_entries: bool = True,
-              cancel: threading.Event | None = None, include_link_digest: bool = False) -> dict[str, object]:
+              cancel: threading.Event | None = None, include_link_digest: bool = False,
+              allow_pending: bool = False, max_objects: int | None = MAX_OBJECTS) -> dict[str, object]:
     """Called only with the exclusive ownership gate and a core transaction held."""
     def check() -> None:
         if cancel is not None and cancel.is_set():
@@ -76,6 +77,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
     digest = hashlib.sha256()
     link_digest = hashlib.sha256()
     count = 0
+    linked_count = 0
     settings = store.execute('SELECT * FROM settings WHERE singleton=1').fetchone()
     binding = hmac.digest(runtime._fingerprint_key, b'evernook-protected-inbox-v1', hashlib.sha256)
     if (settings is None or settings['inbox_id'] != inbox.inbox_id
@@ -101,7 +103,10 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
     for row in store.execute('SELECT * FROM objects ORDER BY id'):
         check()
         count += 1
-        if count > MAX_OBJECTS or row['state'] != 'protected_linked' or row['receipt'] is None or not has_links:
+        pending = row['state'] == 'protected_pending_link' and row['receipt'] is None
+        if ((max_objects is not None and count > max_objects)
+                or (row['state'] != 'protected_linked' and not (allow_pending and pending))
+                or (row['state'] == 'protected_linked' and row['receipt'] is None)):
             raise MemoryFailure('protected_cutover_requires_migration')
         _, projection = inbox._verified(row)
         if require_readable_entries and projection.source.entry not in readable_entries:
@@ -109,16 +114,19 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
         if private is not None:
             _decrypt_event(inbox, row, private)
         saved = core.execute('''SELECT m.id,m.event,m.receipt,m.fingerprint,l.reference
-            FROM messages m JOIN protected_links_v1 l ON l.message_id=m.id WHERE m.source=?''', (row['source'],)).fetchone()
+            FROM messages m JOIN protected_links_v1 l ON l.message_id=m.id WHERE m.source=?''', (row['source'],)).fetchone() if has_links else None
         if saved is None:
+            if pending and allow_pending and not core.execute('SELECT 1 FROM messages WHERE source=?', (row['source'],)).fetchone():
+                continue
             raise MemoryFailure('protected_link_unavailable')
+        linked_count += 1
         try:
             receipt = Receipt(**json.loads(saved['receipt'], object_pairs_hook=_unique_object))
             valid_receipt = (receipt.message_id == saved['id'] and receipt.status == 'projection_only'
                              and receipt.representation == 'projection' and receipt.original_saved is False)
         except (ValueError, TypeError, KeyError):
             raise MemoryFailure('protected_object_corrupt') from None
-        if (not valid_receipt or saved['receipt'] != row['receipt'] or saved['event'] != _json(asdict(projection))
+        if (not valid_receipt or (not pending and saved['receipt'] != row['receipt']) or saved['event'] != _json(asdict(projection))
                 or not hmac.compare_digest(bytes(saved['fingerprint']), bytes(row['fingerprint']))
                 or saved['reference'] != inbox._reference(str(row['id']), str(row['envelope']))):
             raise MemoryFailure('protected_link_unavailable')
@@ -128,7 +136,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
         digest.update((_json([row['id'], row['source'], bytes(row['fingerprint']).hex(),
             hashlib.sha256(str(row['envelope']).encode()).hexdigest(), row['receipt'], saved['id'], saved['reference'],
             asdict(state)]) + '\n').encode())
-    if count != link_count:
+    if linked_count != link_count:
         raise MemoryFailure('protected_cutover_requires_migration')
     check()
     result: dict[str, object] = {'ledger_id': str(ledger['ledger_id']), 'inbox_id': inbox.inbox_id, 'key_id': str(inbox.public['key_id']),

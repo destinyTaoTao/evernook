@@ -695,11 +695,17 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 from .runtime import _load
                 if (activate_owner is not None or not _load(config).get('service_mode')) and (server.extraction_error or server.reflection_error):
                     raise MemoryFailure(server.extraction_error or server.reflection_error or 'service_provider_unavailable')
-                from .missing_vault import read_state, record_state
+                from .missing_vault import attachment, read_state, record_state
                 with runtime._connection(ownership_exclusive=True) as check:
                     missing_vault = read_state(runtime, check)
+                    attached_vault = attachment(runtime, check)
                 if missing_vault and (protected_root is not None or allow_legacy_shared):
                     raise MemoryFailure('protected_restore_required')
+                if attached_vault is not None:
+                    if (allow_legacy_shared or protected_root is None or protected_keys is None
+                            or str(external(protected_root)) != attached_vault['inbox_dir']
+                            or str(external(protected_keys)) != attached_vault['key_dir']):
+                        raise MemoryFailure('protected_attachment_mismatch')
                 if missing_vault and not _load(config).get('service_mode') and not activate_restored_without_vault:
                     raise MemoryFailure('protected_restore_required')
                 if missing_vault:
@@ -711,6 +717,31 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         raise MemoryFailure('vault_dependency_missing') from None
                     server.protected_inbox = ProtectedInbox(runtime, protected_root, protected_keys)
                     server.protected_state = 'configured'
+                    if attached_vault is not None:
+                        from .vault_migration import _materials, _snapshot
+                        if (server.protected_inbox.inbox_id != attached_vault['inbox_id']
+                                or server.protected_inbox.public['key_id'] != attached_vault['key_id']
+                                or _materials(server.protected_inbox) != attached_vault['material']):
+                            raise MemoryFailure('protected_attachment_mismatch')
+                        deadline = time.monotonic() + 120
+                        def remaining_attachment_time() -> float:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise MemoryFailure('protected_migration_timeout')
+                            return remaining
+                        with runtime._connection(ownership_exclusive=True, check=remaining_attachment_time) as core:
+                            core.execute('BEGIN IMMEDIATE')
+                            if attachment(runtime, core) != attached_vault:
+                                raise MemoryFailure('protected_attachment_mismatch')
+                            with server.protected_inbox._connection(gate_db=core) as store:
+                                store.execute('BEGIN IMMEDIATE')
+                                snapshot = _snapshot(runtime, server.protected_inbox, core, store, private=None,
+                                                     deadline=deadline, require_readable_entries=False,
+                                                     allow_pending=True, max_objects=None)
+                                if snapshot['material'] != attached_vault['material']:
+                                    raise MemoryFailure('protected_attachment_mismatch')
+                                store.execute('COMMIT')
+                            core.execute('COMMIT')
                 if maintenance_access is not None:
                     from .service_maintenance import ServiceMaintenance
                     server.maintenance = ServiceMaintenance(runtime, maintenance_access, maintenance_interval,

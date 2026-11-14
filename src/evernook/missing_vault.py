@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import sqlite3
 import time
 from typing import Any
 
 from .models import MemoryFailure
 from .paths import verify_private_directory
-from .runtime import MemoryRuntime, _json, _load
+from .runtime import MemoryRuntime, _json, _load, _unique_object
 
 
 def _signed_receipt(runtime: MemoryRuntime) -> tuple[dict[str, Any], str]:
@@ -68,8 +69,40 @@ def _check_projections(db: sqlite3.Connection, *, require_protected: bool) -> No
         db.set_progress_handler(None, 0)
 
 
+def attachment(runtime: MemoryRuntime, db: sqlite3.Connection) -> dict[str, Any] | None:
+    """Read an authenticated attachment; malformed or transitional state fails closed."""
+    if not _has_table(db, 'restored_vault_attachment_v1'):
+        return None
+    rows = db.execute('SELECT id,content,authentication FROM restored_vault_attachment_v1 LIMIT 2').fetchall()
+    try:
+        if len(rows) != 1 or rows[0]['id'] != 1 or _has_table(db, 'restored_missing_vault_v1'):
+            raise ValueError()
+        content = json.loads(rows[0]['content'], object_pairs_hook=_unique_object)
+        fields = {'version', 'receipt_auth', 'inbox_dir', 'key_dir', 'inbox_id', 'key_id', 'material'}
+        config = _load(runtime.root / 'runtime.json')
+        if (not isinstance(content, dict) or set(content) != fields or type(content['version']) is not int
+                or content['version'] != 1 or config.get('service_mode') is not True
+                or config.get('restored_missing_vault') is not True
+                or any(not isinstance(content[name], str) or not content[name] for name in
+                       ('receipt_auth', 'inbox_dir', 'key_dir', 'inbox_id', 'key_id'))
+                or not isinstance(content['material'], list) or len(content['material']) != 3
+                or any(not isinstance(item, str) for item in content['material'])
+                or not hmac.compare_digest(content['receipt_auth'], _receipt(runtime))):
+            raise ValueError()
+        expected = hmac.digest(runtime._fingerprint_key, b'evernook-vault-attachment-v1\0'
+                               + _json(content).encode(), hashlib.sha256).hex()
+        if not isinstance(rows[0]['authentication'], str) or not hmac.compare_digest(rows[0]['authentication'], expected):
+            raise ValueError()
+        return content
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+        raise MemoryFailure('protected_recovery_proof_invalid') from None
+
+
 def _read_state(runtime: MemoryRuntime, db: sqlite3.Connection) -> bool:
     config = _load(runtime.root / 'runtime.json')
+    if attachment(runtime, db) is not None:
+        _check_projections(db, require_protected=False)
+        return False
     if not _has_table(db, 'restored_missing_vault_v1'):
         if config.get('restored_missing_vault') is True:
             raise MemoryFailure('protected_recovery_proof_invalid')
