@@ -407,6 +407,83 @@ class ProtectedTests(unittest.TestCase):
                 future.result(timeout=15)
         self.assertEqual(self.inbox.pending(self.access)[0].state, 'protected_pending_link')
 
+    def test_stage_rechecks_scope_after_registration_before_ciphertext_commit(self) -> None:
+        original = self.inbox._register_known
+        def revoke_after_registration() -> None:
+            original()
+            pair_client(self.config, client_id='synthetic', entry='synthetic',
+                access_path=self.access_path, scopes=('recall',))
+        with patch.object(self.inbox, '_register_known', side_effect=revoke_after_registration):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.inbox.stage(self.access, self.event)
+        self.assertEqual(self.inbox.pending(self.access), ())
+
+    def test_reconcile_rechecks_scope_after_registration_before_ledger_commit(self) -> None:
+        pending = self.inbox.stage(self.access, self.event)
+        original = self.inbox._register_known
+        def revoke_after_registration() -> None:
+            original()
+            pair_client(self.config, client_id='synthetic', entry='synthetic',
+                access_path=self.access_path, scopes=('recall',))
+        with patch.object(self.inbox, '_register_known', side_effect=revoke_after_registration):
+            with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+                self.inbox.reconcile(self.access, pending.object_id)
+        self.assertEqual(self.inbox.pending(self.access)[0].state, 'protected_pending_link')
+        self.assertEqual(self.runtime.status(self.access).messages, 0)
+
+    def test_stage_serializes_permission_change_with_ciphertext_commit(self) -> None:
+        reached, release, pairing_started = threading.Event(), threading.Event(), threading.Event()
+        original = self.inbox._stage_authorized
+        def paused(entry: str, event: Event):  # type: ignore[no-untyped-def]
+            reached.set()
+            if not release.wait(15):
+                raise RuntimeError('synthetic race timeout')
+            return original(entry, event)
+        def revoke() -> None:
+            pairing_started.set()
+            pair_client(self.config, client_id='synthetic', entry='synthetic',
+                access_path=self.access_path, scopes=('recall',))
+        with patch.object(self.inbox, '_stage_authorized', side_effect=paused), ThreadPoolExecutor(max_workers=2) as pool:
+            staging = pool.submit(self.inbox.stage, self.access, self.event)
+            try:
+                self.assertTrue(reached.wait(10))
+                pairing = pool.submit(revoke)
+                self.assertTrue(pairing_started.wait(10))
+                with self.assertRaises(TimeoutError):
+                    pairing.result(timeout=0.5)
+            finally:
+                release.set()
+            self.assertEqual(staging.result(timeout=20).state, 'protected_pending_link')
+            pairing.result(timeout=20)
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.inbox.reconcile(self.access, staging.result().object_id)
+
+    def test_reconcile_serializes_permission_change_with_ledger_commit(self) -> None:
+        pending = self.inbox.stage(self.access, self.event)
+        reached, release, pairing_started = threading.Event(), threading.Event(), threading.Event()
+        original = self.runtime._persist_event
+        def paused(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+            reached.set()
+            if not release.wait(15):
+                raise RuntimeError('synthetic race timeout')
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+        def revoke() -> None:
+            pairing_started.set()
+            pair_client(self.config, client_id='synthetic', entry='synthetic',
+                access_path=self.access_path, scopes=('recall',))
+        with patch.object(self.runtime, '_persist_event', side_effect=paused), ThreadPoolExecutor(max_workers=2) as pool:
+            linking = pool.submit(self.inbox.reconcile, self.access, pending.object_id)
+            try:
+                self.assertTrue(reached.wait(10))
+                pairing = pool.submit(revoke)
+                self.assertTrue(pairing_started.wait(10))
+                with self.assertRaises(TimeoutError):
+                    pairing.result(timeout=0.5)
+            finally:
+                release.set()
+            self.assertEqual(linking.result(timeout=20).state, 'protected_linked')
+            pairing.result(timeout=20)
+
     def test_reconcile_rechecks_service_mode_after_cutover_window(self) -> None:
         from evernook.runtime import _atomic_json, _load
         from evernook.service_gate import ownership_gate

@@ -275,15 +275,25 @@ class ProtectedInbox:
             identity = self.runtime._authorize(access)
             if 'capture' not in identity.scopes:
                 raise MemoryFailure('permission_denied')
-            return self._stage_authorized(identity.entry, event)
+            self.runtime._validate_event(event)
+            if event.source.entry != identity.entry:
+                raise MemoryFailure('unauthorized_source')
+            # Registration must be durable before ciphertext; pairing serializes on
+            # the core writer lock held during the subsequent inbox commit.
+            self._register_known()
+            with self.runtime._connection() as core:
+                core.execute('BEGIN IMMEDIATE')
+                identity = self.runtime._authorize(access)
+                if 'capture' not in identity.scopes:
+                    raise MemoryFailure('permission_denied')
+                result = self._stage_authorized(identity.entry, event)
+                core.execute('COMMIT')
+                return result
 
     def _stage_authorized(self, entry: str, event: Event) -> ProtectedReceipt:
         self.runtime._validate_event(event)
         if event.source.entry != entry:
             raise MemoryFailure("unauthorized_source")
-        # Durable registration precedes any ciphertext commit. The enclosing
-        # shared gate prevents activation between these two durable writes.
-        self._register_known()
         fingerprint = hmac.digest(self.runtime._fingerprint_key, b"protected-event-v1" + _json(asdict(event)).encode(), hashlib.sha256)
         source = _json(asdict(event.source))
         sender = self._writer()
@@ -319,9 +329,9 @@ class ProtectedInbox:
             identity = self.runtime._authorize(access)
             if 'capture' not in identity.scopes:
                 raise MemoryFailure('permission_denied')
-            return self._reconcile_authorized(identity.entry, object_id)
+            return self._reconcile_authorized(access, identity.entry, object_id)
 
-    def _reconcile_authorized(self, entry: str, object_id: str) -> ProtectedReceipt:
+    def _reconcile_authorized(self, access: Access, entry: str, object_id: str) -> ProtectedReceipt:
         try:
             if str(UUID(object_id)) != object_id:
                 raise ValueError()
@@ -340,6 +350,11 @@ class ProtectedInbox:
         reference = self._reference(object_id, envelope)
         with self.runtime._connection() as core:
             core.execute("BEGIN IMMEDIATE")
+            identity = self.runtime._authorize(access)
+            if 'capture' not in identity.scopes:
+                raise MemoryFailure('permission_denied')
+            if identity.entry != entry:
+                raise MemoryFailure('unauthorized_source')
             receipt = self.runtime._persist_event(core, projection, replace(projection), fingerprint)
             core.execute("CREATE TABLE IF NOT EXISTS protected_links_v1 (message_id TEXT PRIMARY KEY REFERENCES messages(id), reference TEXT NOT NULL)")
             previous = core.execute("SELECT reference FROM protected_links_v1 WHERE message_id=?", (receipt.message_id,)).fetchone()
