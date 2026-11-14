@@ -85,6 +85,8 @@ class EpisodeTests(unittest.TestCase):
         result = workflow.complete(self.access, lease.status.run_id, lease.token, (forged,))
         with self.assertRaisesRegex(MemoryFailure, 'invalid_episode'):
             self.episodes.read(self.access, result.drafts[0].candidate_id)
+        from evernook.management import MemoryManagement
+        self.assertEqual(MemoryManagement(self.runtime).read(self.access, view='network_graph')['nodes'], [])
 
     def test_precanceled_request_cannot_create_a_candidate(self) -> None:
         first = self.save('合成：在星湖镇认识了安禾。', 'before')

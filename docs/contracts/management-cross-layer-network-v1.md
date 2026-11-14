@@ -1,7 +1,7 @@
 # Trusted cross-layer evidence network
 
 `manage` with `action: read` and `view: network_graph` reads bounded slots from
-the persona, profile, temporal fact, observation and topic registries in one authorized SQLite
+the persona, profile, temporal fact, review-only episode, observation and topic registries in one authorized SQLite
 snapshot. It requires recall, maintain and accept scopes. Nodes include only
 the current validated content, revision and state. Source identifiers form
 edges labelled as evidence, support or counterevidence; source text is never
@@ -23,6 +23,21 @@ service check for the graph, authorization and change fingerprint. Source and
 installed dsh component checks and the non-editable wheel checks passed;
 strict management mypy and both package builds passed. Tests use synthetic
 data and do not establish actual browser or large-store acceptance.
+
+Core 0.1.68 / dsh preview.58 adds pending review episode candidates. Each is
+validated by the same canonical source/excerpt reconstruction as episode-read,
+inside the authorized graph snapshot. A rejected, stale or forged candidate is
+not shown. Edges carry source IDs and roles, not the source excerpts; the
+submitter-supplied title is a review label, not a confirmed fact. The immutable
+candidate has no revision number, remains review-only and does not enter normal
+context. Existing page-local joins, category, source filters and sparse slot
+pagination apply; older services simply omit this layer.
+
+#201 source episode, management and activated-service suites passed 34 tests;
+after a final identifier check, two source and three non-editable wheel tests
+passed. Source and installed page component checks, package builds and strict
+mypy passed. Verification used synthetic data; actual browser and large-store
+acceptance remain open.
 
 Core 0.1.63 / dsh preview.54 adds `confirmation_source` to profile nodes only:
 `recorded` means the current profile contains a separately recorded, currently

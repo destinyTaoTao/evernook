@@ -129,7 +129,7 @@ class MemoryManagement:
             has_more = has_more or len(found) > limit
             return found[:limit]
 
-        def add(kind: str, identifier: str, label: str, revision: int, state: str,
+        def add(kind: str, identifier: str, label: str, revision: int | None, state: str,
                 node_category: str | None, edges: list[dict[str, str]], inference: bool = False,
                 confirmation_source: str | None = None) -> None:
             ids = [edge['source_id'] for edge in edges]
@@ -176,6 +176,20 @@ class MemoryManagement:
             if fact is not None:
                 add('fact', fact.fact_id, fact.text, fact.revision, fact_view.state, fact.category,
                     [{'source_id': span.message_id, 'kind': 'evidence'} for span in fact.sources])
+        from .episodes import Episodes
+        episodes = Episodes(self.runtime)
+        for row in rows('consolidation_drafts_v1', """SELECT candidate_id,label,category FROM consolidation_drafts_v1
+            WHERE kind='episode' AND state='pending_review' ORDER BY created_at,candidate_id LIMIT ? OFFSET ?"""):
+            try:
+                episode = episodes._view(db, row['candidate_id'])
+            except MemoryFailure as error:
+                if error.code in {'invalid_episode', 'episode_sources_incomplete', 'episode_entity_not_grounded'}:
+                    continue
+                raise
+            if episode.state != 'pending_review' or episode.summary is None:
+                continue
+            add('episode', episode.candidate_id, row['label'], None, episode.state, row['category'],
+                [{'source_id': context['source_id'], 'kind': 'evidence'} for context in episode.source_contexts])
         now = datetime.now(timezone.utc).timestamp()
         for row in rows('observation_events_v1', """SELECT e.record FROM observation_events_v1 e
             WHERE NOT EXISTS (SELECT 1 FROM observation_events_v1 n WHERE n.observation_id=e.observation_id AND n.revision>e.revision)

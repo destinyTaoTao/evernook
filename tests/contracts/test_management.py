@@ -497,6 +497,22 @@ class ManagementTests(unittest.TestCase):
         persona.set(self.access, PersonaSet('persona-tone-clear', 'tone', '', receipt.message_id, 'synthetic', 2))
         self.assertEqual([node['id'] for node in self.ui.read(self.access, view='network_graph')['nodes']], ['identity'])
 
+    def test_graph_episode_is_review_only_source_bound_and_withheld_on_suppression(self) -> None:
+        from evernook.episodes import Episodes
+        first = self.source('合成原文一：窗边观鸟。')
+        second = self.runtime.submit(self.access, Event(Source('owner', 'other-session', 'main', 'episode-2'),
+            'assistant', 2, '2024-01-01T12:00:00Z', 'complete', '合成原文二：一起记录。')).message_id
+        episode = Episodes(self.runtime).propose(self.access, (first.message_id, second), topic='合成经历主题')
+        page = self.ui.read(self.access, view='network_graph', category='episodic_dialogue', session_id='other-session')
+        node, = page['nodes']
+        self.assertEqual((node['kind'], node['state'], node['revision']), ('episode', 'pending_review', None))
+        self.assertEqual(node['id'], episode.candidate_id)
+        self.assertEqual({edge['source_id']: edge['role'] for edge in node['edges']}, {first.message_id: 'user', second: 'assistant'})
+        self.assertNotIn('合成原文', json.dumps(page, ensure_ascii=False))
+        self.assertEqual(self.ui.read(self.access, view='network_graph', category='interest')['nodes'], [])
+        self.apply({'kind': 'source_suppress', 'message_id': first.message_id})
+        self.assertEqual(self.ui.read(self.access, view='network_graph')['nodes'], [])
+
     def test_graph_exposes_validated_roles_without_copying_sources(self) -> None:
         from evernook.observations import ObservationDraft, ObservationRegistry
         support = self.source('合成用户原话标记195')

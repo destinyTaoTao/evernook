@@ -114,6 +114,24 @@ class ServicePersonaTests(unittest.TestCase):
         self.assertEqual(read['blocks']['tone']['text'], '合成：温和')
         self.assertEqual(read['blocks']['tone']['revision'], 3)
 
+    def test_activated_service_graph_exposes_only_valid_episode_candidate(self) -> None:
+        from dataclasses import asdict
+        client = self.start(activate=True)
+        second = client.call(self.owner, 'remember', {'event': asdict(Event(
+            Source('owner', 'another-session', 'main', 'episode'), 'assistant', 1, None,
+            'complete', '合成：后来记录了讨论。'))})['message_id']
+        candidate = client.call(self.owner, 'cli', {'command': 'episode-propose',
+            'input': {'source_ids': [self.evidence, second], 'topic': '合成待审经历'}})
+        graph = {'command': 'manage', 'input': {'action': 'read', 'view': 'network_graph'}}
+        node, = client.call(self.owner, 'cli', graph)['nodes']
+        self.assertEqual((node['id'], node['state'], node['revision']), (candidate['candidate_id'], 'pending_review', None))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.call(self.ordinary, 'cli', graph)
+        operation = {'kind': 'source_suppress', 'message_id': self.evidence}
+        preview = client.call(self.owner, 'cli', {'command': 'manage', 'input': {'action': 'preview', 'operation': operation}})
+        client.call(self.owner, 'cli', {'command': 'manage', 'input': {'action': 'confirm', 'proposal_id': preview['proposal_id'], 'operation': operation}})
+        self.assertEqual(client.call(self.owner, 'cli', graph)['nodes'], [])
+
     def test_service_profile_history_uses_source_visibility(self) -> None:
         from dataclasses import asdict
         from evernook import Change, EvidenceSpan

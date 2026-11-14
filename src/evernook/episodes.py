@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import threading
 import time
 from typing import Any
@@ -117,41 +118,45 @@ class Episodes:
         _identifier(candidate_id)
         with self.runtime._connection() as db:
             db.execute('BEGIN')
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_drafts_v1'").fetchone():
-                raise MemoryFailure('episode_not_found')
-            row = db.execute("SELECT * FROM consolidation_drafts_v1 WHERE candidate_id=? AND kind='episode'", (candidate_id,)).fetchone()
-            if row is None:
-                raise MemoryFailure('episode_not_found')
-            draft = self.workflow._draft_row(row)
-            if not self.workflow._available_draft(db, draft):
-                return EpisodeView(candidate_id, draft.run_id, 'unavailable', None, (), (), 0)
-            try:
-                detail = json.loads(draft.detail)
-                if detail['format'] != 'episode-excerpts-v1' or not isinstance(detail['entities'], list):
-                    raise ValueError
-            except (ValueError, KeyError, TypeError):
-                raise MemoryFailure('invalid_episode') from None
-            sources = self.workflow.candidates._sources(db, tuple(span.message_id for span in draft.sources))
-            # Generic consolidation can also write this kind. Reconstruct the canonical
-            # excerpt payload so a valid source ID cannot legitimize invented summary text.
-            expected = episode_draft(sources, topic=draft.label, entities=tuple(detail['entities']))
-            if expected.sources != draft.sources or expected.detail != draft.detail or expected.category != draft.category:
-                raise MemoryFailure('invalid_episode')
-            contexts, mentions = [], []
-            origins = set()
-            for span, source in zip(draft.sources, sources):
-                event, receipt = source.message.event, source.message.receipt
-                origins.add((event.source.entry, event.source.session, event.source.branch, event.source.event))
-                contexts.append({'source_id': receipt.message_id, 'origin': asdict(event.source), 'role': event.role,
-                    'evidence_kind': {'user': 'user_statement', 'assistant': 'assistant_conversation', 'tool': 'external_material'}[event.role],
-                    'occurred_at': event.occurred_at, 'learned_at': receipt.received_at, 'state_version': source.state_version,
-                    'content_version': receipt.content_version, 'start': span.start, 'end': span.end,
-                    'quote': span.expected_text})
-                for name in detail['entities']:
-                    if not isinstance(name, str):
-                        raise MemoryFailure('invalid_episode')
-                    position = event.text.find(name)
-                    if position >= 0:
-                        mentions.append({'name': name, 'source_id': receipt.message_id, 'start': position,
-                            'end': position + len(name), 'meaning': 'literal_mention_not_identity'})
-            return EpisodeView(candidate_id, draft.run_id, draft.state, draft.detail, tuple(contexts), tuple(mentions), len(origins))
+            return self._view(db, candidate_id)
+
+    def _view(self, db: sqlite3.Connection, candidate_id: str) -> EpisodeView:
+        _identifier(candidate_id)
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='consolidation_drafts_v1'").fetchone():
+            raise MemoryFailure('episode_not_found')
+        row = db.execute("SELECT * FROM consolidation_drafts_v1 WHERE candidate_id=? AND kind='episode'", (candidate_id,)).fetchone()
+        if row is None:
+            raise MemoryFailure('episode_not_found')
+        draft = self.workflow._draft_row(row)
+        if not self.workflow._available_draft(db, draft):
+            return EpisodeView(candidate_id, draft.run_id, 'unavailable', None, (), (), 0)
+        try:
+            detail = json.loads(draft.detail)
+            if detail['format'] != 'episode-excerpts-v1' or not isinstance(detail['entities'], list):
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise MemoryFailure('invalid_episode') from None
+        sources = self.workflow.candidates._sources(db, tuple(span.message_id for span in draft.sources))
+        # Generic consolidation can also write this kind. Reconstruct the canonical
+        # excerpt payload so a valid source ID cannot legitimize invented summary text.
+        expected = episode_draft(sources, topic=draft.label, entities=tuple(detail['entities']))
+        if expected.sources != draft.sources or expected.detail != draft.detail or expected.category != draft.category:
+            raise MemoryFailure('invalid_episode')
+        contexts, mentions = [], []
+        origins = set()
+        for span, source in zip(draft.sources, sources):
+            event, receipt = source.message.event, source.message.receipt
+            origins.add((event.source.entry, event.source.session, event.source.branch, event.source.event))
+            contexts.append({'source_id': receipt.message_id, 'origin': asdict(event.source), 'role': event.role,
+                'evidence_kind': {'user': 'user_statement', 'assistant': 'assistant_conversation', 'tool': 'external_material'}[event.role],
+                'occurred_at': event.occurred_at, 'learned_at': receipt.received_at, 'state_version': source.state_version,
+                'content_version': receipt.content_version, 'start': span.start, 'end': span.end,
+                'quote': span.expected_text})
+            for name in detail['entities']:
+                if not isinstance(name, str):
+                    raise MemoryFailure('invalid_episode')
+                position = event.text.find(name)
+                if position >= 0:
+                    mentions.append({'name': name, 'source_id': receipt.message_id, 'start': position,
+                        'end': position + len(name), 'meaning': 'literal_mention_not_identity'})
+        return EpisodeView(candidate_id, draft.run_id, draft.state, draft.detail, tuple(contexts), tuple(mentions), len(origins))
