@@ -81,3 +81,43 @@ class PrivateCaptureReceiptTests(unittest.TestCase):
         result = capture(self.client, self.access, Capture(self.event, 'message'))
         self.assertEqual(result['status'], 'outcome_unknown')
         self.assertNotIn('synthetic-private', json.dumps(result))
+
+    def test_complete_buffered_stream_sends_exact_join_and_reports_lost_boundaries(self) -> None:
+        self.client.call.return_value = {'state': 'protected_linked', 'encrypted_original_saved': True,
+            'inbox_id': '00000000-0000-4000-8000-000000000001', 'object_id': '00000000-0000-4000-8000-000000000002',
+            'key_id': 'a' * 64, 'version': 1,
+            'message': {'message_id': '00000000-0000-4000-8000-000000000003', 'original_saved': False,
+                        'representation': 'projection', 'status': 'projection_only', 'content_version': 1,
+                        'received_at': '2030-01-01T00:00:00+00:00'}}
+        request = Capture(replace(self.event, text=''), 'message', text_chunks=('私密🙂', '\r\n', 'synthetic-stream'))
+        result = capture(self.client, self.access, request)
+        self.assertEqual(result['status'], 'saved')
+        self.assertEqual(result['gaps'], ['private_stream_boundaries_not_saved'])
+        self.assertEqual(self.client.call.call_args.args[2]['event']['text'], '私密🙂\r\nsynthetic-stream')
+        self.assertNotIn('synthetic-stream', json.dumps(result))
+
+    def test_invalid_or_incomplete_stream_never_transmits(self) -> None:
+        empty = replace(self.event, text='')
+        cases = [(Capture(self.event, 'message', text_chunks=('x',)), 'private_stream_conflicting_text'),
+                 (Capture(empty, 'message', text_chunks=('x' * 1048577,)), 'private_stream_size_limit'),
+                 (Capture(empty, 'message', text_chunks=('\ud800',)), 'private_stream_invalid_encoding')]
+        for request, gap in cases:
+            result = capture(self.client, self.access, request)
+            self.assertEqual(result['status'], 'not_submitted')
+            self.assertEqual(result['gaps'], [gap])
+        incomplete = capture(self.client, self.access, Capture(replace(empty, completion='partial'), 'message', text_chunks=('x',)))
+        self.assertEqual(incomplete['status'], 'not_submitted')
+        self.assertIn('incomplete_output', incomplete['gaps'])
+        self.client.call.assert_not_called()
+
+    def test_stream_byte_limit_and_precancel_are_checked_before_send(self) -> None:
+        event = replace(self.event, text='')
+        canceled = threading.Event()
+        canceled.set()
+        result = capture(self.client, self.access, Capture(event, 'message', text_chunks=('private',)), cancel=canceled)
+        self.assertEqual(result['gaps'], ['canceled_before_submission'])
+        self.client.call.assert_not_called()
+        self.client.call.side_effect = MemoryFailure('synthetic-unavailable')
+        result = capture(self.client, self.access, Capture(event, 'message', text_chunks=('a' * 1048576,)))
+        self.assertEqual(result['status'], 'outcome_unknown')
+        self.assertEqual(len(self.client.call.call_args.args[2]['event']['text']), 1048576)

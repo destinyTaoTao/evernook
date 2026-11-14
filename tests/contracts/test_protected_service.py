@@ -138,6 +138,39 @@ class ProtectedServiceTests(unittest.TestCase):
         self.assertEqual(retry['status'], 'saved')
         self.assertEqual(len(client.protected_inventory(self.owner)['objects']), 1)
 
+    def test_complete_private_buffered_stream_decrypts_exact_join_and_conflicts_safely(self) -> None:
+        from evernook import Capture
+        from evernook.protected import ProtectedInbox
+        from evernook.vault_crypto import _decrypt_event, _unlock
+        client = self.start(configured=True)
+        event = replace(self.event, text='')
+        request = Capture(event, 'message', text_chunks=('合成🙂', '\r\n', 'synthetic-private-stream-223'))
+        receipt = client.protected_capture(self.owner, request)
+        self.assertEqual(receipt['status'], 'saved')
+        self.assertEqual(receipt['gaps'], ['private_stream_boundaries_not_saved'])
+        self.assertEqual(client.protected_capture(self.owner, request)['object_id'], receipt['object_id'])
+        changed = replace(request, text_chunks=('different',))
+        self.assertEqual(client.protected_capture(self.owner, changed)['status'], 'outcome_unknown')
+        cli_event = replace(event, source=replace(event.source, event='cli-buffered'))
+        cli_input = {'event': asdict(cli_event), 'kind': 'message', 'text_chunks': ['synthetic-private-', 'cli-stream-223']}
+        cli = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-protected-capture', '--config', str(self.config),
+            '--access', str(self.owner_path)], input=json.dumps(cli_input).encode(), capture_output=True, timeout=30)
+        self.assertEqual(cli.returncode, 0, cli.stderr.decode(errors='replace'))
+        self.assertEqual(json.loads(cli.stdout)['result']['gaps'], ['private_stream_boundaries_not_saved'])
+        self.assertNotIn(b'synthetic-private-', cli.stdout + cli.stderr)
+        self.assertEqual(client.call(self.owner, 'search', {'query': 'synthetic-private-stream-223'})['hits'], [])
+        self.stop()
+        runtime = MemoryRuntime(self.config, service_owner=True)
+        inbox = ProtectedInbox(runtime, self.root / 'inbox', self.root / 'keys')
+        private = _unlock(inbox, b'synthetic service password')
+        with inbox._connection() as db:
+            row = db.execute('SELECT * FROM objects WHERE id=?', (receipt['object_id'],)).fetchone()
+            self.assertEqual(_decrypt_event(inbox, row, private).text, '合成🙂\r\nsynthetic-private-stream-223')
+        contents = b''.join(path.read_bytes() for root in (self.root / 'ordinary', self.root / 'inbox')
+                            for path in root.rglob('*') if path.is_file() and not path.name.endswith('.lock'))
+        self.assertNotIn(b'synthetic-private-stream-223', contents)
+        self.assertNotIn(b'synthetic-private-cli-stream-223', contents)
+
     def test_private_session_cli_rejects_invalid_resume_before_window(self) -> None:
         self.start(configured=True)
         result = subprocess.run([sys.executable, '-m', 'evernook.cli', 'service-private-session',

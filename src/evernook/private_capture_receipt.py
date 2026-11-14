@@ -1,7 +1,7 @@
 """Fail-closed preflight and non-secret receipts for trusted private capture."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 import re
 import threading
@@ -35,20 +35,39 @@ def capture(client: _Client, access: Access, request: Capture, *, timeout: float
     gaps: list[str] = []
     if request.attachments:
         gaps.append('private_attachments_unsupported')
-    if request.text_chunks is not None:
-        gaps.append('private_stream_unsupported')
     if request.event.completion != 'complete':
         gaps.append('incomplete_output')
     if not request.provided:
         gaps.append('entry_not_provided')
     if request.kind != 'message' or request.input_id is not None or request.tool_name is not None or request.event.role == 'tool':
         gaps.append('private_tool_metadata_unsupported')
+    if request.text_chunks is not None and gaps:
+        gaps.insert(1 if request.attachments else 0, 'private_stream_unsupported')
     if gaps:
         return {'status': 'not_submitted', 'gaps': gaps, 'protected_original_saved': False}
+    event = request.event
+    stream_gap: list[str] = []
+    if request.text_chunks is not None:
+        if event.text != '':
+            return {'status': 'not_submitted', 'gaps': ['private_stream_conflicting_text'], 'protected_original_saved': False}
+        size = 0
+        try:
+            for chunk in request.text_chunks:
+                if len(chunk) > 1048576:
+                    raise OverflowError()
+                size += len(chunk.encode('utf-8', errors='strict'))
+                if size > 1048576:
+                    raise OverflowError()
+        except UnicodeError:
+            return {'status': 'not_submitted', 'gaps': ['private_stream_invalid_encoding'], 'protected_original_saved': False}
+        except OverflowError:
+            return {'status': 'not_submitted', 'gaps': ['private_stream_size_limit'], 'protected_original_saved': False}
+        event = replace(event, text=''.join(request.text_chunks))
+        stream_gap = ['private_stream_boundaries_not_saved']
     if cancel is not None and cancel.is_set():
         return {'status': 'not_submitted', 'gaps': ['canceled_before_submission'], 'protected_original_saved': False}
     try:
-        result = client.call(access, 'protected-receive', {'event': asdict(request.event)}, timeout=timeout, cancel=cancel)
+        result = client.call(access, 'protected-receive', {'event': asdict(event)}, timeout=timeout, cancel=cancel)
         message = result.get('message') if isinstance(result, dict) else None
         if (not isinstance(result, dict) or result.get('state') != 'protected_linked'
                 or result.get('encrypted_original_saved') is not True or not isinstance(message, dict)
@@ -64,7 +83,7 @@ def capture(client: _Client, access: Access, request: Capture, *, timeout: float
         identifiers = [result.get('inbox_id'), result.get('object_id'), message.get('message_id')]
         if any(not isinstance(value, str) or str(UUID(value)) != value for value in identifiers):
             raise ValueError()
-        return {'status': 'saved', 'gaps': [], 'protected_original_saved': True,
+        return {'status': 'saved', 'gaps': stream_gap, 'protected_original_saved': True,
                 'inbox_id': identifiers[0], 'object_id': identifiers[1], 'message_id': identifiers[2]}
     except Exception:
-        return {'status': 'outcome_unknown', 'gaps': ['write_not_confirmed'], 'protected_original_saved': None}
+        return {'status': 'outcome_unknown', 'gaps': ['write_not_confirmed', *stream_gap], 'protected_original_saved': None}
