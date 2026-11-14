@@ -51,13 +51,43 @@ Remote form contains an environment variable name, never a literal key:
       "output_micro_usd_per_million": 2000000,
       "request_micro_usd": 0
     },
-    "max_cost_micro_usd": 30000
+    "max_cost_micro_usd": 30000,
+    "daily_cost_micro_usd": 100000
   },
   "policy": {}
 }
 ```
 
 These are synthetic prices, **not a vendor quote**. One USD is1,000,000 micro-USD. Set rates from the selected vendor's contract. `max_cost_micro_usd` caps one query's local reservations, not monthly account spending. Supply the secret to the trusted provider host environment via the OS or an existing secret manager. In centralized deployment this is the service; SDK, browser and MCP request/response fields contain no key. This version does not persist/manage keys or collect them in the dashboard.
+
+Core 0.1.65 adds optional `daily_cost_micro_usd` (positive integer, at most
+1,000,000,000). After adding it, restart the service and run the trusted
+`reflect-configure` command below to create its budget table. Without that
+table, calls fail closed. The limit covers all opted-in remote calls on the
+same ledger in a UTC calendar day, across clients, providers and service
+restarts. Each turn atomically reserves its entire configured token/request
+ceiling before dispatch; failure, cancellation, crash and unused tokens are
+not refunded. A successful reservation adds its UTC day, cumulative reserved
+amount and limit to the returned usage. A system date earlier than the last
+reservation is rejected until the date catches up. The existing per-query
+limit, authorization and egress checks continue to apply.
+
+This is a conservative **local estimate**, not an invoice or account-wide
+spending ceiling. Accurate rates are the owner's responsibility; free or
+incorrectly priced requests, undisclosed provider charges, other ledgers,
+other applications and calls made while the daily limit is disabled are not
+covered. Restoring an older backup can roll back the local counter. A clock
+jump into the future can also exhaust or reset a window incorrectly. Use the
+provider's account-level quotas for an external spending ceiling; enabling or
+changing this experimental option does not admit a model for daily use.
+
+#198 validation: 44 source reflection/provider/service tests passed. Separate
+source and non-editable wheel tests covered concurrent shared reservations,
+missing setup, failed usage reporting, UTC rollover/clock rollback, and a real
+isolated service killed after a loopback request arrived; its restarted process
+retained the reservation. The installed-wheel set also rechecked protected
+source exclusion. Strict mypy passed. No real provider billing, browser UI,
+cross-device budget synchronization or production admission was tested.
 
 The compatible standalone CLI (`--reflection-config` on a non-service-mode library) and trusted direct Python engine may themselves be provider hosts. Such a host explicitly owns the profile/environment key and still enforces client allowlist, call consent and the same evidence/budgets. It is distinct from a keyless service client. An active service-mode library still routes CLI through its service and cannot be bypassed with a caller-supplied profile path. Standalone/direct-host usage is not a new service-only guarantee.
 

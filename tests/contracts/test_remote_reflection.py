@@ -3,6 +3,8 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from dataclasses import asdict
 import os
 from pathlib import Path
@@ -171,6 +173,105 @@ class RemoteReflectionTests(unittest.TestCase):
         self.assertIn('reflection_input_budget', result['degraded'])
         self.assertEqual(self.requests, [])
 
+    def test_daily_budget_is_shared_and_survives_new_engine(self) -> None:
+        first = self.engine(daily_cost_micro_usd=5120)
+        second = self.engine(daily_cost_micro_usd=5120)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda engine: engine.reflect(self.access, '钥匙', allow_remote=True), (first, second)))
+        self.assertEqual(sum(result['state'] == 'complete' for result in results), 1, results)
+        self.assertEqual(sum('reflection_daily_budget' in result['degraded'] for result in results), 1, results)
+        self.assertEqual(len(self.requests), 1)
+        restarted = self.engine(daily_cost_micro_usd=5120)
+        result = restarted.reflect(self.access, '钥匙', allow_remote=True)
+        self.assertIn('reflection_daily_budget', result['degraded'])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_daily_budget_keeps_failed_reservation_and_requires_configuration(self) -> None:
+        self.engine()  # Configure the reflection clock without enabling the daily ledger.
+        guarded = ReflectionEngine(self.runtime, SemanticRecall(self.runtime),
+            RemoteReflectionModel({**self.remote, 'daily_cost_micro_usd': 5120}))
+        missing = guarded.reflect(self.access, '钥匙', allow_remote=True)
+        self.assertIn('reflection_daily_budget_not_configured', missing['degraded'])
+        self.assertEqual(self.requests, [])
+        guarded.configure(self.access)
+        self.response_kind = 'missing_usage'
+        failed = guarded.reflect(self.access, '钥匙', allow_remote=True)
+        self.assertIn('reflection_remote_usage_unavailable', failed['degraded'])
+        self.assertEqual(failed['usage']['daily_cost_reserved_micro_usd'], 5120)
+        self.response_kind = 'answer'
+        blocked = guarded.reflect(self.access, '钥匙', allow_remote=True)
+        self.assertIn('reflection_daily_budget', blocked['degraded'])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_daily_budget_rollover_and_backwards_clock_fail_closed(self) -> None:
+        engine = self.engine(daily_cost_micro_usd=100)
+        with patch('evernook.reflection.datetime') as clock:
+            clock.now.return_value = datetime(2030, 1, 2, tzinfo=timezone.utc)
+            self.assertEqual(engine._reserve_daily(100, 100, lambda: 10), ('2030-01-02', 100))
+            clock.now.return_value = datetime(2030, 1, 1, tzinfo=timezone.utc)
+            with self.assertRaisesRegex(MemoryFailure, 'reflection_daily_clock_rollback'):
+                engine._reserve_daily(1, 100, lambda: 10)
+            clock.now.return_value = datetime(2030, 1, 3, tzinfo=timezone.utc)
+            self.assertEqual(engine._reserve_daily(40, 100, lambda: 10), ('2030-01-03', 40))
+        for value in (0, -1, True, 1.5, 1000000001):
+            with self.subTest(value=value), self.assertRaisesRegex(MemoryFailure, 'invalid_reflection_config'):
+                RemoteReflectionModel({**self.remote, 'daily_cost_micro_usd': value})
+
+    def test_daily_budget_survives_independent_service_restart(self) -> None:
+        profile = self.root / 'daily-remote.json'
+        profile.write_text(json.dumps({'schema_version': 2, 'provider': 'openai-compatible',
+            'remote': {**self.remote, 'daily_cost_micro_usd': 5120}, 'policy': {}}), encoding='utf-8')
+        config = self.runtime.root / 'runtime.json'
+        access_path = self.runtime.root / 'mcp-access-owner.json'
+        access_path.write_text(json.dumps(asdict(self.access)), encoding='utf-8')
+        endpoint = config.parent / 'memory-service.json'
+        processes: list[subprocess.Popen[bytes]] = []
+        def start(activate: bool) -> ServiceClient:
+            previous = endpoint.read_bytes() if endpoint.exists() else None
+            command = [sys.executable, '-B', '-m', 'evernook.service', '--config', str(config),
+                       '--reflection-config', str(profile)]
+            if activate:
+                command += ['--activate-owner', str(access_path)]
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            processes.append(process)
+            deadline = time.monotonic() + 15
+            while not endpoint.exists() or endpoint.read_bytes() == previous:
+                self.assertIsNone(process.poll())
+                if time.monotonic() >= deadline:
+                    self.fail('service startup timeout')
+                time.sleep(.05)
+            return ServiceClient(config)
+        try:
+            client = start(True)
+            client.call(self.access, 'cli', {'command': 'reflect-configure', 'input': {}})
+            self.delay = 3
+            errors: list[str] = []
+            def call() -> None:
+                try:
+                    client.reflect(self.access, '钥匙', allow_remote=True)
+                except MemoryFailure as error:
+                    errors.append(error.code)
+            caller = threading.Thread(target=call)
+            caller.start()
+            deadline = time.monotonic() + 10
+            while not self.requests:
+                if not caller.is_alive() or time.monotonic() >= deadline:
+                    self.fail('loopback provider was not reached')
+                time.sleep(.05)
+            processes[-1].terminate(); processes[-1].wait(15)
+            caller.join(10)
+            self.assertFalse(caller.is_alive())
+            self.assertTrue(errors)
+            self.delay = 0
+            client = start(False)
+            result = client.reflect(self.access, '钥匙', allow_remote=True)
+            self.assertIn('reflection_daily_budget', result['degraded'])
+            self.assertEqual(len(self.requests), 1)
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(15)
     def test_bad_or_dangerous_responses_never_become_inferences_or_retry_http(self) -> None:
         for kind in ('write', 'forged', 'missing_usage', 'over_tokens', 'length', 'echo_key', 'echo_escaped_key', 'redirect', 'deep_inner', 'deep_outer'):
             with self.subTest(kind=kind):

@@ -41,7 +41,7 @@ def _contains_secret(value: object, secret: str) -> bool:
 class RemoteReflectionModel:
     def __init__(self, config: dict[str, Any]):
         fields = {'base_url', 'model', 'api_key_env', 'allowed_clients', 'allow_loopback_http', 'output_limit', 'pricing', 'max_cost_micro_usd'}
-        if not isinstance(config, dict) or not fields <= set(config) <= fields | {'input_tokens', 'output_tokens'}:
+        if not isinstance(config, dict) or not fields <= set(config) <= fields | {'input_tokens', 'output_tokens', 'daily_cost_micro_usd'}:
             raise MemoryFailure('invalid_reflection_config')
         try:
             endpoint = urlsplit(config['base_url'])
@@ -63,6 +63,9 @@ class RemoteReflectionModel:
             if any(type(config.get(name, default)) is not int or not 1 <= config.get(name, default) <= maximum
                     for name, default, maximum in (('input_tokens', 4096, 16384), ('output_tokens', 512, 4096))):
                 raise ValueError
+            if 'daily_cost_micro_usd' in config and (type(config['daily_cost_micro_usd']) is not int
+                    or not 1 <= config['daily_cost_micro_usd'] <= 1000000000):
+                raise ValueError
             prices = config['pricing']
             if (not isinstance(prices, dict) or set(prices) != {'input_micro_usd_per_million', 'output_micro_usd_per_million', 'request_micro_usd'}
                     or any(type(value) is not int or not 0 <= value <= 10 ** 12 for value in prices.values())):
@@ -72,6 +75,7 @@ class RemoteReflectionModel:
         self.config = json.loads(_json(config))
         self.allowed_clients = frozenset(config['allowed_clients'])
         self.max_cost_micro_usd: int = config['max_cost_micro_usd']
+        self.daily_cost_micro_usd: int | None = config.get('daily_cost_micro_usd')
         self.turn_input_tokens: int = config.get('input_tokens', 4096)
         self.turn_output_tokens: int = config.get('output_tokens', 512)
         self.worker = Path(__file__).with_name('reflection_http_worker.py')

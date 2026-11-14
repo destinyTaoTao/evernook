@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timezone
 import copy
 import hashlib
 import math
+import sqlite3
 import threading
 import time
 from typing import Any, Callable, Protocol, runtime_checkable
@@ -95,10 +97,49 @@ class ReflectionEngine:
         with self.runtime._connection() as db:
             db.execute('BEGIN IMMEDIATE')
             TopicViews._schema(db)
+            if isinstance(self.model, RemoteModel) and getattr(self.model, 'daily_cost_micro_usd', None) is not None:
+                db.execute('''CREATE TABLE IF NOT EXISTS reflection_daily_cost_v1 (
+                    id INTEGER PRIMARY KEY CHECK(id=1), utc_day TEXT NOT NULL,
+                    reserved_micro_usd INTEGER NOT NULL CHECK(reserved_micro_usd>=0))''')
             db.execute('COMMIT')
         return {'enabled': True, 'processor': self.identity, 'model_configured': self.model is not None,
             'provider': 'remote' if isinstance(self.model, RemoteModel) else 'local',
             'policy': asdict(self.policy), 'model_admission': 'experimental', 'publication': 'temporary_only'}
+
+    def _reserve_daily(self, amount: int, limit: int, check: Callable[[], float]) -> tuple[str, int]:
+        with self.runtime._connection(check=check) as db:
+            while True:
+                try:
+                    db.execute('BEGIN IMMEDIATE')
+                    break
+                except sqlite3.OperationalError as error:
+                    if getattr(error, 'sqlite_errorcode', 0) & 255 != sqlite3.SQLITE_BUSY:
+                        raise
+                    time.sleep(min(.01, check()))
+            day = datetime.now(timezone.utc).date().isoformat()
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='reflection_daily_cost_v1'").fetchone():
+                raise MemoryFailure('reflection_daily_budget_not_configured')
+            row = db.execute('SELECT utc_day,reserved_micro_usd FROM reflection_daily_cost_v1 WHERE id=1').fetchone()
+            previous = 0
+            if row is not None:
+                try:
+                    previous_day = date.fromisoformat(row['utc_day']).isoformat()
+                except (ValueError, TypeError):
+                    raise MemoryFailure('reflection_daily_budget_unavailable') from None
+                if previous_day != row['utc_day'] or type(row['reserved_micro_usd']) is not int or row['reserved_micro_usd'] < 0:
+                    raise MemoryFailure('reflection_daily_budget_unavailable')
+                if day < previous_day:
+                    raise MemoryFailure('reflection_daily_clock_rollback')
+                if day == previous_day:
+                    previous = row['reserved_micro_usd']
+            total = previous + amount
+            if total > limit:
+                raise MemoryFailure('reflection_daily_budget')
+            db.execute('''INSERT INTO reflection_daily_cost_v1(id,utc_day,reserved_micro_usd) VALUES(1,?,?)
+                ON CONFLICT(id) DO UPDATE SET utc_day=excluded.utc_day,reserved_micro_usd=excluded.reserved_micro_usd''',
+                (day, total))
+            db.execute('COMMIT')
+            return day, total
 
     def clock(self, check: Any) -> dict[str, Any]:
         with self.runtime._connection(check=check) as db:
@@ -280,6 +321,17 @@ class ReflectionEngine:
                     usage['cost_reserved_micro_usd'] += reserve
                 if provider_check is not None:
                     provider_check()
+                daily_limit = getattr(remote, 'daily_cost_micro_usd', None) if remote is not None else None
+                if daily_limit is not None:
+                    day, daily_reserved = self._reserve_daily(reserve, daily_limit, check)
+                    usage.update(daily_utc_day=day, daily_cost_reserved_micro_usd=daily_reserved,
+                                 daily_cost_limit_micro_usd=daily_limit)
+                    self.runtime._require_scope(access, 'recall', 'reflection_model_input')
+                    if self.clock(check) != clock or not tools.verify(check):
+                        raise MemoryFailure('memory_changed_during_reflection')
+                    tools.authorize_remote()
+                    if provider_check is not None:
+                        provider_check()
                 usage['model_rounds'] += 1
                 usage['metering_incomplete'] = True
                 turn = self.model.turn(payload, input_tokens=input_cap, output_tokens=output_cap, timeout=check(), cancel=cancel)
