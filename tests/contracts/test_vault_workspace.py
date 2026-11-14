@@ -10,8 +10,11 @@ import unittest
 from unittest.mock import patch
 
 from evernook import Access, MemoryFailure, MemoryRuntime, initialize, pair_client
-from evernook.paths import verify_private_directory
-from evernook.vault_workspace import cleanup_workspaces, list_workspaces
+from evernook.paths import provision_private_directory, verify_private_directory
+from evernook.runtime import _atomic_json, _load
+from evernook.vault_multi_binding import _auth
+from evernook.vault_restore import _stopped_service
+from evernook.vault_workspace import candidate_workspace, cleanup_workspaces, list_workspaces
 
 
 class VaultWorkspaceTests(unittest.TestCase):
@@ -22,6 +25,16 @@ class VaultWorkspaceTests(unittest.TestCase):
         self.config, self.owner = initialize(self.root / 'ordinary', client_id='owner', entry='owner')
         self.owner_file = self.config.parent / 'mcp-access-owner.json'
         pair_client(self.config, client_id='owner', entry='owner', access_path=self.owner_file)
+        self.base_config = self.config.read_bytes()
+        runtime = MemoryRuntime(self.config, service_owner=True)
+        binding = {'version': 1, 'ledger_id': 'synthetic-ledger', 'primary': 'synthetic-a', 'inboxes': [
+            {'inbox_id': 'synthetic-a', 'key_id': 'key-a', 'inbox_dir': str(self.root / 'outside-a'),
+             'key_dir': str(self.root / 'outside-keys-a'), 'material': ['a', 'b', 'c']},
+            {'inbox_id': 'synthetic-b', 'key_id': 'key-b', 'inbox_dir': str(self.root / 'outside-b'),
+             'key_dir': str(self.root / 'outside-keys-b'), 'material': ['d', 'e', 'f']}]}
+        self.binding_path = runtime.root / 'protected-multi-binding.json'
+        _atomic_json(self.binding_path, {'content': binding, 'authentication': _auth(runtime, binding)})
+        _atomic_json(self.config, {**_load(self.config), 'service_mode': True, 'protected_multi_binding': True})
         self.process: subprocess.Popen[bytes] | None = None
         self.addCleanup(self.stop)
 
@@ -52,6 +65,44 @@ class VaultWorkspaceTests(unittest.TestCase):
         self.assertEqual(result['removed'], 1)
         self.assertFalse(result['physical_erasure_verified'])
         self.assertFalse(path.exists())
+
+    def test_candidate_success_error_and_crash_remain_registered(self) -> None:
+        runtime = MemoryRuntime(self.config, service_owner=True)
+        with _stopped_service(runtime.root), runtime._connection(ownership_exclusive=True) as core:
+            core.execute('BEGIN IMMEDIATE')
+            with candidate_workspace(runtime, self.root) as candidate:
+                provision_private_directory(candidate / 'vaults')
+            core.execute('COMMIT')
+        entries = list_workspaces(self.config, self.owner)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]['kind'], 'candidate')
+        self.assertTrue(candidate.exists())
+        old_python = os.environ.get('EVERNOOK_TEST_OLD_WORKSPACE_PYTHON')
+        if old_python:
+            code = ('from evernook import MemoryRuntime; from evernook.vault_workspace import list_workspaces; '
+                    'from pathlib import Path; import sys; p=Path(sys.argv[1]); '
+                    'a=MemoryRuntime(p, service_owner=True).access_from_file(p.parent / "mcp-access-owner.json"); '
+                    'list_workspaces(p, a)')
+            previous = subprocess.run([old_python, '-B', '-c', code, str(self.config)], cwd=str(self.root),
+                                      env={**os.environ, 'PYTHONPATH': ''}, capture_output=True, timeout=30)
+            self.assertNotEqual(previous.returncode, 0)
+            self.assertIn(b'vault_workspace_registry_invalid', previous.stderr)
+        cleanup_workspaces(self.config, self.owner, [entries[0]['id']])
+        self.assertFalse(candidate.exists())
+        with _stopped_service(runtime.root), runtime._connection(ownership_exclusive=True) as core:
+            core.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(ValueError, 'synthetic'):
+                with candidate_workspace(runtime, self.root) as failed:
+                    provision_private_directory(failed / 'vaults')
+                    raise ValueError('synthetic')
+            core.execute('COMMIT')
+        failed_entries = list_workspaces(self.config, self.owner)
+        self.assertEqual(len(failed_entries), 1)
+        self.assertTrue(failed.exists())
+        cleanup_workspaces(self.config, self.owner, [failed_entries[0]['id']])
+        entry = self.crash('candidate')
+        self.assertTrue((Path(str(entry['path'])) / 'vaults' / '15' / 'inbox' / 'inbox.sqlite3').exists())
+        self.assertEqual(cleanup_workspaces(self.config, self.owner, [str(entry['id'])])['removed'], 1)
 
     def test_multi_workspace_refuses_unknown_slot_or_file(self) -> None:
         entry = self.crash('multi')
@@ -235,6 +286,9 @@ class VaultWorkspaceTests(unittest.TestCase):
 
     def test_cleanup_refuses_running_service_and_noninteractive_cli(self) -> None:
         entry = self.crash()
+        bound_config, binding = self.config.read_bytes(), self.binding_path.read_bytes()
+        self.binding_path.unlink()
+        self.config.write_bytes(self.base_config)
         self.process = subprocess.Popen([sys.executable, '-m', 'evernook.service', '--config', str(self.config),
             '--activate-owner', str(self.owner_file)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         endpoint, deadline = self.config.parent / 'memory-service.json', time.monotonic() + 30
@@ -250,6 +304,10 @@ class VaultWorkspaceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b'interactive_recovery_required', result.stdout)
         self.assertTrue(Path(str(entry['path'])).exists())
+        with self.assertRaisesRegex(MemoryFailure, 'vault_workspace_unbound_active'):
+            cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+        self.binding_path.write_bytes(binding)
+        self.config.write_bytes(bound_config)
         cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
 
     def test_acl_failure_never_deletes_workspace(self) -> None:

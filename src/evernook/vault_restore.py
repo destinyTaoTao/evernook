@@ -110,7 +110,7 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                 backup_id = content['status']['backup_id']
                 if not isinstance(backup_id, str) or str(UUID(backup_id)) != backup_id:
                     raise MemoryFailure('invalid_backup')
-                with workspace(runtime, destination.parent, 'restore') as temporary:
+                with workspace(runtime, destination.parent, 'restore', core=core) as temporary:
                     stage = temporary / 'vault'
                     clone = temporary / 'ledger'
                     provision_private_directory(stage)

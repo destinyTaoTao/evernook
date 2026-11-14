@@ -9,6 +9,7 @@ import hmac
 import os
 from pathlib import Path
 import msvcrt
+import sqlite3
 import stat
 from typing import Any, Iterator
 from uuid import UUID, uuid4
@@ -16,7 +17,7 @@ from uuid import UUID, uuid4
 from .backup import _json_bytes
 from .models import Access, MemoryFailure
 from .paths import external, provision_private_directory, verify_private_directory
-from .runtime import MemoryRuntime, _atomic_json, _json
+from .runtime import MemoryRuntime, _atomic_json, _json, _load
 from .vault_migration import _authorize_admin
 
 
@@ -24,7 +25,7 @@ _NAME = 'vault-workspaces.json'
 _MARKER = 'vault-workspaces-required.json'
 _MAX = 128
 _PREFIX = {'restore': '.evernook-vault-restore-', 'attach': '.evernook-vault-attach-',
-           'multi': '.evernook-vault-multi-'}
+           'multi': '.evernook-vault-multi-', 'candidate': '.evernook-vault-candidate-'}
 _FILES = {
     'ledger': {'binding.json', 'memory.sqlite3', 'memory.sqlite3-wal', 'memory.sqlite3-shm',
                'memory.sqlite3-journal', 'runtime.json', 'client.json', 'idempotency.key',
@@ -110,7 +111,7 @@ def _identity(path: Path) -> os.stat_result:
 
 def _remove_checked(entry: dict[str, Any]) -> None:
     path = Path(entry['path'])
-    dirs, files_by_dir = (_MULTI_DIRS, _MULTI_FILES) if entry['kind'] == 'multi' else (_DIRS, _FILES)
+    dirs, files_by_dir = (_MULTI_DIRS, _MULTI_FILES) if entry['kind'] in ('multi', 'candidate') else (_DIRS, _FILES)
     try:
         path.lstat()
     except FileNotFoundError:
@@ -190,9 +191,7 @@ def _remove(entry: dict[str, Any]) -> None:
         raise MemoryFailure('vault_workspace_cleanup_failed') from None
 
 
-@contextmanager
-def workspace(runtime: MemoryRuntime, parent: Path, kind: str) -> Iterator[Path]:
-    """Caller holds the stopped-service lock and exclusive ledger gate."""
+def _reserve(runtime: MemoryRuntime, parent: Path, kind: str) -> tuple[Path, dict[str, Any]]:
     if kind not in _PREFIX:
         raise MemoryFailure('invalid_vault_workspace')
     parent = external(parent)
@@ -209,14 +208,68 @@ def workspace(runtime: MemoryRuntime, parent: Path, kind: str) -> Iterator[Path]
     except BaseException:
         path.rmdir()  # Still empty: no sensitive file was created before registration.
         raise
+    return path, entry
+
+
+def _discard(runtime: MemoryRuntime, core: sqlite3.Connection, entry: dict[str, Any]) -> None:
+    # Inspect the caller's transaction, including an uncommitted attachment.
+    _guard_active(runtime, core, [entry])
+    _remove(entry)
+    current = _read(runtime)
+    if entry not in current:
+        raise MemoryFailure('vault_workspace_registry_invalid')
+    _save(runtime, [item for item in current if item != entry])
+
+
+@contextmanager
+def workspace(runtime: MemoryRuntime, parent: Path, kind: str, *, core: sqlite3.Connection) -> Iterator[Path]:
+    """Caller holds the stopped-service lock and exclusive ledger gate."""
+    if kind == 'candidate':
+        raise MemoryFailure('invalid_vault_workspace')
+    path, entry = _reserve(runtime, parent, kind)
     try:
         yield path
     finally:
-        _remove(entry)
-        current = _read(runtime)
-        if entry not in current:
-            raise MemoryFailure('vault_workspace_registry_invalid')
-        _save(runtime, [item for item in current if item != entry])
+        _discard(runtime, core, entry)
+
+
+@contextmanager
+def candidate_workspace(runtime: MemoryRuntime, parent: Path) -> Iterator[Path]:
+    """Always retain registration, including on error; caller holds service and ledger locks."""
+    path, _entry = _reserve(runtime, parent, 'candidate')
+    yield path
+
+
+def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: list[dict[str, Any]]) -> None:
+    """Refuse all deletion when active identity cannot be safely excluded."""
+    from .missing_vault import attachment, multi_attachment, read_state
+    missing = read_state(runtime, core)
+    single, multi = attachment(runtime, core), multi_attachment(runtime, core)
+    config = _load(runtime.root / 'runtime.json')
+    active: list[Path] = []
+    if single is not None:
+        active.extend((Path(single['inbox_dir']), Path(single['key_dir'])))
+    binding = multi['binding'] if multi is not None else None
+    if binding is None and config.get('protected_multi_binding') is True:
+        from .vault_multi_binding import read as read_binding
+        binding = read_binding(runtime)
+        if binding is None:
+            raise MemoryFailure('protected_multi_binding_mismatch')
+    if binding is not None:
+        bound = binding.get('inboxes')
+        if not isinstance(bound, list) or any(not isinstance(item, dict)
+                or not isinstance(item.get('inbox_dir'), str) or not isinstance(item.get('key_dir'), str)
+                for item in bound):
+            raise MemoryFailure('protected_recovery_proof_invalid')
+        for item in bound:
+            active.extend((Path(item['inbox_dir']), Path(item['key_dir'])))
+    if not missing and single is None and binding is None:
+        # Legacy and unactivated runtimes did not persist active paths.  Even
+        # an empty registry cannot prove no unregistered inbox is in use.
+        raise MemoryFailure('vault_workspace_unbound_active')
+    if any(any(path.is_relative_to(Path(entry['path'])) or Path(entry['path']).is_relative_to(path)
+               for path in active) for entry in selected):
+        raise MemoryFailure('vault_workspace_active')
 
 
 def list_workspaces(config: Path, access: Access) -> list[dict[str, Any]]:
@@ -247,6 +300,7 @@ def cleanup_workspaces(config: Path, access: Access, ids: list[str]) -> dict[str
             selected = [item for item in entries if item['id'] in ids]
             if len(selected) != len(ids):
                 raise MemoryFailure('vault_workspace_not_registered')
+            _guard_active(runtime, core, selected)
             for entry in selected:
                 _authorize_admin(runtime, access)
                 _remove(entry)

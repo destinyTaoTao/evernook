@@ -89,7 +89,7 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
         members: list[dict[str, Any]] = []
         status = MultiVaultBackupStatus(str(uuid4()), datetime.now(timezone.utc).isoformat(),
                                         len(stores), int(snapshot['objects']))
-        with workspace(runtime, destination.parent, 'multi') as temporary:
+        with workspace(runtime, destination.parent, 'multi', core=core) as temporary:
             vaults, package = temporary / 'vaults', temporary / 'package'
             provision_private_directory(vaults)
             provision_private_directory(package)

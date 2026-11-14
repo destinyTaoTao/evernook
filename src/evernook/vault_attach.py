@@ -75,7 +75,7 @@ def attach(config: Path, access: Access, container: Path, vault_password: bytes,
                 verify_private_directory(container)
                 if {path.name for path in container.iterdir()} != {'inbox', 'keys'}:
                     raise MemoryFailure('protected_attachment_mismatch')
-                with workspace(runtime, container.parent, 'attach') as temporary:
+                with workspace(runtime, container.parent, 'attach', core=core) as temporary:
                     clone = temporary / 'ledger'
                     provision_private_directory(clone)
                     with closing(sqlite3.connect((root / 'memory.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:

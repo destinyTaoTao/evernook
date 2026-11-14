@@ -139,7 +139,7 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                         or len({item['key_id'] for item in members}) != count
                         or binding['primary'] not in {item['inbox_id'] for item in members}):
                     raise MemoryFailure('invalid_backup')
-                with workspace(runtime, destination.parent, 'multi') as temporary:
+                with workspace(runtime, destination.parent, 'multi', core=core) as temporary:
                     vaults, clone = temporary / 'vaults', temporary / 'ledger'
                     provision_private_directory(vaults)
                     provision_private_directory(clone)
