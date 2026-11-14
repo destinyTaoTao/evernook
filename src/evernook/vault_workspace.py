@@ -23,7 +23,8 @@ from .vault_migration import _authorize_admin
 _NAME = 'vault-workspaces.json'
 _MARKER = 'vault-workspaces-required.json'
 _MAX = 128
-_PREFIX = {'restore': '.evernook-vault-restore-', 'attach': '.evernook-vault-attach-'}
+_PREFIX = {'restore': '.evernook-vault-restore-', 'attach': '.evernook-vault-attach-',
+           'multi': '.evernook-vault-multi-'}
 _FILES = {
     'ledger': {'binding.json', 'memory.sqlite3', 'memory.sqlite3-wal', 'memory.sqlite3-shm',
                'memory.sqlite3-journal', 'runtime.json', 'client.json', 'idempotency.key',
@@ -33,6 +34,16 @@ _FILES = {
 }
 _DIRS = {'': {'ledger', 'vault'}, 'vault': {'inbox', 'keys'}, 'ledger': set(),
          'vault/inbox': set(), 'vault/keys': set()}
+_MULTI_DIRS = {'': {'ledger', 'vaults'}, 'ledger': set(),
+               'vaults': {f'{i:02d}' for i in range(16)}}
+_MULTI_FILES = {'ledger': _FILES['ledger']}
+for _slot in sorted(_MULTI_DIRS['vaults']):
+    _base = f'vaults/{_slot}'
+    _MULTI_DIRS[_base] = {'inbox', 'keys'}
+    _MULTI_DIRS[f'{_base}/inbox'] = set()
+    _MULTI_DIRS[f'{_base}/keys'] = set()
+    _MULTI_FILES[f'{_base}/inbox'] = _FILES['vault/inbox']
+    _MULTI_FILES[f'{_base}/keys'] = _FILES['vault/keys']
 
 
 def _read(runtime: MemoryRuntime) -> list[dict[str, Any]]:
@@ -98,6 +109,7 @@ def _identity(path: Path) -> os.stat_result:
 
 def _remove_checked(entry: dict[str, Any]) -> None:
     path = Path(entry['path'])
+    dirs, files_by_dir = (_MULTI_DIRS, _MULTI_FILES) if entry['kind'] == 'multi' else (_DIRS, _FILES)
     try:
         path.lstat()
     except FileNotFoundError:
@@ -137,7 +149,7 @@ def _remove_checked(entry: dict[str, Any]) -> None:
     def inspect(directory: Path, relative: str, expected: os.stat_result) -> None:
         hold(directory, expected)
         children = list(directory.iterdir())
-        allowed_dirs, allowed_files = _DIRS[relative], _FILES.get(relative, set())
+        allowed_dirs, allowed_files = dirs[relative], files_by_dir.get(relative, set())
         files: list[Path] = []
         for child in children:
             info = child.lstat()

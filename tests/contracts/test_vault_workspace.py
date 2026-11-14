@@ -32,13 +32,63 @@ class VaultWorkspaceTests(unittest.TestCase):
             self.process.communicate(timeout=20)
             self.process = None
 
-    def crash(self) -> dict[str, object]:
+    def crash(self, kind: str = 'restore') -> dict[str, object]:
         worker = Path(__file__).with_name('vault_workspace_worker.py')
-        result = subprocess.run([sys.executable, str(worker), str(self.root)], capture_output=True, timeout=45)
+        result = subprocess.run([sys.executable, str(worker), str(self.root), kind], capture_output=True, timeout=45)
         self.assertEqual(result.returncode, 91, result.stderr.decode(errors='replace'))
         entries = list_workspaces(self.config, self.owner)
         self.assertEqual(len(entries), 1)
         return entries[0]
+
+    def test_crashed_multi_workspace_is_registered_and_cleaned_as_one_unit(self) -> None:
+        entry = self.crash('multi')
+        path = Path(str(entry['path']))
+        self.assertEqual(entry['kind'], 'multi')
+        self.assertTrue((path / 'vaults' / '00' / 'keys' / 'recovery.json').exists())
+        self.assertTrue((path / 'vaults' / '15' / 'inbox' / 'inbox.sqlite3').exists())
+        with self.assertRaises(MemoryFailure):
+            cleanup_workspaces(self.config, Access('unauthorized', 'unauthorized'), [str(entry['id'])])
+        result = cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+        self.assertEqual(result['removed'], 1)
+        self.assertFalse(result['physical_erasure_verified'])
+        self.assertFalse(path.exists())
+
+    def test_multi_workspace_refuses_unknown_slot_or_file(self) -> None:
+        entry = self.crash('multi')
+        path = Path(str(entry['path']))
+        unknown_slot = path / 'vaults' / '16'
+        unknown_slot.mkdir()
+        with self.assertRaisesRegex(MemoryFailure, 'vault_workspace_unknown_content'):
+            cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+        unknown_slot.rmdir()
+        unknown_file = path / 'vaults' / '00' / 'keys' / 'other.key'
+        unknown_file.write_bytes(b'keep')
+        with self.assertRaisesRegex(MemoryFailure, 'vault_workspace_unknown_content'):
+            cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+        self.assertEqual(unknown_file.read_bytes(), b'keep')
+        unknown_file.unlink()
+        cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+
+    def test_multi_workspace_does_not_follow_slot_reparse_point(self) -> None:
+        entry = self.crash('multi')
+        path = Path(str(entry['path']))
+        victim = self.root / 'multi-victim'
+        victim.mkdir()
+        (victim / 'keep').write_text('keep', encoding='utf-8')
+        link = path / 'vaults' / '01'
+        try:
+            os.symlink(victim, link, target_is_directory=True)
+        except OSError:
+            result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(link), str(victim)],
+                                    capture_output=True, timeout=15)
+            if result.returncode:
+                cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+                self.skipTest('Windows symlink and junction creation are unavailable')
+        with self.assertRaisesRegex(MemoryFailure, 'vault_workspace_unsafe'):
+            cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
+        self.assertEqual((victim / 'keep').read_text(encoding='utf-8'), 'keep')
+        link.rmdir()
+        cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
 
     def test_real_crash_is_recorded_and_only_selected_workspace_is_cleaned(self) -> None:
         entry = self.crash()
