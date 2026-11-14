@@ -61,6 +61,8 @@ class ServiceExtractionTests(unittest.TestCase):
 
     def test_service_owned_configuration_cli_authorization_and_no_model_tool(self) -> None:
         client = self.start(activate=True)
+        status = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
+        self.assertEqual(client.call(self.owner, 'cli', status)['model_configuration']['extraction'], 'not_configured')
         arguments = {'command': 'extract', 'input': {'source_ids': [self.source]}}
         with self.assertRaisesRegex(MemoryFailure, 'extraction_service_unconfigured'):
             client.call(self.owner, 'cli', arguments)
@@ -74,6 +76,11 @@ class ServiceExtractionTests(unittest.TestCase):
             'profile': 'qwen3-0.6b-experimental-extractive-v1', 'node': sys.executable,
             'transformers_dir': str(self.root / 'missing-packages'), 'model_dir': str(self.root / 'missing-model')}), encoding='utf-8')
         client = self.start(profile)
+        configured = client.call(self.owner, 'cli', status)
+        self.assertEqual(configured['model_configuration']['extraction'], 'configured_local')
+        self.assertNotIn(str(profile), json.dumps(configured))
+        with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            client.call(self.ordinary, 'cli', status)
         for command in ('extract', 'extract-preferences'):
             result = client.call(self.owner, 'cli', {'command': command, 'input': {'source_ids': [self.source]}})
             self.assertEqual(result['run']['state'], 'failed')

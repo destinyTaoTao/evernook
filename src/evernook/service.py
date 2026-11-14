@@ -331,6 +331,7 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             return {**result, 'model_configuration': {
                 'embedding': 'configured_local' if embedding_config is not None else 'not_configured',
                 'reflection': 'not_configured' if reflection_model is None else 'configured_remote' if isinstance(reflection_model, RemoteModel) else 'configured_local',
+                'extraction': 'configured_local' if extractor is not None else 'not_configured',
                 'speech': 'host_owned'}}
         return result
     if operation == "remember":

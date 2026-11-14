@@ -6,7 +6,7 @@ import vm from 'node:vm';
 test('memory links use the confirmed profile page and re-read source on click', async () => {
   let plugin, page, cursor = 0, sourceAvailable = false, statusAvailable = true, statusModelsAvailable = true, timelineAvailable = true, delaySource = false, delayGraph = false, resolveSource, resolveHistory, resolveGraph;
   const state = [], effects = [], refs = [], calls = [];
-  let topics = [], failTopicControl = false;
+  let topics = [], failTopicControl = false, extractionMode = 'configured_local';
   const windowListeners = new Map();
   const React = {
     Fragment: Symbol('fragment'),
@@ -57,7 +57,8 @@ test('memory links use the confirmed profile page and re-read source on click', 
     if (body.action === 'fingerprints') return Response.json({ result: { tokens: body.requests.map(() => 'a'.repeat(64)) } });
     if (body.view === 'status') return statusAvailable
       ? Response.json({ result: { configuration_schema_version: 1, daily_admitted: false,
-        ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned' } } : {}) } })
+        ...(statusModelsAvailable ? { model_configuration: { embedding: 'configured_local', reflection: 'configured_remote', speech: 'host_owned',
+          ...(extractionMode ? { extraction: extractionMode } : {}) } } : {}) } })
       : Response.json({ error: 'management_unavailable' }, { status: 400 });
     if (body.view === 'topic_settings') return respond({ items: topics, next_offset: null });
     if (body.view === 'profiles' || body.view === 'network_profiles') return respond({ next_offset: body.offset === 0 ? 24 : null, items: [{
@@ -120,8 +121,17 @@ test('memory links use the confirmed profile page and re-read source on click', 
   assert.ok(find(tree, node => node.children?.includes('diagnosticFingerprint: diagnosticConfigured')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticEmbedding: providerLocal')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticReflection: providerRemote')));
+  assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerLocal')));
   assert.ok(find(tree, node => node.children?.includes('diagnosticSpeech: providerHost')));
   assert.ok(calls.some(call => call.view === 'status'));
+  extractionMode = 'not_configured';
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerNone')));
+  extractionMode = undefined;
+  find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
+  tree = render(); await flush(); tree = render();
+  assert.ok(find(tree, node => node.children?.includes('diagnosticExtraction: providerUnknown')));
   statusModelsAvailable = false;
   find(tree, node => node.type === 'button' && node.children.includes('refresh')).props.onClick();
   tree = render(); await flush(); tree = render();

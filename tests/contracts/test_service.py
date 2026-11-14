@@ -96,7 +96,7 @@ class ServiceTests(unittest.TestCase):
         command = {'command': 'manage', 'input': {'action': 'read', 'view': 'status'}}
         status = self.client.call(self.access, 'cli', command)
         self.assertEqual(status['model_configuration'], {'embedding': 'not_configured',
-            'reflection': 'not_configured', 'speech': 'host_owned'})
+            'reflection': 'not_configured', 'extraction': 'not_configured', 'speech': 'host_owned'})
         ordinary = pair_client(self.config, client_id='ordinary-status', entry='ordinary-status',
             access_path=self.config.parent / 'mcp-access-ordinary-status.json', scopes=('capture', 'recall'))
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
@@ -116,7 +116,7 @@ class ServiceTests(unittest.TestCase):
             reflector=SimpleNamespace(model=Remote()))  # type: ignore[arg-type]
         assert isinstance(result, dict)
         self.assertEqual(result['model_configuration'], {'embedding': 'configured_local',
-            'reflection': 'configured_remote', 'speech': 'host_owned'})
+            'reflection': 'configured_remote', 'extraction': 'not_configured', 'speech': 'host_owned'})
         self.assertNotIn('synthetic-secret-path', json.dumps(result))
         local = dispatch(MemoryRuntime(self.config), request, reflector=SimpleNamespace(model=object()))  # type: ignore[arg-type]
         assert isinstance(local, dict)
