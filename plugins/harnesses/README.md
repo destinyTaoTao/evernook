@@ -24,3 +24,7 @@ npm test
 Tests run real local harness services and a deterministic synthetic provider. No model API or user profile is needed. The Python environment must have this checkout installed with `.[mcp]`. Runtime data and credentials must remain outside the checkout. The package is private; no npm publication or desktop installation is claimed.
 
 Reflection SDK: MemoryClient.reflect accepts the existing question/options plus explicit allow_remote. Remote requires trusted MemoryConfig.allowRemoteReflection at MCP startup and service allowlist; dsh uses reflectionAllowRemote (default false). Keys/endpoints belong only to the service. See [provider contract](../../docs/contracts/reflection-providers-v1.md). No automatic cloud fallback or daily model admission.
+
+# Trusted transcription material
+
+`@evernook/harnesses/transcription` exports `TranscriptionClient` for trusted hosts. It requires an independently running service and absolute Python, config and access paths. `submit` sends authorized transcription material through stdin to the existing encrypted service channel; `read` returns currently visible provenance or null. It does not register a model tool or operate audio devices. A canceled or timed-out submission may already have committed; retry with the identical source and material. See [the transcription contract](../../docs/contracts/transcription-v1.md) for privacy and provider boundaries.
