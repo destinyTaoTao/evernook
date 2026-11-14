@@ -42,7 +42,7 @@ Core0.1.18提供[综合观察基础层](docs/contracts/observations-v1.md)：支
 
 当前采用 Python 3.14 + SQLite 原文账本，中文词法/精确路径使用可重建 FTS5；可选 stdio MCP 复用同一核心，默认十个只读工具。显式本地 embedding、候选抽取已有固定资产与执行路径，模型质量仍待正式准入；首验范围为 Windows 本机固定 NTFS。普通恢复保持审查限制，加密备份不等于可自动接管的运行库恢复。伴侣场景增量为同一核心上的显式扩展：版本化核心人设（用户确认才生效）、用户画像草案-确认生命周期、沉淀草案进入审查队列（档位与收窄白名单）、进程内会话/空闲触发调度与伴侣预设（推荐值全部可覆盖，非性能承诺）。
 
-2026-11-13更新，Core0.1.16提供[独立记忆服务](docs/contracts/service-v1.md)和[全历史候选/独立检索意图](docs/contracts/long-term-recall-v1.md)。普通账本可在停用旧入口后一次激活服务模式，dsh preview.23的存取查和可信页面统一连接；关闭宿主后，已配置的维护与向量化继续运行。Core0.1.15安装版的[30分钟故障循环](docs/reports/service-cutover-2026-11-12.md)为该版本证据，新版本不继承完整长跑或日常质量/规模准入。已冻结[学习评测基线](docs/reports/learning-baseline-2026-11-13.md)，失败与missing继续保留。现有受保护原件迁移另行验收。后续综合观察、主题认知视图与查询时反思已纳入[总spec #106](https://github.com/destinyTaoTao/evernook/issues/106)。
+Core 0.1.16 起提供[独立记忆服务](docs/contracts/service-v1.md)和[全历史候选/独立检索意图](docs/contracts/long-term-recall-v1.md)。普通账本可在停用旧入口后显式激活服务模式；关闭宿主后，只要记忆服务仍在运行，已配置并启用的维护及语义索引可继续运行。Core 0.1.70 增加[单个已登记、完整关联保险库的受控切换](docs/contracts/protected-migration-v1.md)，不自动发现其他保险库或迁移多收件箱。Core 0.1.15 安装版的[30分钟故障循环](docs/reports/service-cutover-2026-11-12.md)是该版本证据，新版本不继承完整长跑或日常质量/规模准入。已冻结[学习评测基线](docs/reports/learning-baseline-2026-11-13.md)，失败与 missing 继续保留。后续工作见[总 spec #106](https://github.com/destinyTaoTao/evernook/issues/106)。
 
 不默认按月分表，不先引入图数据库或分布式组件。先评估复用 MemOS 本地插件的成本，再决定哪些编排需要自己维护；“完全自建一定最优”不是当前结论。
 
@@ -60,9 +60,9 @@ flowchart LR
     Export --> Review[只读审查恢复：review_required]
 ```
 
-图中为证据账本的基础调用。dsh/pi 显式 SDK profile 已实现采集/基本召回注入，但未启用日常桌面 profile，桌宠目标尚未指定；没有已部署的共享守护服务。普通归档未加密，另有显式加密备份；恢复不开放普通召回。[当前实现与流程图](docs/current-architecture.md)列出完整增量与缺口；[目标架构](docs/architecture.md)保留后续设计。
+图中为兼容模式下证据账本的基础调用；独立服务及其客户端连接见[服务契约](docs/contracts/service-v1.md)。dsh/pi 显式 SDK profile 已实现采集/基本召回注入，但未启用日常桌面 profile，桌宠目标尚未指定。普通归档未加密，另有显式加密备份；恢复不开放普通召回。[当前实现与流程图](docs/current-architecture.md)列出完整增量与缺口；[目标架构](docs/architecture.md)保留后续设计。
 
-候选任务支持来源版本/片段校验、租约重试和失效过滤，本地 Qwen 候选摘录可显式运行；事实与经验接纳需可信本地用户决定。日/周/字面主题导航可以有界补跑，但没有日常后台计划任务。普通来源可在精确预览和用户确认后删除并传播到派生资产，既有备份和宿主副本仍明确保留为残留。详见[抽取](docs/contracts/extraction-v1.md)、[事实](docs/contracts/facts-v1.md)、[导航](docs/contracts/navigation-v1.md)、[经验](docs/contracts/experience-v1.md)与[删除](docs/contracts/purge-v1.md)。
+候选任务支持来源版本/片段校验、租约重试和失效过滤，本地 Qwen 候选摘录可显式运行；事实与经验接纳需可信本地用户决定。日/周/字面主题导航可以有界补跑；服务维护需要显式配置授权身份和策略，未准入的自动发布保持关闭。普通来源可在精确预览和用户确认后删除并传播到派生资产，既有备份和宿主副本仍明确保留为残留。详见[抽取](docs/contracts/extraction-v1.md)、[事实](docs/contracts/facts-v1.md)、[导航](docs/contracts/navigation-v1.md)、[经验](docs/contracts/experience-v1.md)与[删除](docs/contracts/purge-v1.md)。
 
 ## 文档导航
 
