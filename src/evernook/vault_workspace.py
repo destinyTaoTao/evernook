@@ -308,7 +308,14 @@ def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: li
             raise MemoryFailure('protected_recovery_proof_invalid')
         for item in bound:
             active.extend((Path(item['inbox_dir']), Path(item['key_dir'])))
-    if not missing and single is None and binding is None:
+    single_bound = None
+    if single is None and binding is None and config.get('protected_single_binding') is True:
+        from .vault_single_binding import read as read_single_binding
+        single_bound = read_single_binding(runtime)
+        if single_bound is None:
+            raise MemoryFailure('protected_single_binding_mismatch')
+        active.extend((Path(single_bound['inbox_dir']), Path(single_bound['key_dir'])))
+    if not missing and single is None and binding is None and single_bound is None:
         # Legacy and unactivated runtimes did not persist active paths.  Even
         # an empty registry cannot prove no unregistered inbox is in use.
         raise MemoryFailure('vault_workspace_unbound_active')

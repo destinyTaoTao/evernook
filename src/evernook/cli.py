@@ -141,6 +141,10 @@ def _parser() -> Parser:
     vault_attach = commands.add_parser('backup-vault-attach', help='Reverify and bind a staged vault to an offline restored service')
     for flag in ('config', 'access', 'container'):
         vault_attach.add_argument('--' + flag, type=Path, required=True)
+    vault_destroy = commands.add_parser('vault-emergency-destroy',
+                                        help='Trusted local emergency destruction of one bound vault')
+    for flag in ('config', 'access', 'inbox-dir', 'key-dir'):
+        vault_destroy.add_argument('--' + flag, type=Path, required=True)
     for name in ('backup-vault-workspaces', 'backup-vault-workspace-clean'):
         command = commands.add_parser(name, help='Inspect or explicitly clean registered offline vault workspaces')
         command.add_argument('--config', type=Path, required=True)
@@ -316,6 +320,21 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             from .protected import ProtectedInbox, initialize_protected_inbox, known_inboxes
         except ImportError:
             raise MemoryFailure("vault_dependency_missing") from None
+        if args.command == 'vault-emergency-destroy':
+            if not _trusted_console():
+                raise MemoryFailure('interactive_vault_destruction_required')
+            from .vault_destroy import destroy_vault
+            password = getpass.getpass('Local vault password: ').encode('utf-8')
+            try:
+                confirmation = input('Local destruction is irreversible and never touches independent backups. '
+                                     'Type DESTROY_LOCAL_VAULT: ')
+            except EOFError:
+                raise MemoryFailure('vault_destruction_confirmation_required') from None
+            if confirmation != 'DESTROY_LOCAL_VAULT':
+                raise MemoryFailure('vault_destruction_confirmation_required')
+            from .service import client_access
+            return destroy_vault(args.config, client_access(args.config, args.access),
+                                 args.inbox_dir, args.key_dir, password)
         memory = MemoryRuntime(args.config)
         access = memory.access_from_file(args.access)
         if args.command == 'vault-known':

@@ -368,9 +368,14 @@ class MemoryRuntime:
         config_path = external(config_path)
         config = _load(config_path)
         base_keys = {"schema_version", "data_dir", "busy_timeout_ms"}
-        if set(config) not in (base_keys, base_keys | {"service_mode"}, base_keys | {"service_mode", "restored_missing_vault"},
-                               base_keys | {"service_mode", "protected_multi_binding"},
-                               base_keys | {"service_mode", "restored_missing_vault", "protected_multi_binding"}) or type(config["schema_version"]) is not int or config["schema_version"] != 1:
+        if (set(config) not in (base_keys, base_keys | {"service_mode"}, base_keys | {"service_mode", "restored_missing_vault"},
+                                base_keys | {"service_mode", "protected_multi_binding"},
+                                base_keys | {"service_mode", "restored_missing_vault", "protected_multi_binding"},
+                                base_keys | {"service_mode", "protected_single_binding"},
+                                base_keys | {"service_mode", "restored_missing_vault", "protected_single_binding"})
+                or type(config["schema_version"]) is not int or config["schema_version"] != 1):
+            raise MemoryFailure("unsupported_config")
+        if config.get("protected_multi_binding") is True and config.get("protected_single_binding") is True:
             raise MemoryFailure("unsupported_config")
         if "service_mode" in config and config["service_mode"] is not True:
             raise MemoryFailure("unsupported_config")
