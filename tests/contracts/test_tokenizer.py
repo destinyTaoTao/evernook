@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import ctypes
+from concurrent.futures import Future
 from ctypes import wintypes
 import json
 import os
@@ -321,6 +322,39 @@ with patch('evernook.tokenizer.subprocess.Popen',side_effect=spawn):
                 self.assertEqual(len(children), 1)
                 self.assertIsNotNone(children[0].poll())
                 self.assertFalse(any(thread.name.startswith("evernook-tokenizer") for thread in threading.enumerate()))
+
+    def test_scoped_cancellation_remains_distinct_when_shutdown_breaks_pending_io(self) -> None:
+        from evernook.tokenizer import LocalTokenCounter
+
+        for canceling in (False, True):
+            for failure in ('canceled_future', 'closed_pipe'):
+                with self.subTest(canceling=canceling, failure=failure):
+                    counter = LocalTokenCounter.from_file(self.config)
+                    canceled = threading.Event()
+                    counter.cancel = canceled
+
+                    class PendingCount(Future[str]):
+                        def result(self, timeout: float | None = None) -> str:
+                            # Reproduce cancellation after _remaining(), before
+                            # Future.result(): concurrent warmup closes the IO.
+                            if canceling:
+                                canceled.set()
+                            return super().result(timeout)
+
+                    pending = PendingCount()
+                    if failure == 'canceled_future':
+                        pending.cancel()
+                    else:
+                        pending.set_exception(OSError('synthetic closed pipe'))
+                    with counter.session(timeout=5) as scoped:
+                        with patch.object(scoped.io, 'submit', return_value=pending):
+                            with self.assertRaisesRegex(MemoryFailure,
+                                    'context_canceled' if canceling else 'tokenizer_unavailable'):
+                                scoped.count('hello')
+                        self.assertTrue(scoped.closed)
+                        self.assertIsNotNone(scoped.process)
+                        assert scoped.process is not None
+                        self.assertIsNotNone(scoped.process.poll())
 
     def test_host_context_uses_saved_policy_model_binding_and_request_ceiling(self) -> None:
         from evernook import MemoryRuntime, initialize

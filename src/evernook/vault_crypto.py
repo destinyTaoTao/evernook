@@ -5,17 +5,27 @@ from dataclasses import asdict, replace
 import hashlib
 import hmac
 import json
+from pathlib import Path
 import sqlite3
+from typing import Any, Protocol
 
 from nacl import pwhash
 from nacl.exceptions import CryptoError
-from nacl.public import PrivateKey, SealedBox
+from nacl.public import PrivateKey, PublicKey, SealedBox
 from nacl.secret import SecretBox
 
 from .models import Event, MemoryFailure, Source
 from .paths import verify_private_directory
 from .protected import ProtectedInbox, _hex, _public
 from .runtime import _json, _unique_object
+
+
+class _UnlockTarget(Protocol):
+    """Structural shape _unlock needs; binding checks belong to the caller."""
+
+    key_root: Path
+    public: dict[str, Any]
+    recipient: PublicKey
 
 
 def _json_object(raw: bytes) -> dict[str, object]:
@@ -30,7 +40,7 @@ def _json_object(raw: bytes) -> dict[str, object]:
     return value
 
 
-def _unlock(inbox: ProtectedInbox, password: bytes) -> PrivateKey:
+def _unlock(inbox: _UnlockTarget, password: bytes) -> PrivateKey:
     if not isinstance(password, bytes) or not 12 <= len(password) <= 1024:
         raise MemoryFailure('vault_unlock_refused')
     path = inbox.key_root / 'recovery.json'

@@ -5,12 +5,15 @@ import argparse
 from dataclasses import asdict
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 
 from evernook import LocalMiniLM, MemoryRuntime, SemanticRecall, pair_client
+from evernook.embedding import ServiceEmbedding
+from evernook.models import MemoryFailure
 from evernook.paths import external
-from scale_ingest import save
+from probes.admission.scale_ingest import save
 
 
 def main() -> int:
@@ -18,6 +21,12 @@ def main() -> int:
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument('--reuse-embedding', action='store_true')
+    parser.add_argument('--max-seconds', type=float, help='Diagnostic guard; never changes the frozen admission budget')
+    parser.add_argument('--semantic-window', type=int, default=16, help='Explicit bounded maintenance window (16..1000)')
+    parser.add_argument('--lexical-strategy', choices=('default', 'checkpoint'), default='default')
+    parser.add_argument('--full-semantic', action='store_true', help='Require every eligible source, beyond the initial vector smoke target')
+    parser.add_argument('--lexical-transaction-size', type=int, default=1)
     args = parser.parse_args()
     root = external(args.output)
     root.mkdir()
@@ -29,23 +38,42 @@ def main() -> int:
     access = (runtime.access_from_file(access_file) if access_file.exists() else pair_client(config,
         client_id="synthetic-scale-maintenance", entry="synthetic-maintenance", access_path=access_file,
         scopes=("maintain", "recall")))
-    semantic = SemanticRecall(runtime, LocalMiniLM.from_file(args.embedding_config))
+    binding = ServiceEmbedding(args.embedding_config) if args.reuse_embedding else None
+    semantic = SemanticRecall(runtime, binding.current() if binding else LocalMiniLM.from_file(args.embedding_config))
+    maximum = min(policy['scale']['index_seconds_max'], args.max_seconds) if args.max_seconds is not None else policy['scale']['index_seconds_max']
+    if args.max_seconds is not None and not math.isfinite(args.max_seconds):
+        raise ValueError('invalid_index_budget')
+    if not math.isfinite(maximum) or not 0 < maximum <= policy['scale']['index_seconds_max'] or not 16 <= args.semantic_window <= 1000:
+        raise ValueError('invalid_index_budget')
     save(root / "manifest.json", {"fixture": str(args.fixture), "policy_sha256": hashlib.sha256(policy_raw).hexdigest(),
          "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+         'reuse_embedding': args.reuse_embedding, 'execution_budget_seconds': maximum,
+         'semantic_window': args.semantic_window,
+         'lexical_strategy': args.lexical_strategy, 'full_semantic_attempt': args.full_semantic,
+         'lexical_transaction_size': args.lexical_transaction_size,
          "order": "semantic first to measure >10000 real fragments, then lexical; both share one frozen index time budget"})
     started = time.perf_counter()
     calls = 0
     state = semantic.status(access)
     lexical = runtime.lexical_status(access)
+    initial_semantic, initial_lexical = state, lexical
     error = None
     try:
+        if args.lexical_strategy == 'checkpoint':
+            runtime.configure_lexical_acceleration(access, enabled=True)
+            runtime.configure_lexical_id_acceleration(access, enabled=True)
+            runtime.configure_lexical_checkpoint(access, enabled=True)
         with (root / "progress.jsonl").open("w", encoding="utf-8") as log:
-            while state.pending_messages and (state.stored_vectors or 0) < policy["scale"]["index_vectors_target"]:
-                if time.perf_counter() - started >= policy["scale"]["index_seconds_max"]:
+            while state.pending_messages and (args.full_semantic or (state.stored_vectors or 0) < policy["scale"]["index_vectors_target"]):
+                if time.perf_counter() - started >= maximum:
                     error = "index_time_budget"
                     break
                 before = time.perf_counter()
-                state = semantic.refresh(access, limit=16, timeout=120)
+                remaining = maximum - (time.perf_counter() - started)
+                if args.semantic_window == 16:
+                    state = semantic.refresh(access, limit=16, timeout=min(30, remaining))
+                else:
+                    state = semantic.refresh_window(access, limit=args.semantic_window, timeout=min(90, remaining))
                 calls += 1
                 row = {"phase": "semantic", "calls": calls, "elapsed_seconds": time.perf_counter() - started,
                        "refresh_ms": (time.perf_counter() - before) * 1000, "semantic": asdict(state)}
@@ -54,22 +82,32 @@ def main() -> int:
                 if calls % 10 == 0:
                     print(json.dumps(row), flush=True)
             while lexical.pending_messages and error is None:
-                if time.perf_counter() - started >= policy["scale"]["index_seconds_max"]:
+                if time.perf_counter() - started >= maximum:
                     error = "index_time_budget"
                     break
                 before = time.perf_counter()
-                lexical = runtime.refresh_lexical(access, limit=100)
+                lexical = runtime.refresh_lexical_window(access, limit=5000,
+                    budget_seconds=min(120, maximum - (time.perf_counter() - started)),
+                    transaction_size=args.lexical_transaction_size)
                 row = {"phase": "lexical", "elapsed_seconds": time.perf_counter() - started,
                        "refresh_ms": (time.perf_counter() - before) * 1000, "lexical": asdict(lexical)}
                 log.write(json.dumps(row) + "\n")
                 log.flush()
     except Exception as failure:
-        error = type(failure).__name__
+        error = failure.code if isinstance(failure, MemoryFailure) else type(failure).__name__
+    finally:
+        if binding:
+            binding.close()
+    state, lexical = semantic.status(access), runtime.lexical_status(access)
+    resumed = bool(initial_semantic.stored_vectors or initial_lexical.indexed_messages)
+    blocked = bool(error or state.state != 'ready' or state.failed_chunks or lexical.state != 'ready' or resumed)
     save(root / "report.json", {"elapsed_seconds": time.perf_counter() - started, "semantic_refresh_calls": calls,
-         "semantic": asdict(semantic.status(access)), "lexical": asdict(runtime.lexical_status(access)),
+         'initial_semantic': asdict(initial_semantic), 'initial_lexical': asdict(initial_lexical),
+         'fresh_index_budget_eligible': not resumed, 'complete_vector_coverage': state.state == 'ready' and not state.failed_chunks,
+         "semantic": asdict(state), "lexical": asdict(lexical),
          "actual_messages": runtime.status(access).messages, "error_code": error,
-         "admission": "blocked" if error or state.state != "ready" or lexical.state != "ready" else "pending"})
-    return 2 if error or state.state != "ready" or lexical.state != "ready" else 0
+         "admission": "blocked" if blocked else "pending"})
+    return 2 if blocked else 0
 
 
 if __name__ == "__main__":

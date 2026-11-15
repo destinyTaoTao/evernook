@@ -98,6 +98,23 @@ def enabled(db: sqlite3.Connection) -> bool:
         return False
 
 
+def pending_rows(db: sqlite3.Connection, limit: int) -> list[sqlite3.Row] | None:
+    """Select a bounded maintenance queue using the verified existing checkpoint.
+
+    The caller owns one read snapshot. Dirty sources are reconciled by the same
+    bounded read overlay as search; an invalid/large overlay uses the old path.
+    """
+    state = search_state(db, lambda: None)
+    if state is None:
+        return None
+    clean = db.execute(f'''SELECT message_id AS id,received FROM {_ROWS}
+        WHERE indexed=0 AND message_id NOT IN (SELECT message_id FROM {_DIRTY})
+        ORDER BY received,message_id LIMIT ?''', (limit,)).fetchall()
+    changed = db.execute(f'''SELECT messages.id,messages.received FROM messages
+        JOIN temp.{_PENDING} changed ON changed.message_id=messages.id''').fetchall()
+    return sorted((*clean, *changed), key=lambda row: (row[1], row[0]))[:limit]
+
+
 def _remove(db: sqlite3.Connection, found: set[str]) -> None:
     for kind in ("trigger", "index", "table"):
         for name in found:

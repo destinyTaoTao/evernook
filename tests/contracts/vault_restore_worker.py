@@ -1,4 +1,4 @@
-"""Synthetic process-crash injection immediately around vault staging publication."""
+"""Synthetic process-crash injection around copy-based vault staging publication."""
 from __future__ import annotations
 
 import os
@@ -7,18 +7,29 @@ import sys
 from unittest.mock import patch
 
 from evernook.service import client_access
-from evernook.vault_restore import restore_stage
+from evernook.vault_restore import PrivateTree, _copy_between, restore_stage
 
 root, mode = Path(sys.argv[1]), sys.argv[2]
 config = root / 'restored' / 'runtime.json'
 access = client_access(config, root / 'restored' / 'mcp-access-owner.json')
-rename = os.rename
-def crash(source: object, destination: object) -> None:
-    if mode == 'after':
-        rename(source, destination)  # type: ignore[arg-type]
-    os._exit(91)
 
-with patch('evernook.vault_restore.os.rename', side_effect=crash):
-    restore_stage(config, access, root / 'vault-backup', root / ('crash-' + mode),
-                  root / 'backup-keys' / 'recovery.json', b'synthetic-backup-password-212',
-                  b'synthetic-vault-password-212')
+if mode == 'before':
+    def crash_tree(*args: object, **kwargs: object) -> PrivateTree:
+        os._exit(91)
+        raise AssertionError('unreachable')
+    with patch('evernook.vault_restore.PrivateTree', side_effect=crash_tree):
+        restore_stage(config, access, root / 'vault-backup', root / 'crash-before',
+                      root / 'backup-keys' / 'recovery.json', b'synthetic-backup-password-212',
+                      b'synthetic-vault-password-212')
+else:
+    calls = 0
+    def copy_then_crash(source: object, target: object) -> None:
+        global calls
+        calls += 1
+        _copy_between(source, target)  # type: ignore[arg-type]
+        if calls == 4:  # inbox.sqlite3 is the last published file.
+            os._exit(91)
+    with patch('evernook.vault_restore._copy_between', side_effect=copy_then_crash):
+        restore_stage(config, access, root / 'vault-backup', root / 'crash-after',
+                      root / 'backup-keys' / 'recovery.json', b'synthetic-backup-password-212',
+                      b'synthetic-vault-password-212')

@@ -178,6 +178,8 @@ class _TokenSession:
             raise
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError, CancelledError):
             self.close()
+            if self.counter.cancel is not None and self.counter.cancel.is_set():
+                raise MemoryFailure("context_canceled") from None
             raise MemoryFailure("tokenizer_unavailable") from None
 
     def close(self) -> None:

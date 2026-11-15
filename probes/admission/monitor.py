@@ -1,35 +1,82 @@
-"""Run an owned experiment and sample its live Windows process tree every 250 ms."""
+"""Sample verified Windows Job members; PID parent links are not ownership."""
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 import json
+import hashlib
 import math
 from pathlib import Path
 import subprocess
 import time
+from typing import TypedDict
 
 from evernook.paths import external
-from scale_ingest import MemoryCounters, save
+from probes.admission.scale_ingest import MemoryCounters, save
+from probes.admission.experiment_job import ExperimentJob
 
 
-class ProcessEntry(ctypes.Structure):
-    _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
-               ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
-               ("parent", wintypes.DWORD), ("priority", wintypes.LONG), ("flags", wintypes.DWORD),
-               ("exe", wintypes.WCHAR * 260)]
+class ProcessSample(TypedDict):
+    pid: int
+    private_bytes: int
+    working_set_bytes: int
+    created_filetime: str
+    ownership: str
 
 
-def stop_owned_tree(child: subprocess.Popen[bytes]) -> None:
-    if child.poll() is not None:
-        return
-    directory = ctypes.create_unicode_buffer(260)
-    if not ctypes.windll.kernel32.GetSystemDirectoryW(directory, len(directory)):
-        raise RuntimeError("system_directory_unavailable")
-    subprocess.run([str(Path(directory.value) / "taskkill.exe"), "/PID", str(child.pid), "/T", "/F"],
-        capture_output=True, check=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
-    child.wait(timeout=10)
+@contextmanager
+def owned_job(cleanup_errors: list[str]) -> Iterator[ExperimentJob]:
+    job = ExperimentJob()
+    try:
+        yield job
+    finally:
+        try:
+            job.close()
+        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+            # close still releases the KILL_ON_JOB_CLOSE handle. Retain the
+            # failure and check the actual wrapper exit before reporting it.
+            cleanup_errors.append(type(error).__name__)
+
+
+def sample_job(job: ExperimentJob, child: subprocess.Popen[bytes]) -> tuple[list[ProcessSample], int]:
+    kernel = job.kernel
+    query = ctypes.WinDLL('psapi', use_last_error=True).GetProcessMemoryInfo
+    query.argtypes = (wintypes.HANDLE, ctypes.POINTER(MemoryCounters), wintypes.DWORD)
+    query.restype = wintypes.BOOL
+    failures = 0
+    try:
+        pids = set(job.pids()) | {child.pid}
+    except RuntimeError:
+        pids, failures = {child.pid}, 1
+    processes: list[ProcessSample] = []
+    for pid in sorted(pids):
+        handle = kernel.OpenProcess(0x410, False, pid)
+        if not handle:
+            failures += 1
+            continue
+        try:
+            # A PID returned by enumeration can already have been reused when
+            # OpenProcess runs. Verify this exact handle, not a cached PID edge.
+            if pid != child.pid and not job.contains(handle):
+                failures += 1
+                continue
+            created = job.created(handle)
+            memory = MemoryCounters()
+            memory.cb = ctypes.sizeof(memory)
+            if query(handle, ctypes.byref(memory), memory.cb):
+                processes.append({'pid': pid, 'private_bytes': int(memory.private),
+                    'working_set_bytes': int(memory.working), 'created_filetime': created,
+                    'ownership': 'launch_handle' if pid == child.pid else 'verified_job_member'})
+            else:
+                failures += 1
+        except RuntimeError:
+            failures += 1
+        finally:
+            kernel.CloseHandle(handle)
+    return processes, failures
 
 
 def main() -> int:
@@ -46,75 +93,33 @@ def main() -> int:
         parser.error("max-seconds must be finite and positive")
     root = external(args.output)
     root.mkdir()
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    for name in ("Process32FirstW", "Process32NextW"):
-        function = getattr(kernel, name)
-        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
-        function.restype = wintypes.BOOL
-    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    query = ctypes.WinDLL("psapi", use_last_error=True).GetProcessMemoryInfo
-    query.argtypes = [wintypes.HANDLE, ctypes.POINTER(MemoryCounters), wintypes.DWORD]
-    query.restype = wintypes.BOOL
     started = time.perf_counter()
     peak = 0
     samples = 0
     incomplete = 0
     stop_reason = None
     stop_error = None
-    with (root / "stdout.log").open("wb") as stdout, (root / "stderr.log").open("wb") as stderr:
-        child = subprocess.Popen(command, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+    cleanup_errors: list[str] = []
+    with owned_job(cleanup_errors) as job, (root / "stdout.log").open("wb") as stdout, (root / "stderr.log").open("wb") as stderr:
+        child = job.start(command, stdout, stderr)
         save(root / "manifest.json", {"command": command, "pid": child.pid, "sample_interval_ms": 250,
+             "harness_sha256": {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                                for name in ('monitor.py', 'experiment_job.py')},
              "max_seconds": args.max_seconds, "stop_file": str(root / "STOP"),
-             "scope": "live owned process tree; short-lived children between samples and post-root orphans may be missed; no hard peak guarantee"})
+             'ownership': 'windows_job_v1',
+             "scope": "Kernel job including nested jobs + exact launched wrapper; membership verified on opened handles; wrapper overhead included, short-lived peaks between samples may be missed; no hard peak guarantee"})
         with (root / "resources.jsonl").open("w", encoding="utf-8") as log:
             while child.poll() is None:
                 tick = time.perf_counter()
                 if (root / "STOP").exists() or tick - started >= args.max_seconds:
                     stop_reason = "operator_stop" if (root / "STOP").exists() else "execution_time_budget"
                     try:
-                        stop_owned_tree(child)
+                        job.terminate(child)
                     except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                         stop_error = type(error).__name__
                     break
-                parents: dict[int, int] = {}
-                snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
-                if snapshot == ctypes.c_void_p(-1).value:
-                    incomplete += 1
-                else:
-                    try:
-                        row = ProcessEntry()
-                        row.size = ctypes.sizeof(row)
-                        more = kernel.Process32FirstW(snapshot, ctypes.byref(row))
-                        while more:
-                            parents[int(row.pid)] = int(row.parent)
-                            more = kernel.Process32NextW(snapshot, ctypes.byref(row))
-                    finally:
-                        kernel.CloseHandle(snapshot)
-                owned = {child.pid}
-                while True:
-                    found = {pid for pid, parent in parents.items() if parent in owned}
-                    if found <= owned:
-                        break
-                    owned |= found
-                processes = []
-                for pid in sorted(owned):
-                    handle = kernel.OpenProcess(0x410, False, pid)
-                    if not handle:
-                        incomplete += 1
-                        continue
-                    try:
-                        memory = MemoryCounters()
-                        memory.cb = ctypes.sizeof(memory)
-                        if query(handle, ctypes.byref(memory), memory.cb):
-                            processes.append({"pid": pid, "private_bytes": int(memory.private), "working_set_bytes": int(memory.working)})
-                        else:
-                            incomplete += 1
-                    finally:
-                        kernel.CloseHandle(handle)
+                processes, failures = sample_job(job, child)
+                incomplete += failures
                 total = sum(row["private_bytes"] for row in processes)
                 peak = max(peak, total)
                 samples += 1
@@ -123,11 +128,18 @@ def main() -> int:
                 log.flush()
                 time.sleep(max(0, .25 - (time.perf_counter() - tick)))
         code = child.poll() if stop_reason else child.wait()
+    if code is None:
+        try:
+            code = child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            cleanup_errors.append('TimeoutExpired')
     save(root / "report.json", {"returncode": code, "elapsed_seconds": time.perf_counter() - started,
          "stop_reason": stop_reason, "stop_error": stop_error, "root_exited": code is not None,
+         "cleanup_errors": cleanup_errors,
          "max_seconds": args.max_seconds,
+         'ownership': 'windows_job_v1',
          "samples": samples, "query_failures": incomplete, "peak_observed_tree_private_bytes": peak})
-    if stop_reason:
+    if stop_reason or cleanup_errors:
         return 2
     assert code is not None
     return code

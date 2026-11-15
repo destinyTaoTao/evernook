@@ -40,6 +40,14 @@ Core0.1.7的可选`configure_lexical_acceleration(access, enabled=bool)`须maint
 - 保留 Unicode code point、不做归一化；严格 UTF-8，单条文本最大 1 MiB UTF-8 字节。显式保存源时间未知和 `partial/complete/canceled/failed`。不补造完整流、不自动拼接重试。
 - `MemoryFailure.code` 是不含输入内容的固定错误码：如 `unauthorized`、`incompatible_contract`、`unauthorized_source`、`source_conflict`、`invalid_encoding`、`storage_busy`、`storage_full`、`storage_unavailable`。未知异常不能视为保存成功；中断后用原来源/内容重试确认。
 
+## 显式批量历史导入（2026-11-15）
+
+`submit_many(access, events: tuple[Event, ...], *, cancel=None)` 仅增加 Python 本地入口，单条 `submit`、流式发布与 MCP 工具权限不变。每批 1–100 条、正文 UTF-8 总量至多 4 MiB；各条继续做原有来源、编码、敏感分流及 HMAC 幂等校验，保留各自回执。普通库中的敏感条目仍只有投影，不能据此声称已保存加密原件。
+
+一批新证据、jobs 与成功审计在同一 `WAL / synchronous=FULL` 事务提交，提交后才返回回执元组。同源重试返回原回执；批内冲突、已删除来源、存储失败、提交前取消或提交前权限撤销回滚本批新增内容。提交已经完成才到达的取消返回已提交回执，不把已落盘结果报成“取消成功”。锁竞争只在写事务开始前按既有 busy_timeout 有界等待；失败后可按相同来源与内容重试核对。
+
+这是显式导入能力，不能用于提前发布批内尚未提交的实时流片段。性能探针以 `--batch-size 100` 另存批次耗时，不能冒充默认逐条 `submit` 的延迟。
+
 ## 敏感路径与未启用能力
 
 显式 `sensitive`、`protected_source` 或 v1 凭证信号（中英文密码/令牌/密钥赋值、Bearer、私钥头、若干 token 前缀、URL 用户密码）触发**整条文本**替换为 `[PROTECTED:ORIGINAL_NOT_SAVED]`，不尝试保留周围上下文。回执为 `projection_only / projection / original_saved=false`，安全投影也可靠提交后才确认。来源身份使用非敏感、不含业务原文的稳定标识；已知凭证信号出现在标识中会拒绝为 `sensitive_metadata`。

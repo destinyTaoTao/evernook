@@ -9,7 +9,6 @@ import io
 from itertools import islice
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 import threading
 import time
@@ -22,15 +21,15 @@ from nacl.exceptions import BadSignatureError, CryptoError
 from .backup import _decrypt, _hex, _json_bytes, _unlock
 from .missing_vault import _receipt, read_state
 from .models import Access, MemoryFailure
-from .paths import external, provision_private_directory, verify_private_directory
+from .paths import external, verify_private_directory
 from .protected import ProtectedInbox
-from .runtime import MemoryRuntime, _atomic_bytes, _atomic_json, _json
+from .runtime import MemoryRuntime, _json
 from .vault_migration import _authorize_admin
 from .vault_multi_backup import _link_digest
 from .vault_multi_verify import _inspect
 from .vault_restore import _stopped_service
 from .vault_stage_publication import publish_guard
-from .vault_workspace import workspace
+from .vault_workspace import secure_workspace
 
 
 @dataclass(frozen=True)
@@ -139,122 +138,145 @@ def restore_stage(config: Path, access: Access, source: Path, destination: Path,
                         or len({item['key_id'] for item in members}) != count
                         or binding['primary'] not in {item['inbox_id'] for item in members}):
                     raise MemoryFailure('invalid_backup')
-                with workspace(runtime, destination.parent, 'multi', core=core) as temporary:
-                    vaults, clone = temporary / 'vaults', temporary / 'ledger'
-                    provision_private_directory(vaults)
-                    provision_private_directory(clone)
-                    for member in members:
-                        slot = member['slot']
-                        slot_dir = vaults / slot
-                        provision_private_directory(slot_dir)
-                        inbox_dir, key_dir = slot_dir / 'inbox', slot_dir / 'keys'
-                        provision_private_directory(inbox_dir)
-                        provision_private_directory(key_dir)
-                        for name, target in (('inbox', inbox_dir / 'inbox.sqlite3'), ('receiving', key_dir / 'receiving.json'),
-                                             ('writer', key_dir / 'writer.key'), ('recovery', key_dir / 'recovery.json')):
-                            with target.open('xb') as output:
-                                decrypt(f'{slot}-{name}', output)
-                                output.flush()
-                                os.fsync(output.fileno())
-                    with closing(sqlite3.connect((root / 'memory.sqlite3').as_uri() + '?mode=ro', uri=True)) as source_db:
-                        with closing(sqlite3.connect(clone / 'memory.sqlite3')) as copied:
-                            source_db.backup(copied, pages=256, progress=lambda *_: check(), sleep=.05)
-                            copied.execute('DROP TABLE IF EXISTS restored_missing_vault_v1')
-                            copied.execute('DROP TABLE IF EXISTS restored_vault_attachment_v1')
-                            copied.commit()
-                    _atomic_json(clone / 'runtime.json', {'schema_version': 1, 'data_dir': str(clone), 'busy_timeout_ms': 5000})
-                    shutil.copyfile(root / 'client.json', clone / 'client.json')
-                    _atomic_bytes(clone / 'idempotency.key', runtime._fingerprint_key)
-                    isolated = MemoryRuntime(clone / 'runtime.json')
-                    declared = []
-                    projection_digests: dict[str, str] = {}
-                    for member in members:
-                        inbox_file = vaults / member['slot'] / 'inbox' / 'inbox.sqlite3'
-                        with closing(sqlite3.connect(inbox_file.as_uri() + '?mode=ro', uri=True)) as integrity:
-                            integrity.set_progress_handler(lambda: int(time.monotonic() >= deadline
-                                or (cancel is not None and cancel.is_set())), 1000)
-                            try:
-                                if integrity.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-                                    raise MemoryFailure('vault_restore_integrity_failed')
-                            except sqlite3.OperationalError:
-                                check()
-                                raise
-                        inbox = ProtectedInbox(isolated, vaults / member['slot'] / 'inbox', vaults / member['slot'] / 'keys')
-                        if inbox.inbox_id != member['inbox_id'] or inbox.public['key_id'] != member['key_id']:
-                            raise MemoryFailure('vault_backup_ledger_mismatch')
-                        password = password_for_inbox(member['slot'], member['inbox_id'])
-                        declared.append((inbox, password))
-                    def verify(snapshot: dict[str, Any], copied_core: sqlite3.Connection, stores: list[Any]) -> None:
-                        if snapshot['ledger_id'] != binding['ledger_id']:
-                            raise MemoryFailure('vault_backup_ledger_mismatch')
-                        for inbox, _private, store, _material in stores:
-                            member = next(item for item in members if item['inbox_id'] == inbox.inbox_id)
-                            summary = next(item for item in snapshot['inboxes'] if item['inbox_id'] == inbox.inbox_id)
-                            if (summary['objects'] != member['objects']
-                                    or not hmac.compare_digest(_link_digest(copied_core, store, check), member['link_digest'])):
+                with secure_workspace(runtime, destination.parent, 'multi', core=core) as temporary:
+                    vaults = temporary.mkdir('vaults')
+                    clone_dir = temporary.mkdir('ledger')
+                    clone = clone_dir.path
+                    held: list[Any] = []
+                    try:
+                        slot_paths: dict[str, tuple[Path, Path]] = {}
+                        for member in members:
+                            slot = member['slot']
+                            slot_dir = vaults.mkdir(slot)
+                            inbox_dir, key_dir = slot_dir.mkdir('inbox'), slot_dir.mkdir('keys')
+                            slot_paths[slot] = (inbox_dir.path, key_dir.path)
+                            for name, holder, filename in (('inbox', inbox_dir, 'inbox.sqlite3'),
+                                                           ('receiving', key_dir, 'receiving.json'),
+                                                           ('writer', key_dir, 'writer.key'),
+                                                           ('recovery', key_dir, 'recovery.json')):
+                                output = holder.create_file(filename, write_share=name == 'inbox')
+                                held.append(output)
+                                decrypt(f'{slot}-{name}', output.stream)
+                                output.stream.flush()
+                                os.fsync(output.stream.fileno())
+                        ledger_file = clone_dir.create_file('memory.sqlite3', write_share=True)
+                        held.append(ledger_file)
+                        with closing(sqlite3.connect((root / 'memory.sqlite3').as_uri() + '?mode=ro', uri=True)) as source_db:
+                            with closing(sqlite3.connect(clone / 'memory.sqlite3')) as copied:
+                                source_db.backup(copied, pages=256, progress=lambda *_: check(), sleep=.05)
+                                copied.execute('DROP TABLE IF EXISTS restored_missing_vault_v1')
+                                copied.execute('DROP TABLE IF EXISTS restored_vault_attachment_v1')
+                                copied.commit()
+                        for filename, payload in (('runtime.json', _json({'schema_version': 1, 'data_dir': str(clone),
+                                                                          'busy_timeout_ms': 5000}).encode()),
+                                                  ('client.json', (root / 'client.json').read_bytes()),
+                                                  ('idempotency.key', runtime._fingerprint_key)):
+                            side = clone_dir.create_file(filename)
+                            held.append(side)
+                            side.stream.write(payload)
+                            side.stream.flush()
+                            os.fsync(side.stream.fileno())
+                        isolated = MemoryRuntime(clone / 'runtime.json')
+                        declared = []
+                        projection_digests: dict[str, str] = {}
+                        for member in members:
+                            inbox_file = slot_paths[member['slot']][0] / 'inbox.sqlite3'
+                            with closing(sqlite3.connect(inbox_file.as_uri() + '?mode=ro', uri=True)) as integrity:
+                                integrity.set_progress_handler(lambda: int(time.monotonic() >= deadline
+                                    or (cancel is not None and cancel.is_set())), 1000)
+                                try:
+                                    if integrity.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
+                                        raise MemoryFailure('vault_restore_integrity_failed')
+                                except sqlite3.OperationalError:
+                                    check()
+                                    raise
+                            inbox_root, key_root = slot_paths[member['slot']]
+                            inbox = ProtectedInbox(isolated, inbox_root, key_root)
+                            if inbox.inbox_id != member['inbox_id'] or inbox.public['key_id'] != member['key_id']:
                                 raise MemoryFailure('vault_backup_ledger_mismatch')
-                            digest = hashlib.sha256()
-                            for row in store.execute('SELECT id,source FROM objects ORDER BY id'):
-                                check()
-                                saved = copied_core.execute('SELECT event FROM messages WHERE source=?', (row['source'],)).fetchone()
-                                if saved is None:
+                            password = password_for_inbox(member['slot'], member['inbox_id'])
+                            declared.append((inbox, password))
+                        def verify(snapshot: dict[str, Any], copied_core: sqlite3.Connection, stores: list[Any]) -> None:
+                            if snapshot['ledger_id'] != binding['ledger_id']:
+                                raise MemoryFailure('vault_backup_ledger_mismatch')
+                            for inbox, _private, store, _material in stores:
+                                member = next(item for item in members if item['inbox_id'] == inbox.inbox_id)
+                                summary = next(item for item in snapshot['inboxes'] if item['inbox_id'] == inbox.inbox_id)
+                                if (summary['objects'] != member['objects']
+                                        or not hmac.compare_digest(_link_digest(copied_core, store, check), member['link_digest'])):
                                     raise MemoryFailure('vault_backup_ledger_mismatch')
-                                digest.update((_json([row['id'], saved['event']]) + '\n').encode())
-                            projection_digests[inbox.inbox_id] = digest.hexdigest()
-                    _inspect(isolated, access, tuple(declared), decrypt=True, require_complete=True,
-                             require_readable=False, locked_stores=verify, deadline_limit=deadline,
-                             check_extra=check, cancel=cancel)
-                    stage_content = {'version': 2, 'backup_id': backup_id, 'receipt_auth': _receipt(runtime),
-                                     'binding': binding, 'projection_digests': projection_digests}
-                    authentication = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-stage-v1\0'
-                                                 + _json(stage_content).encode(), hashlib.sha256).hex()
-                    proof_bytes = _json({'content': stage_content, 'authentication': authentication}).encode()
-                    bundle = clone / 'stage.bundle'
-                    with bundle.open('xb') as output:
-                        with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
-                            archive.writestr('backup.json', header_raw)
-                            archive.writestr('stage-proof.json', proof_bytes)
-                            for name in sorted(expected):
-                                check()
                                 digest = hashlib.sha256()
-                                with (source / (name + '.enc')).open('rb') as encrypted_source, archive.open(name + '.enc', 'w', force_zip64=True) as target:
-                                    while True:
-                                        check()
-                                        chunk = encrypted_source.read(1024 * 1024)
-                                        if not chunk:
-                                            break
-                                        digest.update(chunk)
-                                        target.write(chunk)
-                                if not hmac.compare_digest(digest.hexdigest(), files[name]['sha256']):
-                                    raise MemoryFailure('backup_integrity_mismatch')
-                        output.flush()
-                        os.fsync(output.fileno())
-                        bundle_identity = os.fstat(output.fileno())
-                    _authorize_admin(runtime, access)
-                    check()
-                    with publish_guard(bundle, bundle_identity, destination.parent, destination_parent_identity, check) as (locked_stream, publish):
-                        with zipfile.ZipFile(locked_stream, 'r') as archive:
-                            names_in_bundle = archive.namelist()
-                            if (len(names_in_bundle) != len(names) + 1 or set(names_in_bundle) != names | {'stage-proof.json'}
-                                    or any(item.compress_type != zipfile.ZIP_STORED for item in archive.infolist())
-                                    or archive.getinfo('backup.json').file_size != len(header_raw)
-                                    or archive.getinfo('stage-proof.json').file_size != len(proof_bytes)
-                                    or archive.read('backup.json') != header_raw or archive.read('stage-proof.json') != proof_bytes):
-                                raise MemoryFailure('vault_stage_changed')
-                            for name in sorted(expected):
-                                digest = hashlib.sha256()
-                                with archive.open(name + '.enc') as bundled_source:
-                                    while True:
-                                        check()
-                                        chunk = bundled_source.read(1024 * 1024)
-                                        if not chunk:
-                                            break
-                                        digest.update(chunk)
-                                if not hmac.compare_digest(digest.hexdigest(), files[name]['sha256']):
-                                    raise MemoryFailure('vault_stage_changed')
+                                for row in store.execute('SELECT id,source FROM objects ORDER BY id'):
+                                    check()
+                                    saved = copied_core.execute('SELECT event FROM messages WHERE source=?', (row['source'],)).fetchone()
+                                    if saved is None:
+                                        raise MemoryFailure('vault_backup_ledger_mismatch')
+                                    digest.update((_json([row['id'], saved['event']]) + '\n').encode())
+                                projection_digests[inbox.inbox_id] = digest.hexdigest()
+                        _inspect(isolated, access, tuple(declared), decrypt=True, require_complete=True,
+                                 require_readable=False, locked_stores=verify, deadline_limit=deadline,
+                                 check_extra=check, cancel=cancel)
+                        for output in held:
+                            output.release()
+                        stage_content = {'version': 2, 'backup_id': backup_id, 'receipt_auth': _receipt(runtime),
+                                         'binding': binding, 'projection_digests': projection_digests}
+                        authentication = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-stage-v1\0'
+                                                     + _json(stage_content).encode(), hashlib.sha256).hex()
+                        proof_bytes = _json({'content': stage_content, 'authentication': authentication}).encode()
+                        bundle = clone / 'stage.bundle'
+                        staged = clone_dir.create_file('stage.bundle')
+                        try:
+                            with zipfile.ZipFile(staged.stream, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+                                archive.writestr('backup.json', header_raw)
+                                archive.writestr('stage-proof.json', proof_bytes)
+                                for name in sorted(expected):
+                                    check()
+                                    digest = hashlib.sha256()
+                                    with (source / (name + '.enc')).open('rb') as encrypted_source, archive.open(name + '.enc', 'w', force_zip64=True) as target:
+                                        while True:
+                                            check()
+                                            chunk = encrypted_source.read(1024 * 1024)
+                                            if not chunk:
+                                                break
+                                            digest.update(chunk)
+                                            target.write(chunk)
+                                    if not hmac.compare_digest(digest.hexdigest(), files[name]['sha256']):
+                                        raise MemoryFailure('backup_integrity_mismatch')
+                            staged.stream.flush()
+                            os.fsync(staged.stream.fileno())
+                            bundle_identity = os.fstat(staged.stream.fileno())
+                        finally:
+                            # Ciphertext only: the fenced publication re-verifies
+                            # every bundled byte against the signed manifest.
+                            staged.release()
                         _authorize_admin(runtime, access)
-                        publication_started = True
-                        publish(destination)
+                        check()
+                        with publish_guard(bundle, bundle_identity, destination.parent, destination_parent_identity, check) as (locked_stream, publish):
+                            with zipfile.ZipFile(locked_stream, 'r') as archive:
+                                names_in_bundle = archive.namelist()
+                                if (len(names_in_bundle) != len(names) + 1 or set(names_in_bundle) != names | {'stage-proof.json'}
+                                        or any(item.compress_type != zipfile.ZIP_STORED for item in archive.infolist())
+                                        or archive.getinfo('backup.json').file_size != len(header_raw)
+                                        or archive.getinfo('stage-proof.json').file_size != len(proof_bytes)
+                                        or archive.read('backup.json') != header_raw or archive.read('stage-proof.json') != proof_bytes):
+                                    raise MemoryFailure('vault_stage_changed')
+                                for name in sorted(expected):
+                                    digest = hashlib.sha256()
+                                    with archive.open(name + '.enc') as bundled_source:
+                                        while True:
+                                            check()
+                                            chunk = bundled_source.read(1024 * 1024)
+                                            if not chunk:
+                                                break
+                                            digest.update(chunk)
+                                    if not hmac.compare_digest(digest.hexdigest(), files[name]['sha256']):
+                                        raise MemoryFailure('vault_stage_changed')
+                            _authorize_admin(runtime, access)
+                            publication_started = True
+                            publish(destination)
+                    finally:
+                        for output in held:
+                            output.release()
                 core.execute('COMMIT')
                 return MultiVaultRestoreStage(backup_id, count, sum(item['objects'] for item in members), str(destination))
     except (BadSignatureError, CryptoError):

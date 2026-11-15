@@ -1,4 +1,10 @@
-"""Experimental handle-relative private NTFS creation; not yet used by vault flows."""
+"""Handle-relative, birth-private NTFS creation for managed vault workflows.
+
+Holds prevent object replacement and selected access classes, not every
+same-account mutation. In particular, a directory share mask does not block
+creating files by a child path. Relative FILE_CREATE refuses planted names;
+callers must keep file identities held and validate complete publication.
+"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -67,6 +73,8 @@ class _Native:
         self.kernel.DuplicateHandle.argtypes = (wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
                                                  ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
         self.kernel.DuplicateHandle.restype = wintypes.BOOL
+        self.kernel.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+        self.kernel.SetFileInformationByHandle.restype = wintypes.BOOL
         self.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
             wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.ULONG))
         self.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
@@ -123,7 +131,8 @@ class _Native:
         finally:
             self.kernel.LocalFree(descriptor)
 
-    def relative(self, parent: int, name: str, *, create: bool, directory: bool, descriptor: int | None = None) -> int:
+    def relative(self, parent: int, name: str, *, create: bool, directory: bool, descriptor: int | None = None,
+                 share: int | None = None, access: int | None = None) -> int:
         _name(name)
         encoded = name.encode('utf-16-le')
         buffer = ctypes.create_unicode_buffer(name)
@@ -134,10 +143,15 @@ class _Native:
         io = _IoStatus()
         result = wintypes.HANDLE()
         # Existing ancestors only need traverse/metadata. New objects also need
-        # write permissions and are born with the caller-only descriptor.
-        desired = (0x001700a7 if directory and create else 0x001200a1 if directory
-                   else 0xc0120083)
-        share = 0x3 if directory else 0x1  # Never FILE_SHARE_DELETE; files also deny write sharing.
+        # write permissions and are born with the caller-only descriptor. File
+        # holds never carry DELETE access: Python and SQLite reopen files by
+        # path without FILE_SHARE_DELETE and a DELETE hold would block them.
+        desired = access if access is not None else (0x001700a7 if directory and create else 0x001200a1 if directory
+                                                     else 0xc0120083)
+        # Deny directory data/delete opens and file data writes. Child-path
+        # creation and write-attributes opens are separate Windows semantics.
+        default_share = 0x1 if (directory and create) else (0x3 if directory else 0x1)
+        share = default_share if share is None else share
         # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT and the expected object type.
         options = (0x00200021 if directory else 0x00200060)
         status = self.ntdll.NtCreateFile(ctypes.byref(result), desired, ctypes.byref(attributes), ctypes.byref(io),
@@ -147,6 +161,12 @@ class _Native:
                 self.close(int(result.value))
             raise MemoryFailure('secure_creation_refused')
         return int(result.value)
+
+    def mark_delete(self, handle: int) -> None:
+        """Request delete-on-close for an already held object; never resolve a path."""
+        disposition = ctypes.c_ubyte(1)
+        if not self.kernel.SetFileInformationByHandle(wintypes.HANDLE(handle), 4, ctypes.byref(disposition), 1):
+            raise MemoryFailure('secure_creation_refused')
 
 
 _NATIVE_LOCK = threading.Lock()
@@ -184,52 +204,151 @@ def _descriptor(native: _Native) -> tuple[int, str]:
         raise MemoryFailure('runtime_permissions_unavailable') from None
 
 
+class HeldFile:
+    """File created or opened relative to a held directory, never by redirectable path."""
+    def __init__(self, tree: 'PrivateTree', handle: int, path: Path, write_share: bool):
+        self._tree, self._handle, self.path = tree, handle, path
+        self._write_share = write_share
+        self._stream: BinaryIO | None = None
+        info = tree._native.identity(handle)
+        if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise MemoryFailure('secure_creation_refused')
+        tree._native.verify_acl(handle, tree._expected_acl)
+        fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+        try:
+            self._stream = os.fdopen(fd, 'w+b')
+        except BaseException:
+            os.close(fd)
+            raise
+        tree._files.add(self)
+
+    @property
+    def stream(self) -> BinaryIO:
+        if self._stream is None or self._stream.closed:
+            raise MemoryFailure('secure_creation_closed')
+        return self._stream
+
+    def identity(self) -> os.stat_result:
+        if self._stream is None:
+            raise MemoryFailure('secure_creation_closed')
+        return os.fstat(self._stream.fileno())
+
+    def verify(self) -> None:
+        """Re-check the still-held object; a mutated identity or ACL fails closed."""
+        info = self._tree._native.identity(self._handle)
+        if (not stat.S_ISREG(info.st_mode)
+                or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise MemoryFailure('secure_creation_refused')
+        self._tree._native.verify_acl(self._handle, self._tree._expected_acl)
+
+    def release(self) -> None:
+        """Close the fd and handle; the file stays on disk with its birth ACL."""
+        if self._stream is not None and not self._stream.closed:
+            self._stream.close()
+        self._tree._files.discard(self)
+        self._handle = 0
+
+    def close(self) -> None:
+        self.release()
+
+
 class PrivateDirectory:
     """Directory identity held by its enclosing PrivateTree context."""
-    def __init__(self, tree: PrivateTree, handle: int):
-        self._tree, self._handle = tree, handle
+    def __init__(self, tree: PrivateTree, handle: int, path: Path):
+        self._tree, self._handle, self.path = tree, handle, path
+
+    def identity(self) -> os.stat_result:
+        self._tree._ensure_open()
+        return self._tree._native.identity(self._handle)
+
+    def verify(self) -> None:
+        """Re-verify every object this tree created; see PrivateTree.verify_all."""
+        self._tree.verify_all()
 
     def mkdir(self, name: str) -> PrivateDirectory:
+        """Create a child directory born with the caller-only descriptor.
+
+        Holds deny directory data/delete opens and replacement. Attribute-only
+        junction conversion can still occur while empty; relative creation
+        refuses reparse traversal, and verify_all detects a remaining change.
+        """
         self._tree._ensure_open()
         handle = self._tree._native.relative(self._handle, name, create=True, directory=True,
                                              descriptor=self._tree._security)
-        self._tree._handles.append(handle)
+        child = PrivateDirectory(self._tree, handle, self.path / name)
+        self._tree._created.append(child)
         try:
-            info = self._tree._native.identity(handle)
+            info = child.identity()
             if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
                 raise MemoryFailure('secure_creation_refused')
             self._tree._native.verify_acl(handle, self._tree._expected_acl)
         except BaseException:
-            self._tree._handles.pop()
+            self._tree._created.remove(child)
+            try:
+                self._tree._native.mark_delete(handle)
+            finally:
+                self._tree._native.close(handle)
+            raise
+        return child
+
+    def hold_dir(self, name: str) -> PrivateDirectory:
+        """Re-open an existing child directory relative to the held handle.
+
+        Used to re-attach to objects a previous attempt of the same flow
+        created; identity and the expected private ACL are verified, and the
+        reopened hold denies write/delete opens to others.
+        """
+        self._tree._ensure_open()
+        handle = self._tree._native.relative(self._handle, name, create=False, directory=True, share=0x1)
+        child = PrivateDirectory(self._tree, handle, self.path / name)
+        try:
+            info = child.identity()
+            if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise MemoryFailure('secure_creation_refused')
+            self._tree._native.verify_acl(handle, self._tree._expected_acl)
+        except BaseException:
             self._tree._native.close(handle)
             raise
-        return PrivateDirectory(self._tree, handle)
+        self._tree._created.append(child)
+        return child
+
+    def create_file(self, name: str, *, write_share: bool = False) -> HeldFile:
+        """Create a new file born with the caller-only descriptor and hold it.
+
+        File holds never carry DELETE access (Python and SQLite reopen files
+        by path without FILE_SHARE_DELETE), so removal always goes through the
+        authenticated path-based workspace cleanup. write_share=True keeps the
+        file writable by later same-account readers (SQLite) while still
+        denying delete/replacement through any other open.
+        """
+        self._tree._ensure_open()
+        handle = self._tree._native.relative(self._handle, name, create=True, directory=False,
+                                             descriptor=self._tree._security,
+                                             share=0x3 if write_share else 0x1)
+        try:
+            return HeldFile(self._tree, handle, self.path / name, write_share)
+        except BaseException:
+            self._tree._native.close(handle)
+            raise
+
+    def open_file(self, name: str, *, write_share: bool = False) -> HeldFile:
+        """Open an existing child file relative to the held handle."""
+        self._tree._ensure_open()
+        handle = self._tree._native.relative(self._handle, name, create=False, directory=False,
+                                             share=0x3 if write_share else 0x1)
+        try:
+            return HeldFile(self._tree, handle, self.path / name, write_share)
+        except BaseException:
+            self._tree._native.close(handle)
+            raise
 
     @contextmanager
     def file(self, name: str) -> Iterator[BinaryIO]:
-        self._tree._ensure_open()
-        handle = self._tree._native.relative(self._handle, name, create=True, directory=False,
-                                             descriptor=self._tree._security)
+        held = self.create_file(name)
         try:
-            info = self._tree._native.identity(handle)
-            if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-                raise MemoryFailure('secure_creation_refused')
-            self._tree._native.verify_acl(handle, self._tree._expected_acl)
-            fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
-        except BaseException:
-            self._tree._native.close(handle)
-            raise
-        try:
-            stream = os.fdopen(fd, 'w+b')
-        except BaseException:
-            os.close(fd)
-            raise
-        self._tree._files.add(stream)
-        try:
-            yield stream
+            yield held.stream
         finally:
-            self._tree._files.discard(stream)
-            stream.close()
+            held.release()
 
 
 class PrivateTree:
@@ -238,14 +357,23 @@ class PrivateTree:
             raise MemoryFailure('secure_creation_unsupported')
         if not isinstance(parent, Path) or not parent.is_absolute() or '..' in parent.parts:
             raise MemoryFailure('absolute_runtime_path_required')
+        # The walk input stays raw: resolving here would follow a reparse
+        # point at the final component and silently redirect every operation.
+        raw = parent.lstat()
+        if not stat.S_ISDIR(raw.st_mode) or getattr(raw, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise MemoryFailure('secure_creation_refused')
         try:
-            self._expected = external(parent).stat()
+            # Canonical long path: derived published paths and registration
+            # must match what later path-based flows resolve to.
+            self._canonical = external(parent)
+            self._expected = self._canonical.stat()
         except OSError:
             raise MemoryFailure('secure_creation_refused') from None
         self._parent = parent
         self._native = _shared_native()
         self._handles: list[int] = []
-        self._files: set[BinaryIO] = set()
+        self._created: list[PrivateDirectory] = []
+        self._files: set[HeldFile] = set()
         self._security: int | None = None
         self._expected_acl = ''
         self._closed = False
@@ -257,6 +385,52 @@ class PrivateTree:
         if self._owner != threading.get_ident():
             raise MemoryFailure('secure_creation_wrong_thread')
 
+    def delete_created(self) -> None:
+        """Disposition-delete created directories, children first, then close.
+
+        Uses only held handles, so replacement or redirection cannot move the
+        deletion target; ancestors opened during the anchor walk are untouched.
+        File holds never carry DELETE access, so they are only released and
+        left for the authenticated path-based workspace cleanup; a directory
+        that still contains such files refuses deletion and fails loudly.
+        """
+        self._ensure_open()
+        failure: BaseException | None = None
+        for held in tuple(self._files):
+            try:
+                held.release()
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+        for directory in reversed(self._created):
+            try:
+                self._native.mark_delete(directory._handle)
+                self._native.close(directory._handle)
+                directory._handle = 0
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+        self._created.clear()
+        if failure is not None:
+            raise failure
+
+    def verify_all(self) -> None:
+        """Re-verify every created object through its held handle.
+
+        Detects in-place mutation of a held directory (for example a junction
+        conversion through a write-attributes open) or any ACL drift, so a
+        redirection attempt becomes a detected abort instead of silent damage.
+        """
+        self._ensure_open()
+        for directory in self._created:
+            info = self._native.identity(directory._handle)
+            if (not stat.S_ISDIR(info.st_mode)
+                    or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise MemoryFailure('secure_creation_refused')
+            self._native.verify_acl(directory._handle, self._expected_acl)
+        for held in tuple(self._files):
+            held.verify()
+
     def __enter__(self) -> PrivateDirectory:
         if self._closed or self._handles:
             raise MemoryFailure('secure_creation_closed')
@@ -265,12 +439,14 @@ class PrivateTree:
             anchor = self._parent.anchor
             if self._native.kernel.GetDriveTypeW(anchor) != 3:  # DRIVE_FIXED
                 raise MemoryFailure('secure_creation_unsupported')
-            handle = self._native.kernel.CreateFileW(anchor, 0x001200a1, 0x3, None, 3, 0x02200000, None)
+            # The walk may re-enter directories this process holds with DELETE
+            # access (nested managed trees), so it shares every access class.
+            handle = self._native.kernel.CreateFileW(anchor, 0x001200a1, 0x7, None, 3, 0x02200000, None)
             if handle == wintypes.HANDLE(-1).value:
                 raise MemoryFailure('secure_creation_refused')
             self._handles.append(int(handle))
             for part in self._parent.parts[1:]:
-                handle = self._native.relative(int(handle), part, create=False, directory=True)
+                handle = self._native.relative(int(handle), part, create=False, directory=True, share=0x7)
                 self._handles.append(int(handle))
                 info = self._native.identity(int(handle))
                 if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
@@ -284,7 +460,7 @@ class PrivateTree:
                     or filesystem.value.upper() != 'NTFS'):
                 raise MemoryFailure('secure_creation_unsupported')
             self._security, self._expected_acl = _descriptor(self._native)
-            return PrivateDirectory(self, int(handle))
+            return PrivateDirectory(self, int(handle), self._canonical)
         except BaseException:
             self.close()
             raise
@@ -295,15 +471,18 @@ class PrivateTree:
         if not self._closed:
             failure: BaseException | None = None
             try:
-                for stream in tuple(self._files):
+                for held in tuple(self._files):
                     try:
-                        stream.close()
+                        held.release()
                     except BaseException as error:
                         if failure is None:
                             failure = error
-                    finally:
-                        self._files.discard(stream)
             finally:
+                while self._created:
+                    directory = self._created.pop()
+                    if directory._handle:
+                        self._native.close(directory._handle)
+                        directory._handle = 0
                 while self._handles:
                     self._native.close(self._handles.pop())
                 if self._security is not None:

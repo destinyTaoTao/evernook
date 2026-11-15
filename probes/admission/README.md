@@ -10,6 +10,31 @@ It fixes the models, suite/scoring identity, hardware, quality, latency, resourc
 sample counts and coverage requirements. A failed threshold remains failed.
 The suite uses maintainer-delegated AI review; it is not human-reviewed gold.
 
+## 2026-11-15 bounded maintenance and lifecycle diagnostics
+
+`scale_index.py` accepts explicit `--reuse-embedding --semantic-window 1000`,
+`--lexical-strategy checkpoint --lexical-transaction-size 100` and
+`--full-semantic`. Defaults remain one-shot/16-chunk/one-row/default lexical.
+The original 10016-vector target is only a smoke prerequisite; full eligible
+coverage with zero failed chunks is still required. Reports retain initial
+coverage and mark resumed runs ineligible for a fresh-build budget claim.
+`--max-seconds` is a shorter diagnostic guard, not a policy edit.
+
+`learning.py --full-lifecycle --max-fixture-sources 10004` executes actual
+synthetic restore/purge/large-position protocols; `--previous-core-python`
+requires a real external installed previous Core for processor-transition
+evidence. `--reuse-embedding` is explicit and does not change model admission.
+`learning_native.py` consumes its actual delivered spans for single-turn native
+diagnostics, preserving empty retrieval and original role/time. Model actions
+are never executed and missing dimensions remain missing.
+
+`service_embedding.py --embedding CONFIG --context CONFIG --output NEW_EXTERNAL`
+checks 31 actual service IPC/context calls on three synthetic originals. It
+does not replace an installed user service or substitute for the scale matrix.
+See the dated [scope and results](../../docs/reports/2026-11-15-learning-validation.md),
+[local quality](../../docs/reports/2026-11-15-local-quality.md), and
+[service packaging](../../docs/reports/2026-11-15-service-packaging.md).
+
 ## Quality
 
 From the repository root, run each phase into a **new** external directory:
@@ -86,6 +111,15 @@ then lexical maintenance within one frozen index budget. `stored_vectors` counts
 rows for the configured space, including stale rows. It is not inferred from message counts
 and does not imply complete/current coverage. Partial coverage blocks admission.
 
+An explicit `--batch-size 100` uses the bounded public Python `submit_many` API
+to prepare the same original-event corpus. Default `--batch-size 1` retains the
+serial baseline. Bulk runs identify their operation/batch size and write one
+duration per call to `batch-commit-ms.f64le`; serial per-message latency fields
+stay null. Never divide a batch duration to claim per-message latency. Source
+counts, receipts and vector coverage still need independent reconciliation.
+`scale_receipt.py` can inspect an abruptly stopped writer without its final
+report, but marks that fixture incomplete/ineligible rather than inferring success.
+
 After a writer has stopped, `scale_receipt.py --fixture DIR --embedding-config PROFILE
 --output NEW_EXTERNAL_DIR` reconciles public counts, actual stored-vector status and selected
 exact source roundtrips. An incomplete target exits 2 and cannot authorize a target-size query
@@ -145,16 +179,23 @@ On Windows, wrap a command with:
 .venv\Scripts\python.exe probes/admission/monitor.py --output E:\lab\monitor-01 --max-seconds 900 -- COMMAND ARGUMENTS
 ```
 
-The wrapper samples its owned live process tree every 250 ms, records stdout/stderr, and reports
-the observed aggregate Private Bytes peak. Short-lived children between samples and post-root
-orphans may be missed; this is not a hard peak-memory guarantee. Query failures are explicit.
+The wrapper starts an independent Windows Job before launching the target, queries members
+including nested worker Jobs, and verifies membership on opened handles every 250 ms.
+It records stdout/stderr, creation FILETIME, launch-harness hashes and observed aggregate
+Private Bytes. Controlled wrapper overhead is included. Short-lived peaks between samples
+may be missed; this is not a hard peak-memory guarantee. Query failures are explicit.
+Old PID-parent-chain samples do not establish ownership: PID reuse was actually observed.
+Those archived resource peaks are ownership-unverified and cannot admit a resource gate;
+raw counts, timings and scores remain independently scoped. See the dated
+[erratum and independent reruns](../../docs/reports/2026-11-15-autonomous-validation.md).
 The wrapper does not kill unrelated processes or change the workstation's network/power state.
 Worker-level network blocking does not establish physical OS disconnection or sleep recovery.
 
 The wrapper now defaults to a **900-second overall operator budget**. Create `OUTPUT/STOP`
 to stop earlier. Either control attempts to terminate the owned command tree, writes an explicit
-stop reason and exits 2; termination errors remain in `stop_error` and require cleanup rather
-than implying a stopped tree. Root exit does not prove absence of orphan processes. Partial
+stop reason and exits 2; termination errors remain in `stop_error`, fallback-close errors in
+`cleanup_errors`, and actual wrapper exit is checked. Job close also reclaims owned descendants.
+No PID-tree taskkill is used. Partial
 or missing samples cannot pass admission. Run `scale_query.py` through
 this wrapper: its per-batch timeouts alone do not bound the complete matrix. A deliberately
 long formal campaign must explicitly choose a larger operator budget and record it. The

@@ -16,6 +16,10 @@
 
 ## 模型与维护
 
+2026-11-15 的显式 Python `refresh_window(access, limit=1000, timeout=120, cancel=None)` 最多快照 1000 个缺失 chunk，推理仍每批至多 16 条。每批在推理前复核权限、可召回性、来源版本及片段；提交前再次复核，独立持久化。取消或失败保留已经完成的批次，重试按真实覆盖续跑；不是整个窗口原子。原 `refresh` 默认及上限仍为 16，没有新增持久化表或 MCP 权限。
+
+`LocalMiniLM.session(timeout<=120)` 允许显式有界复用；可信服务的 `ServiceEmbedding` 持有、轮换并关闭会话。每次仍校验全部固定资产摘要与输入/输出，不缓存结果或改变空间。请求 ID、输出大小、取消与 Windows 实际父进程生命周期均受约束；非法超大整数等输出归为 `invalid_embedding` 并关闭当前会话。普通 `LocalMiniLM.embed` 保持一次性行为。复用或数值不变性测试不能授予模型、性能或日用准入。
+
 `SemanticRecall(memory, backend)` 使用独立向量空间。首个实际适配器 `LocalMiniLM` 仅接本机已有 R0 候选：
 
 - `Xenova/paraphrase-multilingual-MiniLM-L12-v2`，revision `2c4055b12046f11709e9df2c122e59ffbdc2f900`，q8，384 维，mean pooling + L2 归一化。

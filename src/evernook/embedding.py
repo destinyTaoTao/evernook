@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+from collections.abc import Callable, Iterator
 import hashlib
 import json
 import math
@@ -9,7 +11,10 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .embedding_session import EmbeddingSession, ManagedEmbedding
 
 from .models import MemoryFailure
 from .paths import external
@@ -54,9 +59,12 @@ class RoleAwareEmbeddingBackend(EmbeddingBackend, Protocol):
 def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
     if not isinstance(values, (list, tuple)) or len(values) != dimensions:
         raise MemoryFailure("invalid_embedding")
-    if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
-        raise MemoryFailure("invalid_embedding")
-    norm = math.hypot(*values)
+    try:
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
+            raise MemoryFailure("invalid_embedding")
+        norm = math.hypot(*values)
+    except OverflowError:
+        raise MemoryFailure('invalid_embedding') from None
     if not math.isfinite(norm) or norm == 0:
         raise MemoryFailure("invalid_embedding")
     return tuple(value / norm for value in values)
@@ -91,6 +99,8 @@ class ServiceEmbedding:
             config = _load(self.path)
             self.identity = _json(config)
             self.backend = _embedding_from_config(config)
+            if type(self.backend) is LocalMiniLM:
+                self.backend._enable_reuse()
         except MemoryFailure as failure:
             # Optional invalid configuration must not block unrelated raw capture.
             self.error = failure.code
@@ -103,6 +113,10 @@ class ServiceEmbedding:
             raise MemoryFailure(self.error)
         assert self.backend is not None
         return self.backend
+
+    def close(self) -> None:
+        if type(self.backend) is LocalMiniLM:
+            self.backend.close()
 
 
 # Hashes from the already prepared, pinned R0 candidate. No weights are distributed.
@@ -127,6 +141,15 @@ class LocalMiniLM:
         self.node = node.resolve()
         self.transformers_dir = transformers_dir.resolve()
         self.model_dir = external(model_dir)
+        self._managed: ManagedEmbedding | None = None
+
+    def _enable_reuse(self) -> None:
+        from .embedding_session import ManagedEmbedding
+        self._managed = ManagedEmbedding(self)
+
+    def close(self) -> None:
+        if self._managed is not None:
+            self._managed.close()
 
     @classmethod
     def from_file(cls, path: Path) -> LocalMiniLM:
@@ -140,13 +163,57 @@ class LocalMiniLM:
             raise MemoryFailure("invalid_embedding_config")
         return cls(node=Path(config["node"]), transformers_dir=Path(config["transformers_dir"]), model_dir=Path(config["model_dir"]))
 
-    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
+    @staticmethod
+    def _validate_request(texts: tuple[str, ...], timeout: float) -> None:
         if (type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120
                 or not isinstance(texts, tuple) or not 1 <= len(texts) <= 16):
             raise MemoryFailure("invalid_embedding_request")
         for text in texts:
             if not isinstance(text, str) or not text or len(text) > 256 or credential_signal(text):
                 raise MemoryFailure("protected_embedding_input")
+
+    def _request(self, texts: tuple[str, ...], check: Callable[[], float], *, request_id: int | None = None) -> bytes:
+        for name, expected in _FILES.items():
+            check()
+            path = (self.model_dir / name).resolve()
+            if not path.is_relative_to(self.model_dir):
+                raise MemoryFailure('embedding_unavailable')
+            with path.open('rb') as source:
+                if hashlib.file_digest(source, 'sha256').hexdigest() != expected:
+                    raise MemoryFailure('embedding_integrity_mismatch')
+        value: dict[str, object] = {'model_dir': str(self.model_dir), 'transformers_dir': str(self.transformers_dir), 'texts': texts}
+        if request_id is not None:
+            value['id'] = request_id
+        return _json(value).encode()
+
+    def _decode(self, output: bytes, count: int, *, request_id: int | None = None) -> tuple[tuple[float, ...] | None, ...]:
+        if len(output) > 1048576:
+            raise MemoryFailure('embedding_unavailable')
+        value = json.loads(output.decode('utf-8', errors='strict'))
+        fields = {'vectors', 'network_attempts'} | ({'id'} if request_id is not None else set())
+        if (not isinstance(value, dict) or set(value) != fields or value['network_attempts'] != 0
+                or (request_id is not None and (type(value['id']) is not int or value['id'] != request_id))):
+            raise MemoryFailure('embedding_unavailable')
+        vectors = value['vectors']
+        if not isinstance(vectors, list) or len(vectors) != count:
+            raise MemoryFailure('invalid_embedding')
+        return tuple(None if vector is None else unit_vector(vector, self.space.dimensions) for vector in vectors)
+
+    @contextmanager
+    def session(self, *, timeout: float = 120) -> Iterator[EmbeddingSession]:
+        from .embedding_session import EmbeddingSession
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
+            raise MemoryFailure('invalid_embedding_request')
+        session = EmbeddingSession(self, timeout)
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def embed(self, texts: tuple[str, ...], *, timeout: float, cancel: threading.Event | None = None) -> tuple[tuple[float, ...] | None, ...]:
+        if self._managed is not None:
+            return self._managed.embed(texts, timeout=timeout, cancel=cancel)
+        self._validate_request(texts, timeout)
         deadline = time.monotonic() + timeout
         process: subprocess.Popen[bytes] | None = None
         def remaining() -> float:
@@ -158,15 +225,7 @@ class LocalMiniLM:
             return value
         try:
             # Check every invocation: modified model files cannot silently share a vector space.
-            for name, expected in _FILES.items():
-                remaining()
-                path = (self.model_dir / name).resolve()
-                if not path.is_relative_to(self.model_dir):
-                    raise MemoryFailure("embedding_unavailable")
-                with path.open("rb") as source:
-                    if hashlib.file_digest(source, "sha256").hexdigest() != expected:
-                        raise MemoryFailure("embedding_integrity_mismatch")
-            payload = _json({"model_dir": str(self.model_dir), "transformers_dir": str(self.transformers_dir), "texts": texts}).encode()
+            payload = self._request(texts, remaining)
             remaining()
             process = subprocess.Popen([str(self.node), str(Path(__file__).with_name("embedding_worker.mjs"))],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -179,13 +238,7 @@ class LocalMiniLM:
                     pending_input = None
             if process.returncode or len(output) > 1024 * 1024:
                 raise MemoryFailure("embedding_unavailable")
-            value = json.loads(output.decode("utf-8", errors="strict"))
-            if not isinstance(value, dict) or set(value) != {"vectors", "network_attempts"} or value["network_attempts"] != 0:
-                raise MemoryFailure("embedding_unavailable")
-            vectors = value["vectors"]
-            if not isinstance(vectors, list) or len(vectors) != len(texts):
-                raise MemoryFailure("invalid_embedding")
-            return tuple(None if vector is None else unit_vector(vector, self.space.dimensions) for vector in vectors)
+            return self._decode(output, len(texts))
         except (OSError, ValueError, TypeError):
             raise MemoryFailure("embedding_unavailable") from None
         finally:
