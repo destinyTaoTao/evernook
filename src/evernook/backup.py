@@ -177,24 +177,40 @@ def _unlock(path: Path, password: bytes) -> tuple[str, PrivateKey, VerifyKey]:
 
 def _encrypt(source: BinaryIO, destination: Path, recipient: PublicKey, aad: bytes, *,
              check: Callable[[], None] | None = None) -> dict[str, object]:
+    with destination.open('xb') as output:
+        return _encrypt_stream(source, output, recipient, aad, check=check)
+
+
+def _encrypt_stream(source: BinaryIO, output: BinaryIO, recipient: PublicKey, aad: bytes, *,
+                    check: Callable[[], None] | None = None) -> dict[str, object]:
+    """Encrypt to an already privately created handle; digest the bytes written."""
+    if check is not None:
+        check()
     key = bindings.crypto_secretstream_xchacha20poly1305_keygen()
     state = bindings.crypto_secretstream_xchacha20poly1305_state()
     header = bindings.crypto_secretstream_xchacha20poly1305_init_push(state, key)
     size = 0
-    with destination.open("xb") as output:
-        while chunk := source.read(_CHUNK):
-            size += len(chunk)
-            encrypted = bindings.crypto_secretstream_xchacha20poly1305_push(state, chunk, aad)
-            output.write(struct.pack(">I", len(encrypted)))
-            output.write(encrypted)
-        final = bindings.crypto_secretstream_xchacha20poly1305_push(state, b"", aad,
-            bindings.crypto_secretstream_xchacha20poly1305_TAG_FINAL)
-        output.write(struct.pack(">I", len(final)))
-        output.write(final)
-        output.flush()
-        os.fsync(output.fileno())
+    digest = hashlib.sha256()
+    def write(data: bytes) -> None:
+        output.write(data)
+        digest.update(data)
+    while chunk := source.read(_CHUNK):
+        if check is not None:
+            check()
+        size += len(chunk)
+        encrypted = bindings.crypto_secretstream_xchacha20poly1305_push(state, chunk, aad)
+        write(struct.pack('>I', len(encrypted)))
+        write(encrypted)
+    final = bindings.crypto_secretstream_xchacha20poly1305_push(state, b'', aad,
+        bindings.crypto_secretstream_xchacha20poly1305_TAG_FINAL)
+    write(struct.pack('>I', len(final)))
+    write(final)
+    output.flush()
+    os.fsync(output.fileno())
+    if check is not None:
+        check()
     return {"stream_header": header.hex(), "wrapped_key": SealedBox(recipient).encrypt(key).hex(),
-            "sha256": _digest(destination, check=check), "plaintext_size": size}
+            "sha256": digest.hexdigest(), "plaintext_size": size}
 
 
 def _decrypt(source: Path, output: BinaryIO, private: PrivateKey, info: dict[str, Any], aad: bytes,

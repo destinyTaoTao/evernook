@@ -1,4 +1,10 @@
-"""Experimental handle-relative private NTFS creation; not yet used by vault flows."""
+"""Handle-relative, birth-private NTFS creation for managed vault workflows.
+
+Holds prevent object replacement and selected access classes, not every
+same-account mutation. In particular, a directory share mask does not block
+creating files by a child path. Relative FILE_CREATE refuses planted names;
+callers must keep file identities held and validate complete publication.
+"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -142,8 +148,8 @@ class _Native:
         # path without FILE_SHARE_DELETE and a DELETE hold would block them.
         desired = access if access is not None else (0x001700a7 if directory and create else 0x001200a1 if directory
                                                      else 0xc0120083)
-        # Managed directories are held without write/delete sharing so no other
-        # open can plant, mutate or replace them; files stay readable.
+        # Deny directory data/delete opens and file data writes. Child-path
+        # creation and write-attributes opens are separate Windows semantics.
         default_share = 0x1 if (directory and create) else (0x3 if directory else 0x1)
         share = default_share if share is None else share
         # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT and the expected object type.
@@ -262,8 +268,9 @@ class PrivateDirectory:
     def mkdir(self, name: str) -> PrivateDirectory:
         """Create a child directory born with the caller-only descriptor.
 
-        Managed children are held without write/delete sharing so no other
-        open can convert, rename or replace them while the tree lives.
+        Holds deny directory data/delete opens and replacement. Attribute-only
+        junction conversion can still occur while empty; relative creation
+        refuses reparse traversal, and verify_all detects a remaining change.
         """
         self._tree._ensure_open()
         handle = self._tree._native.relative(self._handle, name, create=True, directory=True,

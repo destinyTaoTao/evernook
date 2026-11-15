@@ -162,7 +162,7 @@ class SecureNtfsTests(unittest.TestCase):
         if os.environ.get('EVERNOOK_NTFS_RACE_CHILD') != '1':
             environment = dict(os.environ, EVERNOOK_NTFS_RACE_CHILD='1')
             result = subprocess.run([sys.executable, '-m', 'unittest',
-                'test_secure_ntfs.SecureNtfsTests.test_concurrent_write_attempts_cannot_plant_or_replace_managed_child'],
+                'tests.contracts.test_secure_ntfs.SecureNtfsTests.test_concurrent_write_attempts_cannot_plant_or_replace_managed_child'],
                 env=environment, capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
             return

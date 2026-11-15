@@ -14,16 +14,17 @@ import time
 from typing import Any, BinaryIO, Callable, cast
 from uuid import uuid4
 
-from .backup import _encrypt, _writer
+from .backup import _encrypt_stream, _writer
 from .models import Access, MemoryFailure
-from .paths import external, provision_private_directory
+from .paths import external
 from .protected import ProtectedInbox
 from .runtime import MemoryRuntime, _json
 from .vault_backup import _CheckedReader, _validate_recovery_structure
 from .vault_migration import _authorize_admin, _file_bytes, _materials
 from .vault_multi_binding import _content, read
 from .vault_multi_verify import _inspect
-from .vault_workspace import workspace
+from .vault_workspace import secure_workspace
+from .vault_package import publish_package
 
 
 @dataclass(frozen=True)
@@ -89,28 +90,29 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
         members: list[dict[str, Any]] = []
         status = MultiVaultBackupStatus(str(uuid4()), datetime.now(timezone.utc).isoformat(),
                                         len(stores), int(snapshot['objects']))
-        with workspace(runtime, destination.parent, 'multi', core=core) as temporary:
-            vaults, package = temporary / 'vaults', temporary / 'package'
-            provision_private_directory(vaults)
-            provision_private_directory(package)
+        with secure_workspace(runtime, destination.parent, 'multi', core=core) as temporary:
+            vaults, package = temporary.mkdir('vaults'), temporary.mkdir('package')
             files: dict[str, object] = {}
+            expected: dict[str, str] = {}
             def encrypt(name: str, source: BinaryIO) -> None:
                 check()
                 aad = _json({'backup_id': status.backup_id, 'backup_key_id': key_id, 'file': name}).encode()
-                files[name] = _encrypt(cast(BinaryIO, _CheckedReader(source, check)), package / (name + '.enc'), recipient, aad, check=check)
+                with package.file(name + '.enc') as output:
+                    info = _encrypt_stream(cast(BinaryIO, _CheckedReader(source, check)), output, recipient, aad, check=check)
+                files[name] = info
+                expected[name + '.enc'] = str(info['sha256'])
 
             for index, (inbox, _private, store, material) in enumerate(stores):
                 check()
                 slot = f'{index:02d}'
-                slot_dir = vaults / slot
-                provision_private_directory(slot_dir)
-                inbox_dir = slot_dir / 'inbox'
-                provision_private_directory(inbox_dir)
+                slot_dir = vaults.mkdir(slot)
+                inbox_dir = slot_dir.mkdir('inbox')
                 digest = _link_digest(core, store, check)
                 summary = next(item for item in snapshot['inboxes'] if item['inbox_id'] == inbox.inbox_id)
                 members.append({'slot': slot, 'inbox_id': inbox.inbox_id, 'key_id': str(inbox.public['key_id']),
                                 'objects': summary['objects'], 'link_digest': digest})
-                snapshot_file = inbox_dir / 'inbox.sqlite3'
+                snapshot_hold = inbox_dir.create_file('inbox.sqlite3', write_share=True)
+                snapshot_file = snapshot_hold.path
                 if (inbox.root / 'inbox.sqlite3').stat().st_size > 1073741824:
                     raise MemoryFailure('vault_backup_too_large')
                 with closing(sqlite3.connect((inbox.root / 'inbox.sqlite3').as_uri() + '?mode=ro', uri=True)) as source:
@@ -133,8 +135,8 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
                     if name == 'recovery':
                         _validate_recovery_structure(raw)
                     encrypt(f'{slot}-{name}', io.BytesIO(raw))
-                with snapshot_file.open('rb') as source_file:
-                    encrypt(f'{slot}-inbox', source_file)
+                snapshot_hold.stream.seek(0)
+                encrypt(f'{slot}-inbox', snapshot_hold.stream)
                 if _materials(inbox) != material:
                     raise MemoryFailure('protected_migration_material_changed')
             binding = {'ledger_id': snapshot['ledger_id'], 'primary': primary.inbox_id,
@@ -147,8 +149,9 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
             content = {'format': 'evernook-protected-multi-backup', 'version': 1, 'backup_key_id': key_id,
                        'status': {'backup_id': status.backup_id}, 'files': files}
             header = {'content': content, 'signature': signer.sign(_json(content).encode()).signature.hex()}
-            with (package / 'backup.json').open('xb') as output:
-                output.write(_json(header).encode())
+            header_bytes = _json(header).encode()
+            with package.file('backup.json') as output:
+                output.write(header_bytes)
                 output.flush()
                 os.fsync(output.fileno())
             _authorize_admin(runtime, access)
@@ -156,7 +159,8 @@ def create_multi_backup(runtime: MemoryRuntime, primary: ProtectedInbox,
             if any(_materials(inbox) != material for inbox, _private, _store, material in stores):
                 raise MemoryFailure('protected_migration_material_changed')
             publication_started = True
-            os.rename(package, destination)
+            expected['backup.json'] = hashlib.sha256(header_bytes).hexdigest()
+            publish_package(package, destination, expected, check)
         result = status
 
     try:

@@ -157,12 +157,12 @@ class VaultBackupTests(unittest.TestCase):
         import evernook.vault_backup as module
         self.inbox.submit(self.owner, self.event)
         canceled = threading.Event()
-        original = getattr(module, '_encrypt')
+        original = getattr(module, '_encrypt_stream')
         def interrupted(*args: object, **kwargs: object) -> object:
             result = original(*args, **kwargs)
             canceled.set()
             return result
-        with patch.object(module, '_encrypt', side_effect=interrupted):
+        with patch.object(module, '_encrypt_stream', side_effect=interrupted):
             with self.assertRaisesRegex(MemoryFailure, 'vault_backup_canceled'):
                 create_vault_backup(self.runtime, self.inbox, self.owner, self.root / 'canceled', self.root / 'backup-keys', cancel=canceled)
         self.assertFalse((self.root / 'canceled').exists())
@@ -173,7 +173,7 @@ class VaultBackupTests(unittest.TestCase):
         import evernook.vault_backup as module
         self.inbox.submit(self.owner, self.event)
         entered, release = threading.Event(), threading.Event()
-        original = getattr(module, '_encrypt')
+        original = getattr(module, '_encrypt_stream')
         def blocked(*args: object, **kwargs: object) -> object:
             entered.set()
             if not release.wait(30):
@@ -182,7 +182,7 @@ class VaultBackupTests(unittest.TestCase):
         later = replace(self.event, source=replace(self.event.source, event='two'), text='synthetic-later-secret-213')
         with ThreadPoolExecutor(max_workers=2) as pool:
             try:
-                with patch.object(module, '_encrypt', side_effect=blocked):
+                with patch.object(module, '_encrypt_stream', side_effect=blocked):
                     backup = pool.submit(create_vault_backup, self.runtime, self.inbox, self.owner,
                                          self.root / 'concurrent', self.root / 'backup-keys')
                     self.assertTrue(entered.wait(30))

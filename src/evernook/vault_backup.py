@@ -5,10 +5,10 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import io
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
-import tempfile
 import threading
 import time
 from typing import BinaryIO, Callable, cast
@@ -17,13 +17,15 @@ from uuid import uuid4
 from nacl import pwhash
 from nacl.secret import SecretBox
 
-from .backup import _encrypt, _writer
+from .backup import _encrypt_stream, _writer
 from .models import Access, MemoryFailure
-from .paths import external, provision_private_directory
+from .paths import external
 from .protected import ProtectedInbox
 from .runtime import MemoryRuntime, _json
 from .vault_migration import _authorize_admin, _file_bytes, _materials, _snapshot
 from .vault_crypto import _json_object
+from .vault_workspace import secure_workspace
+from .vault_package import publish_package
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ def create_vault_backup(runtime: MemoryRuntime, inbox: ProtectedInbox, access: A
         raise MemoryFailure('backup_destination_exists')
     key_id, recipient, signer = _writer(backup_keys)
     deadline = time.monotonic() + timeout
+    publication_started = False
     def check() -> None:
         if cancel is not None and cancel.is_set():
             raise MemoryFailure('vault_backup_canceled')
@@ -102,12 +105,11 @@ def create_vault_backup(runtime: MemoryRuntime, inbox: ProtectedInbox, access: A
                                      require_readable_entries=False, cancel=cancel, include_link_digest=True)
                 if snapshot['material'] != material_before:
                     raise MemoryFailure('protected_migration_material_changed')
-                with tempfile.TemporaryDirectory(prefix='.evernook-vault-backup-', dir=destination.parent) as temporary:
-                    work = Path(temporary) / 'work'
-                    staging = Path(temporary) / 'package'
-                    provision_private_directory(work)
-                    provision_private_directory(staging)
-                    snapshot_file = work / 'inbox.sqlite3'
+                with secure_workspace(runtime, destination.parent, 'multi', core=core) as temporary:
+                    vaults, staging = temporary.mkdir('vaults'), temporary.mkdir('package')
+                    work = vaults.mkdir('00').mkdir('inbox')
+                    snapshot_hold = work.create_file('inbox.sqlite3', write_share=True)
+                    snapshot_file = snapshot_hold.path
                     def progress(_status: int, _remaining: int, _total: int) -> None:
                         check()
                     with closing(sqlite3.connect((inbox.root / 'inbox.sqlite3').as_uri() + '?mode=ro', uri=True)) as source:
@@ -136,13 +138,20 @@ def create_vault_backup(runtime: MemoryRuntime, inbox: ProtectedInbox, access: A
                               'recovery': _file_bytes(inbox.key_root / 'recovery.json', 65536)}
                     _validate_recovery_structure(values['recovery'])
                     files: dict[str, object] = {}
+                    expected: dict[str, str] = {}
                     for name, raw in values.items():
                         check()
                         aad = _json({'backup_id': status.backup_id, 'backup_key_id': key_id, 'file': name}).encode()
-                        files[name] = _encrypt(cast(BinaryIO, _CheckedReader(io.BytesIO(raw), check)), staging / (name + '.enc'), recipient, aad)
+                        with staging.file(name + '.enc') as output:
+                            info = _encrypt_stream(cast(BinaryIO, _CheckedReader(io.BytesIO(raw), check)), output, recipient, aad, check=check)
+                        files[name] = info
+                        expected[name + '.enc'] = str(info['sha256'])
                     aad = _json({'backup_id': status.backup_id, 'backup_key_id': key_id, 'file': 'inbox'}).encode()
-                    with snapshot_file.open('rb') as source_file:
-                        files['inbox'] = _encrypt(cast(BinaryIO, _CheckedReader(source_file, check)), staging / 'inbox.enc', recipient, aad)
+                    snapshot_hold.stream.seek(0)
+                    with staging.file('inbox.enc') as output:
+                        info = _encrypt_stream(cast(BinaryIO, _CheckedReader(snapshot_hold.stream, check)), output, recipient, aad, check=check)
+                    files['inbox'] = info
+                    expected['inbox.enc'] = str(info['sha256'])
                     check()
                     if _materials(inbox) != material_before:
                         raise MemoryFailure('protected_migration_material_changed')
@@ -153,15 +162,24 @@ def create_vault_backup(runtime: MemoryRuntime, inbox: ProtectedInbox, access: A
                     content = {'format': 'evernook-protected-backup', 'version': 1, 'backup_key_id': key_id,
                                'status': {'backup_id': status.backup_id}, 'files': files}
                     header = {'content': content, 'signature': signer.sign(_json(content).encode()).signature.hex()}
-                    with (staging / 'backup.json').open('xb') as output:
-                        output.write(_json(header).encode())
+                    header_bytes = _json(header).encode()
+                    with staging.file('backup.json') as output:
+                        output.write(header_bytes)
                         output.flush()
                         os.fsync(output.fileno())
                     _authorize_admin(runtime, access)
                     check()
-                    os.rename(staging, destination)
+                    expected['backup.json'] = hashlib.sha256(header_bytes).hexdigest()
+                    publication_started = True
+                    publish_package(staging, destination, expected, check)
                 store.execute('COMMIT')
             core.execute('COMMIT')
         return status
+    except MemoryFailure:
+        if publication_started:
+            raise MemoryFailure('vault_backup_outcome_unknown') from None
+        raise
     except (OSError, sqlite3.Error, ValueError, TypeError):
+        if publication_started:
+            raise MemoryFailure('vault_backup_outcome_unknown') from None
         raise MemoryFailure('vault_backup_failed') from None

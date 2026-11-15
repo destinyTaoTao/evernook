@@ -18,7 +18,10 @@ from evernook.backup import _decrypt, _hex, _unlock, initialize_backup_keys
 from evernook.protected import ProtectedInbox
 from evernook.runtime import _json
 from evernook.vault_multi_backup import create_multi_backup
-from evernook.backup import _encrypt
+from evernook.backup import _encrypt_stream
+from evernook.vault_package import publish_package
+from evernook.secure_ntfs import PrivateDirectory
+from typing import Callable
 from evernook.vault_migration import _materials
 from evernook.vault_workspace import cleanup_workspaces, list_workspaces
 from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
@@ -87,8 +90,8 @@ class MultiVaultBackupTests(MultiVaultServiceTests):
         canceled = threading.Event()
         def interrupt(*args: object, **kwargs: object) -> object:
             canceled.set()
-            return _encrypt(*args, **kwargs)  # type: ignore[arg-type]
-        with patch('evernook.vault_multi_backup._encrypt', side_effect=interrupt):
+            return _encrypt_stream(*args, **kwargs)  # type: ignore[arg-type]
+        with patch('evernook.vault_multi_backup._encrypt_stream', side_effect=interrupt):
             with self.assertRaisesRegex(MemoryFailure, 'vault_backup_canceled'):
                 create_multi_backup(runtime, primary, (primary, history), self.owner,
                                     self.root / 'canceled', self.root / 'backup-keys', cancel=canceled)
@@ -103,9 +106,9 @@ class MultiVaultBackupTests(MultiVaultServiceTests):
             entered.set()
             if not release.wait(20):
                 raise RuntimeError('synthetic test timeout')
-            return _encrypt(*args, **kwargs)  # type: ignore[arg-type]
+            return _encrypt_stream(*args, **kwargs)  # type: ignore[arg-type]
         event = replace(self.event, source=replace(self.event.source, event='after-backup'))
-        with patch('evernook.vault_multi_backup._encrypt', side_effect=paused), ThreadPoolExecutor(max_workers=2) as pool:
+        with patch('evernook.vault_multi_backup._encrypt_stream', side_effect=paused), ThreadPoolExecutor(max_workers=2) as pool:
             backup = pool.submit(create_multi_backup, runtime, primary, (primary, history), self.owner,
                                  self.root / 'locked-backup', self.root / 'backup-keys')
             try:
@@ -118,16 +121,14 @@ class MultiVaultBackupTests(MultiVaultServiceTests):
             self.assertFalse(backup.result(timeout=60).recovery_tested)
             self.assertEqual(write.result(timeout=30).state, 'protected_pending_link')
 
-    def test_rename_uncertainty_keeps_published_package_and_reports_unknown(self) -> None:
+    def test_publication_uncertainty_keeps_published_package_and_reports_unknown(self) -> None:
         runtime, primary, history = self.offline_inboxes()
         initialize_backup_keys(self.root / 'backup-keys', b'synthetic backup password')
         destination = self.root / 'uncertain'
-        rename = os.rename
-        def publish_then_fail(source: Path, target: Path) -> None:
-            rename(source, target)
-            if Path(target).resolve() == destination.resolve():
-                raise OSError('synthetic failure after publication')
-        with patch('evernook.vault_multi_backup.os.rename', side_effect=publish_then_fail):
+        def publish_then_fail(source: PrivateDirectory, target: Path, expected: dict[str, str], check: Callable[[], None]) -> None:
+            publish_package(source, target, expected, check)
+            raise OSError('synthetic failure after publication')
+        with patch('evernook.vault_multi_backup.publish_package', side_effect=publish_then_fail):
             with self.assertRaisesRegex(MemoryFailure, 'vault_backup_outcome_unknown'):
                 create_multi_backup(runtime, primary, (primary, history), self.owner, destination, self.root / 'backup-keys')
         self.assertTrue((destination / 'backup.json').exists())
