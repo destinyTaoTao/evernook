@@ -180,20 +180,27 @@ class VaultRestoreStageTests(unittest.TestCase):
         with patch('evernook.vault_restore._decrypt', side_effect=cancel_after):
             with self.assertRaisesRegex(MemoryFailure, 'vault_restore_canceled'):
                 self.restore(cancel=canceled)
-        with patch('evernook.vault_restore.os.rename', side_effect=OSError('synthetic publication failure')):
+        self.assertFalse((self.root / 'staged-vault').exists())
+        with patch('evernook.vault_restore._copy_between', side_effect=OSError('synthetic publication failure')):
             with self.assertRaises(MemoryFailure):
                 self.restore()
-        self.assertFalse((self.root / 'staged-vault').exists())
+        # A failed copy publication may leave a partial destination behind;
+        # no complete vault file landed and the encrypted source is intact.
+        self.assertFalse((self.root / 'staged-vault' / 'inbox' / 'inbox.sqlite3').exists())
         self.assertTrue((self.root / 'vault-backup' / 'backup.json').exists())
         self.assertFalse(list(self.root.glob('.evernook-vault-restore-*')))
 
-    def test_failure_after_rename_reports_unknown_outcome(self) -> None:
+    def test_failure_after_publication_reports_unknown_outcome(self) -> None:
         self.prepare_stage()
-        from os import rename
-        def publish_then_fail(source: object, destination: object) -> None:
-            rename(source, destination)  # type: ignore[arg-type]
-            raise OSError('synthetic publication response failure')
-        with patch('evernook.vault_restore.os.rename', side_effect=publish_then_fail):
+        from evernook.vault_restore import _copy_between as real_copy
+        calls = 0
+        def publish_then_fail(source: object, target: object) -> None:
+            nonlocal calls
+            calls += 1
+            real_copy(source, target)  # type: ignore[arg-type]
+            if calls == 4:  # inbox.sqlite3 is the last published file.
+                raise OSError('synthetic publication response failure')
+        with patch('evernook.vault_restore._copy_between', side_effect=publish_then_fail):
             with self.assertRaisesRegex(MemoryFailure, 'vault_restore_outcome_unknown'):
                 self.restore()
         self.assertTrue((self.root / 'staged-vault' / 'inbox' / 'inbox.sqlite3').exists())

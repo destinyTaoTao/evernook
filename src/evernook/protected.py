@@ -19,7 +19,7 @@ from nacl.secret import SecretBox
 from nacl.signing import SigningKey, VerifyKey
 
 from .models import Access, Event, MemoryFailure, Receipt, Source
-from .paths import external, provision_private_directory, verify_private_directory
+from .paths import external, verify_private_directory
 from .runtime import MemoryRuntime, _json, _load, _unique_object
 
 
@@ -133,7 +133,6 @@ def _initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Pa
         raise MemoryFailure("protected_directories_must_be_separate")
     if root.exists() or key_root.exists():
         raise MemoryFailure("protected_directory_exists")
-    provision_private_directory(key_root)
     private, sender = PrivateKey.generate(), SigningKey.generate()
     key_id = hashlib.sha256(b"evernook-protected-v1" + bytes(private.public_key) + bytes(sender.verify_key)).hexdigest()
     public = {"format": "evernook-protected-receiver", "version": 1, "key_id": key_id,
@@ -143,11 +142,27 @@ def _initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Pa
         opslimit=pwhash.argon2id.OPSLIMIT_INTERACTIVE, memlimit=pwhash.argon2id.MEMLIMIT_INTERACTIVE)
     recovery = _json({"format": "evernook-protected-private", "version": 1,
                      "public": public, "private": bytes(private).hex()}).encode()
-    _write(key_root / "receiving.json", _json(public).encode())
-    _write(key_root / "writer.key", bytes(sender))
-    _write(key_root / "recovery.json", _json({"format": "evernook-protected-recovery", "version": 1,
-        "kdf": "argon2id-interactive-v1", "salt": salt.hex(), "ciphertext": SecretBox(derived).encrypt(recovery).hex()}).encode())
-    provision_private_directory(root)
+    recovery_record = _json({"format": "evernook-protected-recovery", "version": 1,
+        "kdf": "argon2id-interactive-v1", "salt": salt.hex(), "ciphertext": SecretBox(derived).encrypt(recovery).hex()}).encode()
+    # Directories and key files are born owner-only through handle-relative
+    # creation; no path-based mkdir/icacls window exists before secrets land.
+    from .secure_ntfs import PrivateTree
+    key_tree = PrivateTree(key_root.parent)
+    with key_tree as anchor:
+        keys = anchor.mkdir(key_root.name)
+        for name, payload in (("receiving.json", _json(public).encode()),
+                              ("writer.key", bytes(sender)),
+                              ("recovery.json", recovery_record)):
+            held = keys.create_file(name)
+            held.stream.write(payload)
+            held.stream.flush()
+            os.fsync(held.stream.fileno())
+            held.release()
+    inbox_tree = PrivateTree(root.parent)
+    with inbox_tree as anchor:
+        inbox_dir = anchor.mkdir(root.name)
+        # SQLite later opens this born-private file through its own handle.
+        inbox_dir.create_file("inbox.sqlite3", write_share=True).release()
     db = sqlite3.connect(root / "inbox.sqlite3", isolation_level=None)
     try:
         db.execute("PRAGMA journal_mode=WAL")
