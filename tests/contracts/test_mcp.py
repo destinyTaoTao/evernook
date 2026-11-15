@@ -19,6 +19,7 @@ from mcp import Client, StdioServerParameters, stdio_client
 
 from evernook import Event, MemoryRuntime, Source, initialize, pair_client
 from contract_assertions import assert_original_roundtrip
+from tests.contracts.fixture_cleanup import cleanup_fixture
 
 
 class MCPTests(unittest.IsolatedAsyncioTestCase):
@@ -49,7 +50,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="evernook-mcp-")
-        self.addCleanup(temporary.cleanup)
+        self.addCleanup(cleanup_fixture, temporary)
         self.config, self.access = initialize(Path(temporary.name) / "data", client_id="synthetic", entry="test")
         self.access_path = self.config.parent / "mcp-access.json"
         self.access_path.write_text(json.dumps(asdict(self.access)), encoding="utf-8")

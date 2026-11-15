@@ -204,7 +204,7 @@ def _access_record(value: dict[str, Any]) -> Access:
     return Access(**value)
 
 
-def _atomic_json(path: Path, value: object) -> None:
+def _atomic_json(path: Path, value: object, *, retry_replace: bool = False) -> None:
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".pair-", delete=False) as output:
@@ -212,7 +212,19 @@ def _atomic_json(path: Path, value: object) -> None:
             output.write(_json(value))
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, path)
+        deadline = time.monotonic() + .5 if retry_replace else 0
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as error:
+                # Windows may return ACCESS_DENIED as well as a sharing error
+                # while a reader still holds the old endpoint open. Retry only
+                # explicit callers, retaining the fsynced staged document.
+                remaining = deadline - time.monotonic()
+                if getattr(error, 'winerror', None) not in (5, 32, 33) or remaining <= 0:
+                    raise
+                time.sleep(min(.01, remaining))
     except OSError:
         raise MemoryFailure("client_provision_failed") from None
     finally:

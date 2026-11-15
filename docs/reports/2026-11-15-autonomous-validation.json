@@ -710,13 +710,145 @@
       "passed": false,
       "reason": "Unchanged test_topic_views mixed test_semantic import; same on origin/main"
     },
-    "wheel": {
+    "external_campaign": "evernook-main-integration-590ad42",
+    "integration_pr": "https://github.com/destinyTaoTao/evernook/pull/245",
+    "review": "Independent narrow review found no confirmed defect; ran added test only.",
+    "tokenizer_fix_wheel": {
       "sha256": "c5d27603ecea54178560b2d13f65d0ac18a049815ae93af0626d8dd0e3ecb5df",
       "members": 101,
       "source_byte_equal": true
     },
-    "external_campaign": "evernook-main-integration-590ad42",
-    "integration_pr": "https://github.com/destinyTaoTao/evernook/pull/245",
-    "review": "Independent narrow review found no confirmed defect; ran added test only."
+    "endpoint_fix": {
+      "enabled_for": "service ENDPOINT only",
+      "default_retry": false,
+      "windows_replace_errors": [
+        5,
+        32,
+        33
+      ],
+      "retry_window_seconds": 0.5,
+      "reuse_fsynced_staging": true,
+      "actual_held_reader_errno": 5,
+      "actual_authenticated_restart_passed": true,
+      "original_failed_window_errno_retained": false
+    },
+    "fixture_cleanup": {
+      "test_only": true,
+      "resolved_temp_fixture_guard": true,
+      "windows_errors": [
+        32,
+        33
+      ],
+      "retry_window_seconds": 1,
+      "persistent_and_nonsharing_errors_still_fail": true,
+      "original_holder_unknown": true,
+      "prior_failed_directories_untouched": true
+    },
+    "failed_verifications_retained": [
+      {
+        "affected_cases": 90,
+        "failures": 1,
+        "reason": "service restart client_provision_failed"
+      },
+      {
+        "affected_cases": 93,
+        "errors": 2,
+        "reason": "fixture cleanup WinError32 memory-service.lock"
+      }
+    ],
+    "affected_final": {
+      "run": 97,
+      "passed": 97,
+      "seconds": 346.374,
+      "source_tests_unchanged_during_run": true
+    },
+    "installed_final": {
+      "run": 15,
+      "passed": 15,
+      "seconds": 10.058,
+      "core_only_noneditable": true
+    },
+    "latest_wheel": {
+      "sha256": "335792225e1ca31f89a9cc035183930059c1c8040dd2e28d8d1b1863f6c59906",
+      "members": 101,
+      "source_byte_equal": true
+    },
+    "full_tree_test_pass_claimed": false,
+    "test_typecheck_limits": [
+      "Unchanged contract_assertions import-untyped",
+      "Unchanged ServiceTests callback Any returns (2)"
+    ],
+    "raw_anchors": [
+      {
+        "artifact": "tokenizer-module-repro.log",
+        "bytes": 3158,
+        "sha256": "7ff449664c06212189f2909c9835e4b34561acbff975649a2c736133f7caab47"
+      },
+      {
+        "artifact": "tokenizer-instrumented.log",
+        "bytes": 3158,
+        "sha256": "fd1e9c6bf9bc96ffb9b9e675a352c21f65759cd46e530a34cf95b874ca2f4b06"
+      },
+      {
+        "artifact": "tokenizer-instrumented.json",
+        "bytes": 7342,
+        "sha256": "878488889a6c14febff66d1a266932435fd31eb46fc88508e07a342df18173e4"
+      },
+      {
+        "artifact": "endpoint-held-reader-repro.json",
+        "bytes": 126,
+        "sha256": "b794a029fcb48b965cff59136d99125e413f40b7c5dc90ab5e46d24ac9f9f253"
+      },
+      {
+        "artifact": "service-held-reader-restart.json",
+        "bytes": 205,
+        "sha256": "a96f8cf2932c237241f59de40cbaa6a78140094a2d4633dee38b331ecb31f5d4"
+      },
+      {
+        "artifact": "service-held-reader-restart.log",
+        "bytes": 155,
+        "sha256": "993d4375806247f08f48338d8c043c8ebc850249455b946764b8d5e90a6c7580"
+      },
+      {
+        "artifact": "postfix-affected.json",
+        "bytes": 11207,
+        "sha256": "2d48d40720c16e432072e47417a408b2a5062339d05b72ab1ba497f2a84ddfb2"
+      },
+      {
+        "artifact": "postfix-affected.log",
+        "bytes": 29096,
+        "sha256": "692bf656f2c6b5093d2d90dc7a1a9b58975e2115004910580cdcf20850e7799e"
+      },
+      {
+        "artifact": "postfix-affected-v2.json",
+        "bytes": 11278,
+        "sha256": "3897f7b593f50f94ebd0a0acdb1638dcaf4ff3abf76de315f8ab342ef71474af"
+      },
+      {
+        "artifact": "postfix-affected-v2.log",
+        "bytes": 32936,
+        "sha256": "a8cd15605c6dec6f83af911e39a6f4f6f7bb1331743be1204ffbb339d26b4118"
+      },
+      {
+        "artifact": "postfix-affected-v3.json",
+        "bytes": 28703,
+        "sha256": "23d8fea98fec420efe37311d14899b0a8b0deae5197c093ab2cad81b306094e0"
+      },
+      {
+        "artifact": "postfix-affected-v3.log",
+        "bytes": 29454,
+        "sha256": "fc0de4539463cd2bd2173b97791ed2a0d82a10225e58f374e7b4442b249d87ed"
+      },
+      {
+        "artifact": "wheel-tokenizer-fix-identity.json",
+        "bytes": 251,
+        "sha256": "6b2ebbff477861884b05eff6c30b70dc8047f664077254229f01cbc5e43535c6"
+      },
+      {
+        "artifact": "wheel-endpoint-fix-identity.json",
+        "bytes": 153,
+        "sha256": "7e668a840f599d237727ae6ee9058a671e83cec27a9ce0c0167d493c8c09eaaf"
+      }
+    ]
   }
 }

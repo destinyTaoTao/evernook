@@ -951,7 +951,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 if not activated:
                     sys.stderr.write('evernook:legacy_shared_mode_not_single_writer\n')
                 _atomic_json(runtime.root / ENDPOINT,
-                    {"version": 1, "port": server.server_address[1], "key": key.hex()})
+                    {"version": 1, "port": server.server_address[1], "key": key.hex()}, retry_replace=True)
                 if server.maintenance:
                     server.maintenance.thread.start()
                 try:

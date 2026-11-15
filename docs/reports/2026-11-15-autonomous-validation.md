@@ -78,7 +78,15 @@ fresh-context 复核发现两项确定缺陷，均补 RED→GREEN：后续语义
 
 scoped count 仍先回收进程/IO，再在此异常分支复核调用方取消标记；已取消返回 `context_canceled`，未取消保持 `tokenizer_unavailable`。新增确定性回归在 Future.result 前触发相同竞态，分别覆盖 Future 取消/管道错误、有/无调用方取消四种组合，并核验实际子进程退出。新增回归先两项 subTest 失败，修复后通过；完整 tokenizer 模块源码 12 项通过（8.601 秒），真实 Core-only wheel 安装版 12 项通过（8.729 秒），独立审查未确认新问题。Core 全部 96 源文件 mypy 及 tokenizer/测试两文件 strict 检查通过。
 
-新 wheel 仍为本地阶段版本 0.1.97，SHA256 `c5d27603ecea54178560b2d13f65d0ac18a049815ae93af0626d8dd0e3ecb5df`，101 个源码成员与修复后源码逐字节相同。旧性能/质量窗口不重写成新 wheel 的测量。全仓 mypy 另被未改动的 test_topic_views/test_semantic 混合模块导入阻断，origin/main 同样存在该导入；不宣告全仓 mypy 通过。原始全量诊断与独立复测日志外置保留，最终长测结果及合入状态见 [PR #245](https://github.com/destinyTaoTao/evernook/pull/245)。本段不将发现失败的诊断运行改写成单次全量通过。
+tokenizer 修复窗口的 wheel 仍为本地阶段版本 0.1.97，SHA256 `c5d27603ecea54178560b2d13f65d0ac18a049815ae93af0626d8dd0e3ecb5df`，101 个源码成员与当时源码逐字节相同。旧性能/质量窗口不重写成新 wheel 的测量。全仓 mypy 另被未改动的 test_topic_views/test_semantic 混合模块导入阻断，origin/main 同样存在该导入；不宣告全仓 mypy 通过。
+
+随后扩大复验 90 项，服务重启出现一次 `client_provision_failed`。真实读者持有旧端点文件时，原子替换可确定性复现 WinError5；旧失败窗口没有保留底层 errno，因此只能认定路径一致，不能追补其原始 errno。现在仅服务 ENDPOINT 发布显式启用约 0.5 秒的 Windows 5/32/33 替换重试，复用原已 fsync 的 staging；其他配置/凭证调用默认仍单次替换，持续拒绝或其他错误仍失败。真实服务重启探针观察到 WinError5、释放前旧端点完整、释放后新端点发布且认证 RPC 成功。新增三项回归覆盖释放、持续占用/清理及其他错误不重试，独立复核通过。
+
+再验 93 项时业务断言通过，但两项临时目录清理因 `memory-service.lock` 的 WinError32 失败。稍后未发现匹配这些唯一合成夹具路径的存活 Python 服务，但原占用者未捕获，不能归因于杀毒软件或据此证明没有泄漏。Service/MCP 测试仅为受验证的 TEMP/evernook-* 夹具清理增加 1 秒内的 32/33 等待，每次重试复核目标路径；永久占用、权限拒绝及工作区路径仍失败，不修改业务断言或清理此前失败目录。新增四项真实句柄/拒绝回归及独立复核通过；生产生命周期未变。
+
+修复后 10 个相关模块联合 **97 项通过（346.374 秒）**，记录全部源码/测试文件摘要并确认运行期间未变。最新非 editable Core-only wheel 的 tokenizer/端点 **15 项通过（10.058 秒）**；Core96文件 mypy、生产端点/测试3文件及新增清理helper/测试2文件 strict通过。对既有 Service/MCP 测试做额外 strict 检查另报 contract_assertions 未标类型及旧 callback Any 返回三项错误，保留未修改原表达式；不宣告所有测试文件类型检查通过。
+
+最新本地 wheel SHA256 `335792225e1ca31f89a9cc035183930059c1c8040dd2e28d8d1b1863f6c59906`，101 个源码成员与本次源码逐字节一致；未替换用户安装。原始全量诊断与各次失败、插桩、独立复测外置保留，最终长测结果及合入状态见 [PR #245](https://github.com/destinyTaoTao/evernook/pull/245)。早期长测启动后才追加修复，不作为最终树单次全量通过；按用户工程约定第6条对受影响链路复验，未机械重跑无关重型保险库全套。
 
 ## 下一步需要确认的结构变更
 

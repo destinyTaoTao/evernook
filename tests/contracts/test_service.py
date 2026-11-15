@@ -16,12 +16,13 @@ from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient, client_access
 from evernook.service_transport import authenticate_client, receive_json, send_json
+from tests.contracts.fixture_cleanup import cleanup_fixture
 
 
 class ServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="evernook-service-")
-        self.addCleanup(self.temporary.cleanup)
+        self.addCleanup(cleanup_fixture, self.temporary)
         self.config, self.access = initialize(Path(self.temporary.name) / "data",
             client_id="synthetic", entry="test")
         self.processes: list[subprocess.Popen[bytes]] = []
