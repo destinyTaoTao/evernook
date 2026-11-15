@@ -18,7 +18,6 @@ from typing import Any
 from .models import MemoryFailure
 from .paths import verify_private_directory
 from .runtime import MemoryRuntime, _atomic_json, _json, _unique_object
-from .vault_migration import _file_bytes
 
 
 BINDING_NAME = 'protected-single-binding.json'
@@ -35,7 +34,14 @@ def read(runtime: MemoryRuntime) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        value: object = json.loads(_file_bytes(path, 65536).decode('utf-8', errors='strict'), object_pairs_hook=_unique_object)
+        # Ordinary service startup verifies the binding marker even when vault
+        # support is not installed. Keep this bounded HMAC/JSON read independent
+        # of the optional migration/crypto implementation.
+        with path.open('rb') as source:
+            raw = source.read(65537)
+        if len(raw) > 65536:
+            raise ValueError()
+        value: object = json.loads(raw.decode('utf-8', errors='strict'), object_pairs_hook=_unique_object)
         if not isinstance(value, dict) or set(value) != {'content', 'authentication'} or not isinstance(value['content'], dict):
             raise ValueError()
         content = value['content']
@@ -50,7 +56,7 @@ def read(runtime: MemoryRuntime) -> dict[str, Any] | None:
                 or not hmac.compare_digest(authentication, _auth(runtime, content))):
             raise ValueError()
         return content
-    except (ValueError, TypeError, KeyError, UnicodeError, MemoryFailure):
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError, MemoryFailure):
         raise MemoryFailure('protected_single_binding_invalid') from None
 
 
