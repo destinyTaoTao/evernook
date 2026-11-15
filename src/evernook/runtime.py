@@ -1520,6 +1520,16 @@ class MemoryRuntime:
     @staticmethod
     def _lexical_pending(db: sqlite3.Connection, limit: int, *, ids_only: bool = False) -> list[sqlite3.Row]:
         # The caller holds one read snapshot across index validation and selection.
+        from .lexical_checkpoint import pending_rows
+        checkpoint_rows = pending_rows(db, limit)
+        if checkpoint_rows is not None:
+            if ids_only:
+                return checkpoint_rows
+            result = []
+            for item in checkpoint_rows:
+                result.extend(db.execute(f'SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}',
+                                         (item[0],)).fetchall())
+            return result
         if MemoryRuntime._lexical_acceleration_valid(db):
             try:
                 selected = f"""SELECT id FROM messages INDEXED BY {_LEXICAL_ACCELERATION_INDEX}
@@ -1558,12 +1568,15 @@ class MemoryRuntime:
             return replace(self.lexical_status(access), state="unavailable")
         return self._lexical_maintenance_status(access)
 
-    def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120) -> LexicalStatus:
+    def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120,
+                               transaction_size: int = 1) -> LexicalStatus:
         self._require_scope(access, "maintain", "refresh_lexical_window")
         if type(limit) is not int or not 1 <= limit <= 5000:
             raise MemoryFailure("invalid_page")
         if type(budget_seconds) not in (int, float) or not 0 < budget_seconds <= 120:
             raise MemoryFailure("invalid_maintenance_budget")
+        if type(transaction_size) is not int or not 1 <= transaction_size <= 100:
+            raise MemoryFailure('invalid_page')
         deadline = time.monotonic() + budget_seconds
         def expired() -> bool:
             return time.monotonic() >= deadline
@@ -1585,13 +1598,73 @@ class MemoryRuntime:
                     selected = ids[offset:offset+100]
                     rows = db.execute(f"SELECT event,receipt FROM messages WHERE id IN ({','.join('?' for _ in selected)}) "
                         f"AND {_RECALLABLE} ORDER BY received,id", selected).fetchall()
-                    if not self._refresh_lexical_rows(db, rows, expired=expired):
+                    complete = True
+                    for begin in range(0, len(rows), 100 if transaction_size == 1 else transaction_size):
+                        group = rows[begin:begin + (100 if transaction_size == 1 else transaction_size)]
+                        complete = (self._refresh_lexical_rows(db, group, expired=expired) if transaction_size == 1
+                                    else self._refresh_lexical_batch(access, db, group, expired=expired))
+                        if not complete:
+                            break
+                    if not complete:
                         break
         except MemoryFailure as error:
             if prepared or error.code != "storage_unavailable":
                 raise
             return replace(self.lexical_status(access), state="unavailable")
         return self._lexical_maintenance_status(access)
+
+    def _refresh_lexical_batch(self, access: Access, db: sqlite3.Connection, rows: list[sqlite3.Row], *,
+                               expired: Callable[[], bool]) -> bool:
+        # Large originals retain a small derivation window, even with an explicit
+        # 100-row transaction maximum. No additional raw data is retained.
+        if len(rows) > 1 and sum(len(row['event']) for row in rows) > 262144:
+            middle = len(rows) // 2
+            return (self._refresh_lexical_batch(access, db, rows[:middle], expired=expired)
+                    and self._refresh_lexical_batch(access, db, rows[middle:], expired=expired))
+        if expired():
+            return False
+        # The scope check appends an audit event on a separate connection.
+        # Sample data_version afterwards so our own audit cannot invalidate the
+        # rowid snapshot and force a full FTS scan for every source.
+        self._require_scope(access, 'maintain', 'refresh_lexical_batch')
+        version = int(db.execute('PRAGMA data_version').fetchone()[0])
+        rowids = self._lexical_rowids(db, rows)
+        prepared = []
+        for row in rows:
+            if expired():
+                return False
+            message = self._stored(row)
+            prepared.append((row, message, index_terms(message.event.text)))
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            if rowids is not None and int(db.execute('PRAGMA data_version').fetchone()[0]) != version:
+                rowids = None
+            for row, message, terms in prepared:
+                if expired():
+                    db.execute('ROLLBACK')
+                    return False
+                message_id = message.receipt.message_id
+                current = db.execute(f'SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}', (message_id,)).fetchone()
+                if current is None or current['event'] != row['event'] or current['receipt'] != row['receipt']:
+                    continue
+                if rowids is None:
+                    db.execute('DELETE FROM lexical WHERE message_id=?', (message_id,))
+                else:
+                    db.executemany('DELETE FROM lexical WHERE rowid=? AND message_id=?',
+                        ((rowid, message_id) for rowid in rowids.get(message_id, ())))
+                db.execute('INSERT INTO lexical VALUES (?,?)', (message_id, terms))
+                db.execute('INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)',
+                    (message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+            if expired():
+                db.execute('ROLLBACK')
+                return False
+            self._require_scope(access, 'maintain', 'refresh_lexical_batch')
+            db.execute('COMMIT')
+        except BaseException:
+            if db.in_transaction:
+                db.execute('ROLLBACK')
+            raise
+        return True
 
     def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None) -> bool:
         # Sample before the lookup, and compare only on this same connection.

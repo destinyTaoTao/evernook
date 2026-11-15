@@ -4,7 +4,6 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import tempfile
-import sys
 import unittest
 from unittest.mock import patch
 
@@ -13,17 +12,23 @@ from probes.admission.learning import collect, previous_processor
 from evernook import MemoryFailure, initialize
 from evernook.automatic_preferences import PreferenceUpdates
 from evernook import MemoryRuntime
+from evernook import paths as runtime_paths
 
 
 class LearningCollectorTests(unittest.TestCase):
-    def test_previous_core_must_be_external_and_does_not_log_credentials(self) -> None:
+    def test_previous_core_requires_external_absolute_path_without_logging_credentials(self) -> None:
         with tempfile.TemporaryDirectory(prefix='evernook-processor-transition-') as temporary:
             root = Path(temporary)
             config, access = initialize(root / 'runtime', client_id='synthetic', entry='fixture')
             processor = PreferenceUpdates(MemoryRuntime(config)).settings(access).rules_processor
-            with self.assertRaisesRegex(MemoryFailure, 'runtime_inside_checkout'):
-                previous_processor(Path(sys.executable), config, access, processor, root / 'previous')
-            self.assertEqual(list((root / 'previous').iterdir()), [])
+            protected_root = Path(runtime_paths.__file__).resolve().parents[2]
+            cases = ((Path('synthetic-forbidden-python.exe'), 'absolute_runtime_path_required'),
+                     (protected_root / 'synthetic-forbidden-python.exe', 'runtime_inside_checkout'))
+            for index, (executable, code) in enumerate(cases):
+                output = root / ('previous-' + str(index))
+                with self.subTest(code=code), self.assertRaisesRegex(MemoryFailure, code):
+                    previous_processor(executable, config, access, processor, output)
+                self.assertEqual(list(output.iterdir()), [])
 
     def test_restore_and_purge_use_real_protocols_and_preserve_missing_judgments(self) -> None:
         suite = load_suite(Path('eval/zh-learning-v1'))

@@ -10,6 +10,31 @@ It fixes the models, suite/scoring identity, hardware, quality, latency, resourc
 sample counts and coverage requirements. A failed threshold remains failed.
 The suite uses maintainer-delegated AI review; it is not human-reviewed gold.
 
+## 2026-11-15 bounded maintenance and lifecycle diagnostics
+
+`scale_index.py` accepts explicit `--reuse-embedding --semantic-window 1000`,
+`--lexical-strategy checkpoint --lexical-transaction-size 100` and
+`--full-semantic`. Defaults remain one-shot/16-chunk/one-row/default lexical.
+The original 10016-vector target is only a smoke prerequisite; full eligible
+coverage with zero failed chunks is still required. Reports retain initial
+coverage and mark resumed runs ineligible for a fresh-build budget claim.
+`--max-seconds` is a shorter diagnostic guard, not a policy edit.
+
+`learning.py --full-lifecycle --max-fixture-sources 10004` executes actual
+synthetic restore/purge/large-position protocols; `--previous-core-python`
+requires a real external installed previous Core for processor-transition
+evidence. `--reuse-embedding` is explicit and does not change model admission.
+`learning_native.py` consumes its actual delivered spans for single-turn native
+diagnostics, preserving empty retrieval and original role/time. Model actions
+are never executed and missing dimensions remain missing.
+
+`service_embedding.py --embedding CONFIG --context CONFIG --output NEW_EXTERNAL`
+checks 31 actual service IPC/context calls on three synthetic originals. It
+does not replace an installed user service or substitute for the scale matrix.
+See the dated [scope and results](../../docs/reports/2026-11-15-learning-validation.md),
+[local quality](../../docs/reports/2026-11-15-local-quality.md), and
+[service packaging](../../docs/reports/2026-11-15-service-packaging.md).
+
 ## Quality
 
 From the repository root, run each phase into a **new** external directory:
