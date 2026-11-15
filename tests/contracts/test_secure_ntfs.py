@@ -18,12 +18,12 @@ from evernook.secure_ntfs import PrivateTree, _shared_native
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows NTFS primitive')
 class SecureNtfsTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix='evernook-ntfs-test-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def test_nested_creation_has_private_acl_and_holds_handles(self):
+    def test_nested_creation_has_private_acl_and_holds_handles(self) -> None:
         with PrivateTree(self.root) as root:
             directory = root.mkdir('private-🐈')
             with directory.file('sample.bin') as stream:
@@ -42,7 +42,7 @@ class SecureNtfsTests(unittest.TestCase):
                 extra_files=(external(self.root / 'private-🐈' / 'sample.bin'),))
         self.assertEqual((self.root / 'private-🐈' / 'sample.bin').read_bytes(), b'synthetic')
 
-    def test_existing_names_are_refused_without_modification(self):
+    def test_existing_names_are_refused_without_modification(self) -> None:
         (self.root / 'existing').mkdir()
         (self.root / 'sample').write_bytes(b'unchanged')
         with PrivateTree(self.root) as root:
@@ -53,7 +53,7 @@ class SecureNtfsTests(unittest.TestCase):
                     self.fail('existing file opened')
         self.assertEqual((self.root / 'sample').read_bytes(), b'unchanged')
 
-    def test_existing_open_file_is_not_modified(self):
+    def test_existing_open_file_is_not_modified(self) -> None:
         path = self.root / 'held'
         path.write_bytes(b'unchanged')
         with path.open('rb'):
@@ -64,14 +64,14 @@ class SecureNtfsTests(unittest.TestCase):
                 root.mkdir('new')
         self.assertEqual(path.read_bytes(), b'unchanged')
 
-    def test_invalid_names_are_rejected(self):
+    def test_invalid_names_are_rejected(self) -> None:
         with PrivateTree(self.root) as root:
             for name in ('', '.', '..', 'a/b', 'a\\b', 'a:b', 'tail.', 'tail ',
                          'CON.txt', 'x' * 256, '\ud800'):
                 with self.subTest(name=repr(name)), self.assertRaises(MemoryFailure):
                     root.mkdir(name)
 
-    def test_replaced_parent_is_rejected(self):
+    def test_replaced_parent_is_rejected(self) -> None:
         parent = self.root / 'parent'
         parent.mkdir()
         tree = PrivateTree(parent)
@@ -82,7 +82,22 @@ class SecureNtfsTests(unittest.TestCase):
                 root.mkdir('must-not-exist')
         self.assertFalse((parent / 'must-not-exist').exists())
 
-    def test_junction_parent_is_rejected(self):
+    def test_short_path_input_publishes_canonical_long_paths(self) -> None:
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetShortPathNameW.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        kernel.GetShortPathNameW.restype = wintypes.DWORD
+        short = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        if not kernel.GetShortPathNameW(str(self.root), short, len(short)) or short.value == str(self.root):
+            self.skipTest('8.3 short names are unavailable for the test root')
+        with PrivateTree(Path(short.value)) as root:
+            created = root.mkdir('published')
+            # Derived paths must be canonical long names: registration and
+            # published bindings are compared against later path resolution.
+            self.assertNotIn('~', str(created.path))
+            self.assertEqual(created.path, external(self.root) / 'published')
+            created.mkdir('inner')
+
+    def test_junction_parent_is_rejected(self) -> None:
         target = self.root / 'target'
         target.mkdir()
         junction = self.root / 'junction'
@@ -98,7 +113,7 @@ class SecureNtfsTests(unittest.TestCase):
         finally:
             junction.rmdir()
 
-    def test_existing_child_junction_is_not_followed(self):
+    def test_existing_child_junction_is_not_followed(self) -> None:
         target = self.root / 'target'
         target.mkdir()
         junction = self.root / 'existing'
@@ -114,7 +129,7 @@ class SecureNtfsTests(unittest.TestCase):
         finally:
             junction.rmdir()
 
-    def test_held_ancestor_cannot_be_replaced_by_another_process(self):
+    def test_held_ancestor_cannot_be_replaced_by_another_process(self) -> None:
         parent = self.root / 'parent'
         parent.mkdir()
         anchor = parent / 'anchor'
@@ -127,7 +142,7 @@ class SecureNtfsTests(unittest.TestCase):
             root.mkdir('created')
         self.assertTrue((anchor / 'created').is_dir())
 
-    def test_managed_child_blocks_planting_rename_and_replacement(self):
+    def test_managed_child_blocks_planting_rename_and_replacement(self) -> None:
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
@@ -142,7 +157,7 @@ class SecureNtfsTests(unittest.TestCase):
             child.mkdir('created')
         self.assertTrue((self.root / 'child' / 'created').is_dir())
 
-    def test_concurrent_write_attempts_cannot_plant_or_replace_managed_child(self):
+    def test_concurrent_write_attempts_cannot_plant_or_replace_managed_child(self) -> None:
         # Isolate a potentially stuck kernel call and its handles from the test runner.
         if os.environ.get('EVERNOOK_NTFS_RACE_CHILD') != '1':
             environment = dict(os.environ, EVERNOOK_NTFS_RACE_CHILD='1')
@@ -173,7 +188,7 @@ class SecureNtfsTests(unittest.TestCase):
                 path = self.root / f'race-{index}'
                 stop = threading.Event()
                 detected: list[str] = []
-                def attacker():
+                def attacker() -> None:
                     returned = wintypes.DWORD()
                     while not stop.is_set():
                         # Write-data opens are refused; the only in-place mutation
@@ -208,7 +223,7 @@ class SecureNtfsTests(unittest.TestCase):
                 self.assertFalse(detected, detected)
                 self.assertFalse(list(target.iterdir()))
 
-    def test_in_place_junction_conversion_is_detected_and_never_redirects(self):
+    def test_in_place_junction_conversion_is_detected_and_never_redirects(self) -> None:
         target = self.root / 'target'
         target.mkdir()
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -256,7 +271,7 @@ class SecureNtfsTests(unittest.TestCase):
             child.mkdir('probe')
             self.assertTrue((self.root / 'child' / 'probe').is_dir())
 
-    def test_acl_validation_failure_releases_handle_and_writes_no_data(self):
+    def test_acl_validation_failure_releases_handle_and_writes_no_data(self) -> None:
         native = _shared_native()
         with PrivateTree(self.root) as root:
             with patch.object(native, 'verify_acl', side_effect=MemoryFailure('synthetic_failure')):
@@ -266,11 +281,11 @@ class SecureNtfsTests(unittest.TestCase):
         self.assertEqual((self.root / 'empty').read_bytes(), b'')
         (self.root / 'empty').rename(self.root / 'released')
 
-    def test_wrong_thread_and_closed_tree_fail_closed(self):
+    def test_wrong_thread_and_closed_tree_fail_closed(self) -> None:
         failures = []
         tree = PrivateTree(self.root)
         with tree as root:
-            def other_thread():
+            def other_thread() -> None:
                 try:
                     root.mkdir('wrong-thread')
                 except MemoryFailure as error:
@@ -283,7 +298,7 @@ class SecureNtfsTests(unittest.TestCase):
             root.mkdir('closed')
         self.assertFalse((self.root / 'wrong-thread').exists())
 
-    def test_process_exit_releases_handles_and_preserves_acl(self):
+    def test_process_exit_releases_handles_and_preserves_acl(self) -> None:
         script = ("import os,sys; from pathlib import Path; "
                   "from evernook.secure_ntfs import PrivateTree; "
                   "tree=PrivateTree(Path(sys.argv[1])); root=tree.__enter__(); "

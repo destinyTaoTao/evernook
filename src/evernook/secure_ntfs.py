@@ -350,13 +350,19 @@ class PrivateTree:
             raise MemoryFailure('secure_creation_unsupported')
         if not isinstance(parent, Path) or not parent.is_absolute() or '..' in parent.parts:
             raise MemoryFailure('absolute_runtime_path_required')
+        # The walk input stays raw: resolving here would follow a reparse
+        # point at the final component and silently redirect every operation.
+        raw = parent.lstat()
+        if not stat.S_ISDIR(raw.st_mode) or getattr(raw, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise MemoryFailure('secure_creation_refused')
         try:
-            # Canonical long path: identity, registration and published
-            # bindings must match what later path-based flows resolve to.
-            self._parent = external(parent)
-            self._expected = self._parent.stat()
+            # Canonical long path: derived published paths and registration
+            # must match what later path-based flows resolve to.
+            self._canonical = external(parent)
+            self._expected = self._canonical.stat()
         except OSError:
             raise MemoryFailure('secure_creation_refused') from None
+        self._parent = parent
         self._native = _shared_native()
         self._handles: list[int] = []
         self._created: list[PrivateDirectory] = []
@@ -447,7 +453,7 @@ class PrivateTree:
                     or filesystem.value.upper() != 'NTFS'):
                 raise MemoryFailure('secure_creation_unsupported')
             self._security, self._expected_acl = _descriptor(self._native)
-            return PrivateDirectory(self, int(handle), self._parent)
+            return PrivateDirectory(self, int(handle), self._canonical)
         except BaseException:
             self.close()
             raise
