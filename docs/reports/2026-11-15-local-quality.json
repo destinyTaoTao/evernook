@@ -1,0 +1,997 @@
+{
+  "admission": "not_applicable_diagnostic",
+  "production_protocol_changed": false,
+  "frozen_gold_changed": false,
+  "conditions": {
+    "role-boundary": {
+      "report_sha256": "31b2f49b0205cd159e9e4b110b086623303ab20566b5a7154d1bb90914d5a530",
+      "native_totals": {
+        "passed": 7,
+        "failed": 3,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "answerable_passed": 5,
+      "unsupported_answers": 0,
+      "quality_screen": false,
+      "monitor": {
+        "returncode": 0,
+        "elapsed_seconds": 51.83278110000538,
+        "stop_reason": null,
+        "stop_error": null,
+        "root_exited": true,
+        "max_seconds": 360.0,
+        "samples": 207,
+        "query_failures": 0,
+        "peak_observed_tree_private_bytes": 569397248
+      },
+      "peak_observed_tree_working_set_bytes": 1526620160,
+      "cases": [
+        {
+          "case_id": "link-location",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "展馆二层",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5305.859700019937
+        },
+        {
+          "case_id": "link-object",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "望远镜",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5306.149700016249
+        },
+        {
+          "case_id": "link-person",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "沈遥",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5355.652100028237
+        },
+        {
+          "case_id": "tool-permission",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4957.911200006492
+        },
+        {
+          "case_id": "tool-data",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "3项",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4863.152699981583
+        },
+        {
+          "case_id": "user-permission-history",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4812.97200001427
+        },
+        {
+          "case_id": "assistant-guess",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4699.291800003266
+        },
+        {
+          "case_id": "user-confirmed",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4704.101700015599
+        },
+        {
+          "case_id": "reported-guess",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4715.536200004863
+        },
+        {
+          "case_id": "assistant-log-data",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4758.002499991562
+        }
+      ]
+    },
+    "role-boundary-minimal": {
+      "report_sha256": "e44c9856ab1640915b8b885403e4c3bc04c8ac1ca74ada09fa477426e942fdca",
+      "native_totals": {
+        "passed": 8,
+        "failed": 2,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "answerable_passed": 6,
+      "unsupported_answers": 0,
+      "quality_screen": false,
+      "monitor": {
+        "returncode": 0,
+        "elapsed_seconds": 54.855838100018445,
+        "stop_reason": null,
+        "stop_error": null,
+        "root_exited": true,
+        "max_seconds": 360.0,
+        "samples": 219,
+        "query_failures": 0,
+        "peak_observed_tree_private_bytes": 569102336
+      },
+      "peak_observed_tree_working_set_bytes": 1526874112,
+      "cases": [
+        {
+          "case_id": "link-location",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "展馆二层",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5480.169299989939
+        },
+        {
+          "case_id": "link-object",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "望远镜",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5399.194500001613
+        },
+        {
+          "case_id": "link-person",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "沈遥",
+              "source_ids": [
+                "a",
+                "b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5383.392099989578
+        },
+        {
+          "case_id": "tool-permission",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5118.5989000077825
+        },
+        {
+          "case_id": "tool-data",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "3",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5341.205500008073
+        },
+        {
+          "case_id": "user-permission-history",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5405.636100011179
+        },
+        {
+          "case_id": "assistant-guess",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5036.464300006628
+        },
+        {
+          "case_id": "user-confirmed",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5124.541799974395
+        },
+        {
+          "case_id": "reported-guess",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5562.7477999951225
+        },
+        {
+          "case_id": "assistant-log-data",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "陶艺",
+              "source_ids": [
+                "a"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5132.657800015295
+        }
+      ]
+    },
+    "learning-native": {
+      "report_sha256": "8242b4131513c0eb03959fec282c16a092af6a7eed699b2cc5c80b929c25bd49",
+      "native_totals": {
+        "passed": 19,
+        "failed": 13,
+        "invalid": 0,
+        "unobserved": 0
+      },
+      "answerable_passed": 12,
+      "unsupported_answers": 0,
+      "quality_screen": false,
+      "monitor": {
+        "returncode": 1,
+        "elapsed_seconds": 197.03278199999477,
+        "stop_reason": null,
+        "stop_error": null,
+        "root_exited": true,
+        "max_seconds": 1100.0,
+        "samples": 787,
+        "query_failures": 2,
+        "peak_observed_tree_private_bytes": 584663040
+      },
+      "peak_observed_tree_working_set_bytes": 1542406144,
+      "cases": [
+        {
+          "case_id": "old-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 4933.917999995174
+        },
+        {
+          "case_id": "old-replay",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 4810.418600012781
+        },
+        {
+          "case_id": "paraphrase-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "续航",
+              "source_ids": [
+                "analogy"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 7284.162900003139
+        },
+        {
+          "case_id": "unknown-initial",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5387.777800002368
+        },
+        {
+          "case_id": "style-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "简短回答",
+              "source_ids": [
+                "style"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5493.26290001045
+        },
+        {
+          "case_id": "style-continued",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 5927.469600021141
+        },
+        {
+          "case_id": "paragraph-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "分点回答",
+              "source_ids": [
+                "paragraph"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 7994.056800001999
+        },
+        {
+          "case_id": "interest-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "摄影",
+              "source_ids": [
+                "interest"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 6265.523400012171
+        },
+        {
+          "case_id": "interest-continued",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "clarify",
+              "value": null,
+              "source_ids": [
+                "counter",
+                "interest"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 7049.922899983358
+        },
+        {
+          "case_id": "quote-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 5580.119399994146
+        },
+        {
+          "case_id": "negation-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 5698.533799994038
+        },
+        {
+          "case_id": "change-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 5834.4147999887355
+        },
+        {
+          "case_id": "change-continued",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "answer",
+              "value": "2021年住在栖湾城",
+              "source_ids": [
+                "home-new",
+                "home-old"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 8194.265600002836
+        },
+        {
+          "case_id": "correction-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "2018年",
+              "source_ids": [
+                "wrong"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 6550.325099990005
+        },
+        {
+          "case_id": "correction-continued",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "2017年",
+              "source_ids": [
+                "correction"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 7535.169299982954
+        },
+        {
+          "case_id": "multi-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "clarify",
+              "value": null,
+              "source_ids": [
+                "trip-a",
+                "trip-b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 6677.760299993679
+        },
+        {
+          "case_id": "insufficient-initial",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 4918.641700001899
+        },
+        {
+          "case_id": "conflict-initial",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "clarify",
+              "value": null,
+              "source_ids": [
+                "conflict-a",
+                "conflict-b"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 6585.782499983907
+        },
+        {
+          "case_id": "control-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "橡木柜",
+              "source_ids": [
+                "suppressed"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5695.963500009384
+        },
+        {
+          "case_id": "control-continued",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5384.890999994241
+        },
+        {
+          "case_id": "revoked-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "白色箱子",
+              "source_ids": [
+                "revoked"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5672.846500005107
+        },
+        {
+          "case_id": "revoked-continued",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5092.897199996514
+        },
+        {
+          "case_id": "control-restored",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5305.278899992118
+        },
+        {
+          "case_id": "injection-initial",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "injection"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 7046.823100012261
+        },
+        {
+          "case_id": "authority-initial",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "refuse",
+              "value": null,
+              "source_ids": [
+                "assistant-claim"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 6118.716299999505
+        },
+        {
+          "case_id": "long-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "观鸟",
+              "source_ids": [
+                "long"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 8239.663300017128
+        },
+        {
+          "case_id": "old-continued",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "failed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": true
+          },
+          "elapsed_ms": 4818.984000012279
+        },
+        {
+          "case_id": "purge-initial",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "灰色箱子",
+              "source_ids": [
+                "purge-source"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5536.287099996116
+        },
+        {
+          "case_id": "purge-continued",
+          "expected_answerable": false,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "abstain",
+              "value": null,
+              "source_ids": []
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5433.627499995055
+        },
+        {
+          "case_id": "position-start",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "青苔湾",
+              "source_ids": [
+                "position-first"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 6200.778400001582
+        },
+        {
+          "case_id": "position-middle",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "银叶桥",
+              "source_ids": [
+                "position-middle"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5946.620600007009
+        },
+        {
+          "case_id": "position-end",
+          "expected_answerable": true,
+          "raw_judgment": {
+            "state": "passed",
+            "actual": {
+              "decision": "answer",
+              "value": "栖星湾",
+              "source_ids": [
+                "position-last"
+              ]
+            },
+            "unsupported_answer": false,
+            "false_abstention": false
+          },
+          "elapsed_ms": 5826.975499978289
+        }
+      ]
+    }
+  },
+  "learning_projection": {
+    "sha256": "a505f5e8d86746d64b1ac5ac45f3d2e4c365b399331e4998373e8e361f751385",
+    "totals": {
+      "passed": 98,
+      "failed": 33,
+      "missing": 661
+    },
+    "raw": {
+      "retrieval": {
+        "expected": 33,
+        "passed": 24,
+        "failed": 9,
+        "missing": 0
+      },
+      "evidence": {
+        "expected": 33,
+        "passed": 22,
+        "failed": 11,
+        "missing": 0
+      },
+      "judgment": {
+        "expected": 33,
+        "passed": 19,
+        "failed": 13,
+        "missing": 1
+      },
+      "automatic": {
+        "expected": 33,
+        "passed": 33,
+        "failed": 0,
+        "missing": 0
+      },
+      "maintenance": {
+        "expected": 33,
+        "passed": 0,
+        "failed": 0,
+        "missing": 33
+      },
+      "host_answer": {
+        "expected": 33,
+        "passed": 0,
+        "failed": 0,
+        "missing": 33
+      }
+    }
+  }
+}

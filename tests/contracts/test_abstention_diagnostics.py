@@ -10,6 +10,18 @@ from probes.admission.semantic_reflection import load_cases, packet
 
 
 class AbstentionDiagnosticTests(unittest.TestCase):
+    def test_role_policy_controls_keep_all_frozen_messages_and_labels(self) -> None:
+        cases, _ = load_cases(Path('eval/zh-reflection-semantics-v1'))
+        for variant in ('role_boundary', 'role_boundary_minimal_value'):
+            self.assertEqual(diagnostic_cases(cases, variant), cases)
+            for case in cases:
+                payload, _ = packet(case)
+                original = build_messages(payload)
+                actual = diagnostic_messages(payload, variant)
+                self.assertEqual(actual[1:], original[1:])
+                self.assertIn('不得把猜测当作用户确认事实', actual[0]['content'])
+                self.assertNotIn(case['id'], actual[0]['content'])
+
     def test_counterfactuals_do_not_mutate_frozen_inputs_or_expectations(self) -> None:
         cases, _ = load_cases(Path('eval/zh-reflection-semantics-v1')); before = deepcopy(cases)
         changed = diagnostic_cases(cases, 'role_user')
