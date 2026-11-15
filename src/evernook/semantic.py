@@ -232,6 +232,22 @@ class SemanticRecall:
         for begin in range(0, len(pending), 16):
             budget()
             batch = pending[begin:begin + 16]
+            self.runtime._require_scope(access, 'maintain', 'semantic_refresh_inference')
+            # A previous inference can overlap source withdrawal or permission
+            # changes. Never send a later batch solely from the old window
+            # snapshot; retain the independent post-inference commit check too.
+            with self.runtime._connection(check=budget) as db:
+                db.execute('BEGIN')
+                for message_id, version, content_version, _, _, start, end, text in batch:
+                    row = db.execute(f'''SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                        FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+                        WHERE messages.id=? AND {_ELIGIBLE}''', (message_id,)).fetchone()
+                    if row is None:
+                        raise MemoryFailure('stale_source')
+                    source = self.runtime._stored(row)
+                    if (row['state_version'] != version or source.receipt.content_version != content_version
+                            or source.event.text[start:end] != text):
+                        raise MemoryFailure('stale_source')
             vectors = self._embed_documents(tuple(item[-1] for item in batch), timeout=budget(), cancel=cancel)
             budget()
             if len(vectors) != len(batch):

@@ -59,9 +59,12 @@ class RoleAwareEmbeddingBackend(EmbeddingBackend, Protocol):
 def unit_vector(values: object, dimensions: int) -> tuple[float, ...]:
     if not isinstance(values, (list, tuple)) or len(values) != dimensions:
         raise MemoryFailure("invalid_embedding")
-    if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
-        raise MemoryFailure("invalid_embedding")
-    norm = math.hypot(*values)
+    try:
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in values):
+            raise MemoryFailure("invalid_embedding")
+        norm = math.hypot(*values)
+    except OverflowError:
+        raise MemoryFailure('invalid_embedding') from None
     if not math.isfinite(norm) or norm == 0:
         raise MemoryFailure("invalid_embedding")
     return tuple(value / norm for value in values)

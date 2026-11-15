@@ -40,7 +40,7 @@ for line in sys.stdin:
     if value['texts'][0]=='oversize': print('x'*1048577,flush=True); continue
     vectors=[]
     for text in value['texts']:
-        vector=[0.0]*384; vector[0 if text=='first' else 1]=1.0; vectors.append(vector)
+        vector=[0.0]*384; vector[0 if text=='first' else 1]=10**400 if text=='overflow' else 1.0; vectors.append(vector)
     print(json.dumps({'id':value['id']+(1 if value['texts'][0]=='bad-id' else 0),
         'vectors':vectors,'network_attempts':0}),flush=True)
 ''', encoding='utf8')
@@ -97,7 +97,7 @@ for line in sys.stdin:
                 self.assertLess(time.monotonic() - started, 4)
 
     def test_bad_reply_oversize_and_crash_fail_closed(self) -> None:
-        for text in ('bad-id', 'oversize', 'crash'):
+        for text in ('bad-id', 'oversize', 'crash', 'overflow'):
             with self.subTest(text=text), self.backend.session(timeout=10) as session:
                 with self.assertRaises(MemoryFailure):
                     session.embed((text,), timeout=5)

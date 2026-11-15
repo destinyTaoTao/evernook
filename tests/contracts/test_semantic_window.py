@@ -72,3 +72,13 @@ class SemanticWindowTests(unittest.TestCase):
         self.assertEqual(self.recall.status(self.access).stored_vectors, 0)
         self.backend.hook = None
         self.assertEqual(self.recall.refresh_window(self.access).indexed_messages, 36)
+
+    def test_later_batch_hidden_by_first_batch_is_not_sent_to_model(self) -> None:
+        def hide_next_batch() -> None:
+            if len(self.backend.calls) == 1:
+                self.runtime.change(self.access, Change('hide-later', self.ids[16], 1, 'suppress', self.ids[17], 'synthetic'))
+        self.backend.hook = hide_next_batch
+        with self.assertRaisesRegex(MemoryFailure, 'stale_source'):
+            self.recall.refresh_window(self.access)
+        self.assertEqual(len(self.backend.calls), 1)
+        self.assertEqual(self.recall.status(self.access).stored_vectors, 16)
