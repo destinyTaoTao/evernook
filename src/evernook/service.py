@@ -610,6 +610,13 @@ class _Server(socketserver.ThreadingTCPServer):
     def maintenance_status(self) -> dict[str, Any]:
         return self.maintenance.snapshot() if self.maintenance else {"enabled": False}
 
+    def server_close(self) -> None:
+        try:
+            super().server_close()
+        finally:
+            if self.embedding_binding is not None:
+                self.embedding_binding.close()
+
     def process_request(self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any) -> None:
         if not self.slots.acquire(blocking=False):
             self.shutdown_request(request)
