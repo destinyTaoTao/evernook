@@ -633,6 +633,69 @@ class MemoryRuntime:
             db.execute("COMMIT")
         return receipt
 
+    def submit_many(self, access: Access, events: tuple[Event, ...], *,
+                    cancel: threading.Event | None = None) -> tuple[Receipt, ...]:
+        """Explicit bounded import: all new originals commit, or none do.
+
+        This is not a publication shortcut for live streams. Every receipt is
+        returned only after the same FULL-synchronous transaction has committed;
+        existing single-event callers and model-tool permissions are unchanged.
+        """
+        if (not isinstance(events, tuple) or not 1 <= len(events) <= 100
+                or (cancel is not None and not isinstance(cancel, threading.Event))):
+            raise MemoryFailure('invalid_batch_request')
+        committed = False
+
+        def check() -> float:
+            if not committed and cancel is not None and cancel.is_set():
+                raise MemoryFailure('submit_canceled')
+            return max(.001, self._timeout)
+
+        check()
+        size = 0
+        for event in events:
+            self._validate_event(event)
+            size += len(event.text.encode('utf-8'))
+            if size > 4 * 1048576:
+                raise MemoryFailure('batch_too_large')
+        identity = self._require_scope(access, 'capture', 'submit_many', str(len(events)))
+        prepared = []
+        for event in events:
+            check()
+            if event.source.entry != identity.entry:
+                raise MemoryFailure('unauthorized_source')
+            fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
+            retained = (replace(event, text='[PROTECTED:ORIGINAL_NOT_SAVED]')
+                        if event.sensitive or event.protected_source or credential_signal(event.text) else event)
+            prepared.append((event, retained, fingerprint))
+        receipts = []
+        with self._connection(check=check) as db:
+            lock_deadline = time.monotonic() + self._timeout
+            while True:
+                check()
+                try:
+                    db.execute('BEGIN IMMEDIATE')
+                    break
+                except sqlite3.OperationalError as failure:
+                    if ((failure.sqlite_errorcode & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                            or time.monotonic() >= lock_deadline):
+                        raise
+                    time.sleep(min(.01, max(0, lock_deadline - time.monotonic())))
+            for event, retained, fingerprint in prepared:
+                check()
+                receipts.append(self._persist_event(db, event, retained, fingerprint))
+                _audit_row(db, datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry,
+                           'submit', _json(asdict(event.source)), 'ok')
+            current = self._authorize(access)
+            if 'capture' not in current.scopes:
+                raise MemoryFailure('permission_denied')
+            if current.entry != identity.entry:
+                raise MemoryFailure('unauthorized_source')
+            check()
+            db.execute('COMMIT')
+            committed = True
+        return tuple(receipts)
+
     @staticmethod
     def _persist_event(db: sqlite3.Connection, event: Event, retained: Event, fingerprint: bytes,
                        *, stream_id: str | None = None) -> Receipt:

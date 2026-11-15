@@ -86,6 +86,15 @@ then lexical maintenance within one frozen index budget. `stored_vectors` counts
 rows for the configured space, including stale rows. It is not inferred from message counts
 and does not imply complete/current coverage. Partial coverage blocks admission.
 
+An explicit `--batch-size 100` uses the bounded public Python `submit_many` API
+to prepare the same original-event corpus. Default `--batch-size 1` retains the
+serial baseline. Bulk runs identify their operation/batch size and write one
+duration per call to `batch-commit-ms.f64le`; serial per-message latency fields
+stay null. Never divide a batch duration to claim per-message latency. Source
+counts, receipts and vector coverage still need independent reconciliation.
+`scale_receipt.py` can inspect an abruptly stopped writer without its final
+report, but marks that fixture incomplete/ineligible rather than inferring success.
+
 After a writer has stopped, `scale_receipt.py --fixture DIR --embedding-config PROFILE
 --output NEW_EXTERNAL_DIR` reconciles public counts, actual stored-vector status and selected
 exact source roundtrips. An incomplete target exits 2 and cannot authorize a target-size query
