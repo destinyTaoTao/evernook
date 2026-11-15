@@ -53,7 +53,7 @@ fresh-context 复核发现两项确定缺陷，均补 RED→GREEN：后续语义
 - 可选 vault 服务/迁移/销毁联合 52 项结束，其中 2 项 skip；service 独立 23 项通过。此前一次 88 项联合运行有临时目录 WinError32，隔离重跑及后续整组 service 通过，失败保留且未武断归因。
 - 最终非 editable、无任何 extra 的新环境 38 项相关回归通过；collector 路径断言另验证 relative 与受保护根两种拒绝。较早 installed 测试因测试前提依赖 source 安装布局失败，修正为分别验证真实安装保护根，保留两项断言。
 - strict mypy 定向 21 个源文件及相关后续 7 文件检查通过，Node 语法与 diff 检查通过。上述组有交叠，不相加；没有宣告本次全仓所有测试或全仓 mypy 通过。
-- 最终 wheel 的 101 个 `.py/.mjs` 成员与源文件逐字节相同，SHA256 为 `c13aa2dd9965fc8fc1430c9fb3910cc2957b598352c81f03405c4a9a0936ba8c`。未替换日用安装。
+- 上述性能窗口使用的 wheel 有 101 个 `.py/.mjs` 成员，与当时源文件逐字节相同，SHA256 为 `c13aa2dd9965fc8fc1430c9fb3910cc2957b598352c81f03405c4a9a0936ba8c`。合并前另有 tokenizer 修复，见下节；新源码不继承旧 wheel 身份。未替换日用安装。
 
 ## 资源证据勘误与复测
 
@@ -71,6 +71,14 @@ fresh-context 复核发现两项确定缺陷，均补 RED→GREEN：后续语义
 | 最终 wheel 安装服务 | 147 / 0 | 854126592 | 31 次实际 IPC/context，真实 site-packages，无 src 导入路径 |
 
 前两窗口 manifest 尚未绑定启动时 harness 摘要，后两窗口新增 monitor/helper SHA256；不能追补为启动时已签证的身份。一个带 `src` 环境的服务尝试被停止并排除安装验证，单独重采成功；不将这次环境失误隐藏或拼接成通过。随后补验 Job 停止失败路径：独立保留 stop/cleanup 错误，关闭 Job 后检查实际包装器退出，不因清理异常丢失失败回执。新旧 monitor/receipt 共 9 项回归在源码与最终无 extra 的实际安装环境均通过（13.511/13.245 秒），6 文件 strict mypy 通过。回执现在同时检查独立计数、writer 实际计数、无 writer 错误及选中完整 Event；原文齐全与完整索引前置条件各自门控。最终 100k receipt 的完整矩阵前置条件为 true，1M 为 false，二者 admission 均仍 pending。
+
+## 合并前追加：tokenizer 取消异常传播
+
+用户随后明确要求阶段提交、推送并合入 main。对 `590ad42` 启动全量契约诊断时，发现既有 tokenizer 的并发预热取消返回了 `tokenizer_unavailable`，而契约要求 `context_canceled`。单项首次通过，完整 tokenizer 模块复现失败；Future.result 插桩实际观察到预热关闭执行器后，主线程收到 CancelledError 或管道 OSError。这不是仅凭一次重跑通过就归为偶发失败。
+
+scoped count 仍先回收进程/IO，再在此异常分支复核调用方取消标记；已取消返回 `context_canceled`，未取消保持 `tokenizer_unavailable`。新增确定性回归在 Future.result 前触发相同竞态，分别覆盖 Future 取消/管道错误、有/无调用方取消四种组合，并核验实际子进程退出。新增回归先两项 subTest 失败，修复后通过；完整 tokenizer 模块源码 12 项通过（8.601 秒），真实 Core-only wheel 安装版 12 项通过（8.729 秒），独立审查未确认新问题。Core 全部 96 源文件 mypy 及 tokenizer/测试两文件 strict 检查通过。
+
+新 wheel 仍为本地阶段版本 0.1.97，SHA256 `c5d27603ecea54178560b2d13f65d0ac18a049815ae93af0626d8dd0e3ecb5df`，101 个源码成员与修复后源码逐字节相同。旧性能/质量窗口不重写成新 wheel 的测量。全仓 mypy 另被未改动的 test_topic_views/test_semantic 混合模块导入阻断，origin/main 同样存在该导入；不宣告全仓 mypy 通过。原始全量诊断与独立复测日志外置保留，最终长测结果及合入状态见 [PR #245](https://github.com/destinyTaoTao/evernook/pull/245)。本段不将发现失败的诊断运行改写成单次全量通过。
 
 ## 下一步需要确认的结构变更
 

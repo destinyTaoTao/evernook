@@ -687,5 +687,36 @@
       "missing": 693
     }
   },
-  "next_decision": "Authorize new rebuildable derived-index schema/backfill with default-off read path and rollback; originals unchanged; full live consistency and frozen matrix required."
+  "next_decision": "Authorize new rebuildable derived-index schema/backfill with default-off read path and rollback; originals unchanged; full live consistency and frozen matrix required.",
+  "integration_addendum": {
+    "scope": "Post-campaign tokenizer cancellation fix; old performance/quality artifact identities remain unchanged. Original full diagnostic found failure; not relabelled as a final-tree full pass.",
+    "bug": "Concurrent warmup close cancels queued count Future or closes its pipe; caller cancellation was incorrectly mapped to tokenizer_unavailable.",
+    "regression": "Deterministic cancellation between remaining-budget check and Future.result; cancelled future/closed pipe with and without caller cancellation; real worker exit.",
+    "source_tokenizer_tests": {
+      "run": 12,
+      "passed": 12,
+      "seconds": 8.601
+    },
+    "installed_tokenizer_tests": {
+      "run": 12,
+      "passed": 12,
+      "seconds": 8.729
+    },
+    "core_mypy": {
+      "files": 96,
+      "passed": true
+    },
+    "full_mypy": {
+      "passed": false,
+      "reason": "Unchanged test_topic_views mixed test_semantic import; same on origin/main"
+    },
+    "wheel": {
+      "sha256": "c5d27603ecea54178560b2d13f65d0ac18a049815ae93af0626d8dd0e3ecb5df",
+      "members": 101,
+      "source_byte_equal": true
+    },
+    "external_campaign": "evernook-main-integration-590ad42",
+    "integration_pr": "https://github.com/destinyTaoTao/evernook/pull/245",
+    "review": "Independent narrow review found no confirmed defect; ran added test only."
+  }
 }
