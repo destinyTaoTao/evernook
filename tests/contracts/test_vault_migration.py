@@ -27,6 +27,23 @@ def prepare(runtime: MemoryRuntime, inbox: ProtectedInbox, access: Access, passw
 
 
 class VaultMigrationTests(unittest.TestCase):
+    def test_single_binding_restart_rejects_replaced_recovery_material(self) -> None:
+        self.inbox.submit(self.owner, self.event)
+        prepare(self.runtime, self.inbox, self.owner, self.password)
+        self.start(self.command())
+        self.processes[-1].terminate(); self.processes[-1].wait(timeout=15)
+        recovery = self.root / 'keys' / 'recovery.json'
+        saved = recovery.read_bytes()
+        recovery.write_bytes(saved + b'\n')
+        try:
+            restarted = subprocess.run([sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config),
+                '--protected-inbox', str(self.inbox.root), '--protected-keys', str(self.inbox.key_root)],
+                capture_output=True, timeout=15)
+            self.assertNotEqual(restarted.returncode, 0)
+            self.assertIn(b'protected_single_binding_mismatch', restarted.stderr)
+        finally:
+            recovery.write_bytes(saved)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix='evernook-vault-migration-')
         self.addCleanup(temporary.cleanup)

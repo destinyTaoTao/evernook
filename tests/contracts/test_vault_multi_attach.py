@@ -25,6 +25,50 @@ from tests.contracts.test_vault_multi_restore import MultiVaultRestoreTests
 
 
 class MultiVaultAttachTests(MultiVaultRestoreTests):
+    def test_destroy_recovered_member_preserves_single_attachment_and_remaining_service(self) -> None:
+        from evernook.missing_vault import attachment
+        from evernook.vault_destroy import destroy_vault
+        from evernook.vault_retirement import retired
+        config, owner, recovery_file, vault_backup = self._prepare_recovery()
+        stage = self._stage(config, owner, recovery_file, vault_backup)
+        attach_stage(config, owner, stage, recovery_file, b'synthetic backup password',
+                     self._password(), self.root / 'attached-destroy')
+        runtime = MemoryRuntime(config, service_owner=True)
+        binding = read_binding(runtime)
+        assert binding is not None
+        first = next(item for item in binding['inboxes'] if item['inbox_id'] == self.first.inbox_id)
+        second = next(item for item in binding['inboxes'] if item['inbox_id'] == self.second.inbox_id)
+        destroy_vault(config, owner, Path(first['inbox_dir']), Path(first['key_dir']), self.passwords[0])
+        with runtime._connection() as core:
+            self.assertFalse(read_state(runtime, core))
+            single = attachment(runtime, core)
+            assert single is not None
+            self.assertEqual(single['inbox_id'], self.second.inbox_id)
+            self.assertIn(self.first.inbox_id, retired(runtime, core))
+            # Original associations survive for auditing, including the lost vault.
+            self.assertEqual(core.execute('SELECT count(*) FROM protected_inbox_registry_v1').fetchone()[0], 2)
+        endpoint = config.parent / 'memory-service.json'
+        old = endpoint.read_bytes()
+        process = subprocess.Popen([sys.executable, '-B', '-m', 'evernook.service', '--config', str(config),
+                                    '--protected-inbox', second['inbox_dir'], '--protected-keys', second['key_dir']],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.processes.append(process)
+        deadline = time.monotonic() + 30
+        while not endpoint.exists() or endpoint.read_bytes() == old:
+            if process.poll() is not None:
+                assert process.stderr is not None
+                self.fail(process.stderr.read().decode(errors='replace'))
+            if time.monotonic() >= deadline:
+                self.fail('restored remaining service startup timeout')
+            time.sleep(.05)
+        client = ServiceClient(config)
+        self.assertEqual(client.protected_inboxes(owner)['primary'], self.second.inbox_id)
+        self.assertEqual(len(client.protected_inventory(owner)['objects']), 2)
+        process.terminate(); process.wait(timeout=15)
+        destroy_vault(config, owner, Path(second['inbox_dir']), Path(second['key_dir']), self.passwords[1])
+        local = MemoryRuntime(config)
+        self.assertIsNone(local.read(self.entry_access, self.linked.message.message_id))  # type: ignore[union-attr]
+
     def _prepare_recovery(self) -> tuple[Path, Access, Path, Path]:
         """Activated multi service, backups, offline ordinary recovery, restored gate."""
         client = self.start(activate=True)

@@ -11,7 +11,7 @@ from pathlib import Path
 import msvcrt
 import sqlite3
 import stat
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from uuid import UUID, uuid4
 
 from .backup import _json_bytes
@@ -38,7 +38,8 @@ _DIRS = {'': {'ledger', 'vault'}, 'vault': {'inbox', 'keys'}, 'ledger': set(),
          'vault/inbox': set(), 'vault/keys': set()}
 _MULTI_DIRS = {'': {'ledger', 'vaults', 'package'}, 'ledger': set(), 'package': set(),
                'vaults': {f'{i:02d}' for i in range(16)}}
-_MULTI_FILES = {'ledger': _FILES['ledger'] | {'stage.bundle'}, 'package': {'backup.json', 'binding.enc'} |
+_MULTI_FILES = {'ledger': _FILES['ledger'] | {'stage.bundle'}, 'package': {'backup.json', 'binding.enc',
+                'receiving.enc', 'writer.enc', 'recovery.enc', 'inbox.enc'} |
                 {f'{i:02d}-{name}.enc' for i in range(16) for name in ('inbox', 'receiving', 'writer', 'recovery')}}
 for _slot in sorted(_MULTI_DIRS['vaults']):
     _base = f'vaults/{_slot}'
@@ -110,7 +111,7 @@ def _identity(path: Path) -> os.stat_result:
     return metadata
 
 
-def _remove_checked(entry: dict[str, Any]) -> None:
+def _remove_checked(entry: dict[str, Any], *, on_empty: Callable[[], None] | None = None) -> None:
     path = Path(entry['path'])
     dirs, files_by_dir = (_MULTI_DIRS, _MULTI_FILES) if entry['kind'] in ('multi', 'candidate') else (_DIRS, _FILES)
     try:
@@ -133,7 +134,8 @@ def _remove_checked(entry: dict[str, Any]) -> None:
 
     def hold(target: Path, expected: os.stat_result) -> int:
         # No FILE_SHARE_DELETE: the held object cannot be renamed or replaced.
-        handle = kernel.CreateFileW(str(target), 0x10000 | 0x80, 0x1 | 0x2, None, 3,
+        share = 0x1 if stat.S_ISDIR(expected.st_mode) else 0x3
+        handle = kernel.CreateFileW(str(target), 0x10000 | 0x80, share, None, 3,
                                     0x02000000 | 0x00200000, None)
         if handle == wintypes.HANDLE(-1).value:
             raise MemoryFailure('vault_workspace_busy')
@@ -179,15 +181,20 @@ def _remove_checked(entry: dict[str, Any]) -> None:
             disposition = ctypes.c_ubyte(1)
             if not kernel.SetFileInformationByHandle(msvcrt.get_osfhandle(fd), 4, ctypes.byref(disposition), 1):
                 raise MemoryFailure('vault_workspace_cleanup_failed')
+            if len(handles) == 1 and on_empty is not None:
+                # Only delete-pending blocks new child creation. Directory
+                # sharing flags alone do not: never deregister an empty check
+                # that another process can invalidate before disposition.
+                on_empty()
             os.close(handles.pop())
     finally:
         while handles:
             os.close(handles.pop())
 
 
-def _remove(entry: dict[str, Any]) -> None:
+def _remove(entry: dict[str, Any], *, on_empty: Callable[[], None] | None = None) -> None:
     try:
-        _remove_checked(entry)
+        _remove_checked(entry, on_empty=on_empty)
     except (OSError, ValueError, TypeError):
         raise MemoryFailure('vault_workspace_cleanup_failed') from None
 
@@ -214,12 +221,13 @@ def _reserve(runtime: MemoryRuntime, parent: Path, kind: str) -> tuple[Path, dic
 
 def _discard(runtime: MemoryRuntime, core: sqlite3.Connection, entry: dict[str, Any]) -> None:
     # Inspect the caller's transaction, including an uncommitted attachment.
-    _guard_active(runtime, core, [entry])
-    _remove(entry)
-    current = _read(runtime)
-    if entry not in current:
-        raise MemoryFailure('vault_workspace_registry_invalid')
-    _save(runtime, [item for item in current if item != entry])
+    _guard_active(runtime, core, [entry], newly_created=True)
+    def forget() -> None:
+        current = _read(runtime)
+        if entry not in current:
+            raise MemoryFailure('vault_workspace_registry_invalid')
+        _save(runtime, [item for item in current if item != entry])
+    _remove(entry, on_empty=forget)
 
 
 @contextmanager
@@ -285,7 +293,8 @@ def secure_workspace(runtime: MemoryRuntime, parent: Path, kind: str, *,
             _discard(runtime, core, entry)
 
 
-def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: list[dict[str, Any]]) -> None:
+def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: list[dict[str, Any]], *,
+                  newly_created: bool = False) -> None:
     """Refuse all deletion when active identity cannot be safely excluded."""
     from .missing_vault import attachment, multi_attachment, read_state
     missing = read_state(runtime, core)
@@ -315,7 +324,7 @@ def _guard_active(runtime: MemoryRuntime, core: sqlite3.Connection, selected: li
         if single_bound is None:
             raise MemoryFailure('protected_single_binding_mismatch')
         active.extend((Path(single_bound['inbox_dir']), Path(single_bound['key_dir'])))
-    if not missing and single is None and binding is None and single_bound is None:
+    if not missing and single is None and binding is None and single_bound is None and not newly_created:
         # Legacy and unactivated runtimes did not persist active paths.  Even
         # an empty registry cannot prove no unregistered inbox is in use.
         raise MemoryFailure('vault_workspace_unbound_active')
@@ -355,8 +364,9 @@ def cleanup_workspaces(config: Path, access: Access, ids: list[str]) -> dict[str
             _guard_active(runtime, core, selected)
             for entry in selected:
                 _authorize_admin(runtime, access)
-                _remove(entry)
-                entries.remove(entry)
-                _save(runtime, entries)
+                def forget() -> None:
+                    entries.remove(entry)
+                    _save(runtime, entries)
+                _remove(entry, on_empty=forget)
             core.execute('COMMIT')
             return {'removed': len(selected), 'remaining': len(entries), 'physical_erasure_verified': False}

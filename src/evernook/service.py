@@ -745,6 +745,9 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
         except OSError:
             raise MemoryFailure("service_already_running") from None
         try:
+            if next(runtime.root.glob('vault-destruction-*.json'), None) is not None:
+                from .vault_destroy import require_no_pending
+                require_no_pending(runtime)
             key = secrets.token_bytes(32)
             with _Server(runtime, key, context_config=context_config, embedding_config=embedding_config, reflection_config=reflection_config,
                          extraction_config=extraction_config) as server:
@@ -786,8 +789,8 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         raise MemoryFailure('invalid_protected_service_config')
                     missing_vault = read_state(runtime, check)
                     attached_vault = attachment(runtime, check)
-                    registry = check.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_inbox_registry_v1'").fetchone()
-                    if (registry and check.execute('SELECT count(*) FROM protected_inbox_registry_v1').fetchone()[0] > 1
+                    from .vault_retirement import active_registry, active_link_count
+                    if (len(active_registry(runtime, check)) > 1
                             and not (multi_marker or activate_verified_multi or activate_restored_without_vault or missing_vault)):
                         raise MemoryFailure('protected_cutover_requires_migration')
                 if missing_vault and (protected_root is not None or allow_legacy_shared):
@@ -808,6 +811,13 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                         raise MemoryFailure('vault_dependency_missing') from None
                     server.protected_inbox = ProtectedInbox(runtime, protected_root, protected_keys)
                     server.protected_state = 'configured'
+                    if single_marker:
+                        from .vault_migration import _materials
+                        bound = read_single_binding(runtime)
+                        if (bound is None or server.protected_inbox.inbox_id != bound['inbox_id']
+                                or server.protected_inbox.public['key_id'] != bound['key_id']
+                                or _materials(server.protected_inbox) != bound['material']):
+                            raise MemoryFailure('protected_single_binding_mismatch')
                     if protected_history_roots:
                         history = tuple(ProtectedInbox(runtime, root, keys) for root, keys in
                                         zip(protected_history_roots, protected_history_keys))
@@ -896,16 +906,12 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                                 db.execute("COMMIT")
                                 store.execute('COMMIT')
                         else:
-                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone():
-                                if server.protected_inbox is None:
-                                    unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()
-                                else:
-                                    unknown = db.execute('SELECT 1 FROM protected_inbox_registry_v1 WHERE inbox_id IS NOT ? OR key_id IS NOT ? LIMIT 1',
-                                        (server.protected_inbox.inbox_id, server.protected_inbox.public['key_id'])).fetchone()
-                                if unknown:
-                                    raise MemoryFailure('protected_cutover_requires_migration')
-                            if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
-                                    and db.execute("SELECT 1 FROM protected_links_v1 LIMIT 1").fetchone()):
+                            known = active_registry(runtime, db)
+                            expected = ({server.protected_inbox.inbox_id: str(server.protected_inbox.public['key_id'])}
+                                        if server.protected_inbox is not None else {})
+                            if any(expected.get(inbox_id) != key_id for inbox_id, key_id in known.items()):
+                                raise MemoryFailure('protected_cutover_requires_migration')
+                            if active_link_count(runtime, db):
                                 raise MemoryFailure('protected_cutover_requires_migration')
                             if server.protected_inbox is not None:
                                 with server.protected_inbox._connection(gate_db=db) as inbox:
@@ -930,11 +936,9 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     if not activated:
                         if not allow_legacy_shared:
                             raise MemoryFailure('service_activation_required')
-                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_inbox_registry_v1'").fetchone()
-                                and db.execute('SELECT 1 FROM protected_inbox_registry_v1 LIMIT 1').fetchone()):
+                        if active_registry(runtime, db):
                             raise MemoryFailure('protected_cutover_requires_migration')
-                        if (db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
-                                and db.execute('SELECT 1 FROM protected_links_v1 LIMIT 1').fetchone()):
+                        if active_link_count(runtime, db):
                             raise MemoryFailure('protected_cutover_requires_migration')
                     server.single_writer = activated
                 if not activated:

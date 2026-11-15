@@ -147,9 +147,8 @@ def _initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Pa
     # Directories and key files are born owner-only through handle-relative
     # creation; no path-based mkdir/icacls window exists before secrets land.
     from .secure_ntfs import PrivateTree
-    key_tree = PrivateTree(key_root.parent)
-    with key_tree as anchor:
-        keys = anchor.mkdir(key_root.name)
+    with PrivateTree(key_root.parent) as key_anchor, PrivateTree(root.parent) as inbox_anchor:
+        keys = key_anchor.mkdir(key_root.name)
         for name, payload in (("receiving.json", _json(public).encode()),
                               ("writer.key", bytes(sender)),
                               ("recovery.json", recovery_record)):
@@ -157,30 +156,32 @@ def _initialize_protected_inbox(runtime: MemoryRuntime, root: Path, key_root: Pa
             held.stream.write(payload)
             held.stream.flush()
             os.fsync(held.stream.fileno())
-            held.release()
-    inbox_tree = PrivateTree(root.parent)
-    with inbox_tree as anchor:
-        inbox_dir = anchor.mkdir(root.name)
-        # SQLite later opens this born-private file through its own handle.
-        inbox_dir.create_file("inbox.sqlite3", write_share=True).release()
-    db = sqlite3.connect(root / "inbox.sqlite3", isolation_level=None)
-    try:
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=FULL")
-        db.execute("BEGIN IMMEDIATE")
-        db.execute("CREATE TABLE settings (singleton INTEGER PRIMARY KEY CHECK(singleton=1), inbox_id TEXT NOT NULL, public TEXT NOT NULL, runtime_binding BLOB NOT NULL)")
-        db.execute("""CREATE TABLE objects (id TEXT PRIMARY KEY, source TEXT UNIQUE NOT NULL,
-            fingerprint BLOB NOT NULL, envelope TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT)""")
-        binding = hmac.digest(runtime._fingerprint_key, b"evernook-protected-inbox-v1", hashlib.sha256)
-        db.execute("INSERT INTO settings VALUES (1,?,?,?)", (str(uuid4()), _json(public), binding))
-        db.execute("COMMIT")
-    finally:
-        db.close()
-    return ProtectedInbox(runtime, root, key_root)
+        inbox_dir = inbox_anchor.mkdir(root.name)
+        # Keep all identities held through SQLite's path re-open and the
+        # constructor's key reads; birth privacy alone is not a lifetime hold.
+        inbox_dir.create_file("inbox.sqlite3", write_share=True)
+        db = sqlite3.connect(root / "inbox.sqlite3", isolation_level=None)
+        try:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE settings (singleton INTEGER PRIMARY KEY CHECK(singleton=1), inbox_id TEXT NOT NULL, public TEXT NOT NULL, runtime_binding BLOB NOT NULL)")
+            db.execute("""CREATE TABLE objects (id TEXT PRIMARY KEY, source TEXT UNIQUE NOT NULL,
+                fingerprint BLOB NOT NULL, envelope TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT)""")
+            binding = hmac.digest(runtime._fingerprint_key, b"evernook-protected-inbox-v1", hashlib.sha256)
+            db.execute("INSERT INTO settings VALUES (1,?,?,?)", (str(uuid4()), _json(public), binding))
+            db.execute("COMMIT")
+        finally:
+            db.close()
+        keys.verify()
+        inbox_dir.verify()
+        return ProtectedInbox(runtime, root, key_root)
 
 
 def _require_protected_available(runtime: MemoryRuntime, core: sqlite3.Connection | None = None) -> None:
     from .missing_vault import read_state
+    from .vault_destroy import require_no_pending
+    require_no_pending(runtime)
     if not runtime._service_owner and _load(runtime.root / 'runtime.json').get('service_mode'):
         raise MemoryFailure('service_required')
     if core is None:
@@ -212,6 +213,15 @@ class ProtectedInbox:
                 ownership_gate(self.runtime.root, exclusive=False, timeout=self.runtime._timeout))
         with gate:
             _require_protected_available(self.runtime, gate_db)
+            from .vault_retirement import retired
+            if gate_db is not None:
+                gone = retired(self.runtime, gate_db)
+            else:
+                with self.runtime._unguarded_connection() as retirement_db:
+                    gone = retired(self.runtime, retirement_db)
+            if getattr(self, 'inbox_id', None) in gone or any(
+                    key_id == self.public['key_id'] for key_id in gone.values()):
+                raise MemoryFailure('vault_destroyed')
             from .missing_vault import attachment, multi_attachment
             if gate_db is not None:
                 attached = attachment(self.runtime, gate_db)

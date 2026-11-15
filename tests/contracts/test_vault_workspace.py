@@ -276,6 +276,21 @@ class VaultWorkspaceTests(unittest.TestCase):
             cleanup_workspaces(self.config, self.owner, [str(entry['id'])])
         self.assertEqual(len(list_workspaces(self.config, self.owner)), 1)
 
+    def test_deregistration_happens_only_after_new_child_creation_is_refused(self) -> None:
+        from evernook.vault_workspace import _save
+        entry = self.crash()
+        path = Path(str(entry['path']))
+        checked = []
+        def attempt_plant(runtime: MemoryRuntime, entries: list[dict[str, object]]) -> None:
+            with self.assertRaises(OSError):
+                (path / 'vault').mkdir()
+            checked.append(True)
+            _save(runtime, entries)
+        with patch('evernook.vault_workspace._save', side_effect=attempt_plant):
+            self.assertEqual(cleanup_workspaces(self.config, self.owner, [str(entry['id'])])['removed'], 1)
+        self.assertEqual(checked, [True])
+        self.assertFalse(path.exists())
+
     def test_filesystem_error_keeps_record_and_returns_a_stable_error(self) -> None:
         entry = self.crash()
         with patch('evernook.vault_workspace._remove_checked', side_effect=PermissionError('synthetic error')):

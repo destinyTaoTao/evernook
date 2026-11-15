@@ -29,6 +29,27 @@ class ArchiveTests(unittest.TestCase):
         checkpoint = capture_control_checkpoint(self.runtime, self.access)
         return replay_archive_controls(self.runtime, self.access, source, destination, checkpoint=checkpoint)
 
+    def test_retirement_is_authenticated_and_old_snapshot_cannot_omit_it(self) -> None:
+        from evernook.archive import capture_control_checkpoint
+        from evernook.vault_retirement import record, retired
+        before = capture_control_checkpoint(self.runtime, self.access)
+        snapshot = self.root / 'before-retirement'
+        self.runtime.export_archive(self.access, snapshot)
+        with self.runtime._connection() as core:
+            core.execute('BEGIN IMMEDIATE')
+            record(self.runtime, core, 'synthetic-destroyed-inbox', 'synthetic-key-id')
+            self.assertEqual(retired(self.runtime, core), {'synthetic-destroyed-inbox': 'synthetic-key-id'})
+            core.execute('COMMIT')
+        after = capture_control_checkpoint(self.runtime, self.access)
+        self.assertNotEqual(before.control_head, after.control_head)
+        with self.assertRaisesRegex(MemoryFailure, 'archive_control_incomplete'):
+            self.replay_controls(snapshot, self.root / 'unsafe-replay')
+        self.assertFalse((self.root / 'unsafe-replay').exists())
+        with self.runtime._connection() as core:
+            core.execute("UPDATE vault_retirements_v1 SET authentication=?", ('0' * 64,))
+            with self.assertRaisesRegex(MemoryFailure, 'vault_retirement_invalid'):
+                retired(self.runtime, core)
+
     def test_export_restores_exact_evidence_and_important_words_for_review_without_runtime_secrets(self) -> None:
         from evernook import restore_archive
 

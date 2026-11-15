@@ -139,7 +139,9 @@ def _read_state(runtime: MemoryRuntime, db: sqlite3.Connection) -> bool:
         if config.get('service_mode') is True and (runtime.root / 'recovery-receipt.json').exists():
             content, _ = _signed_receipt(runtime)
             if content['protected_references'] is True:
-                raise MemoryFailure('protected_recovery_proof_invalid')
+                from .vault_retirement import active_registry, active_link_count, retired
+                if not retired(runtime, db) or active_registry(runtime, db) or active_link_count(runtime, db):
+                    raise MemoryFailure('protected_recovery_proof_invalid')
         return False
     rows = db.execute('SELECT id,receipt_auth FROM restored_missing_vault_v1 LIMIT 2').fetchall()
     if not rows:

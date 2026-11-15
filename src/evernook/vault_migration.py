@@ -89,8 +89,9 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
 
     check()
     registry = core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_inbox_registry_v1'").fetchone()
-    entries = core.execute('SELECT inbox_id,key_id FROM protected_inbox_registry_v1 ORDER BY inbox_id').fetchall() if registry else []
-    if len(entries) != 1 or entries[0]['inbox_id'] != inbox.inbox_id or entries[0]['key_id'] != inbox.public['key_id']:
+    from .vault_retirement import active_registry, active_link_count
+    entries = active_registry(runtime, core)
+    if entries != {inbox.inbox_id: inbox.public['key_id']}:
         raise MemoryFailure('protected_cutover_requires_migration')
     ledger = core.execute('SELECT ledger_id FROM ledger_identity_v1 WHERE id=1').fetchone()
     if ledger is None:
@@ -112,7 +113,7 @@ def _snapshot(runtime: MemoryRuntime, inbox: ProtectedInbox, core: sqlite3.Conne
             or not hmac.compare_digest(bytes(settings['runtime_binding']), binding)):
         raise MemoryFailure('protected_binding_mismatch')
     has_links = core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_links_v1'").fetchone()
-    link_count = int(core.execute('SELECT count(*) FROM protected_links_v1').fetchone()[0]) if has_links else 0
+    link_count = active_link_count(runtime, core)
     core.set_progress_handler(lambda: int(time.monotonic() >= deadline or (cancel is not None and cancel.is_set())), 1000)
     try:
         if has_links:

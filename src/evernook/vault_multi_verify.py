@@ -74,8 +74,8 @@ def _inspect(runtime: MemoryRuntime, access: Access | None,
             raise MemoryFailure('protected_migration_material_changed')
         if not core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_inbox_registry_v1'").fetchone():
             raise MemoryFailure('protected_cutover_requires_migration')
-        registered = {(str(row['inbox_id']), str(row['key_id'])) for row in
-                      core.execute('SELECT inbox_id,key_id FROM protected_inbox_registry_v1')}
+        from .vault_retirement import active_registry, active_link_count
+        registered = set(active_registry(runtime, core).items())
         if registered != set(zip(ids, keys)):
             raise MemoryFailure('protected_cutover_requires_migration')
         ledger = core.execute('SELECT ledger_id FROM ledger_identity_v1 WHERE id=1').fetchone()
@@ -84,7 +84,7 @@ def _inspect(runtime: MemoryRuntime, access: Access | None,
         has_links = bool(core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='protected_links_v1'").fetchone())
         core.set_progress_handler(lambda: int(time.monotonic() >= deadline or (cancel is not None and cancel.is_set())), 1000)
         try:
-            links = int(core.execute('SELECT count(*) FROM protected_links_v1').fetchone()[0]) if has_links else 0
+            links = active_link_count(runtime, core)
             if has_links:
                 orphan = core.execute("""SELECT 1 FROM messages m LEFT JOIN protected_links_v1 l ON l.message_id=m.id
                     WHERE json_extract(m.event,'$.text')='[PROTECTED:ENCRYPTED_ORIGINAL]' AND l.message_id IS NULL LIMIT 1""").fetchone()

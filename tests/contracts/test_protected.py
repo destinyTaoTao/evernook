@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from typing import Any, cast
 from unittest.mock import patch
 
 from nacl import pwhash
@@ -37,6 +38,22 @@ class ProtectedTests(unittest.TestCase):
         self.inbox = initialize_protected_inbox(self.runtime, self.root / "inbox", self.root / "keys", self.password)
         self.event = Event(Source("synthetic", "session", "main", "1"), "user", 1, None,
                            "complete", "合成🙂\r\npassword=synthetic-protected-sentinel-123")
+
+    def test_initialization_holds_directories_and_key_files_until_sqlite_finishes(self) -> None:
+        inbox, keys = self.root / 'held-inbox', self.root / 'held-keys'
+        original = sqlite3.connect
+        checked = []
+        def connect(database: str | bytes | Path, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+            if isinstance(database, (str, Path)) and Path(database).resolve() == (inbox / 'inbox.sqlite3').resolve():
+                for path in (inbox, keys, keys / 'writer.key', inbox / 'inbox.sqlite3'):
+                    with self.assertRaises(OSError):
+                        path.rename(path.with_name(path.name + '-replaced'))
+                checked.append(True)
+            return cast(sqlite3.Connection, original(database, *args, **kwargs))
+        with patch('evernook.protected.sqlite3.connect', side_effect=connect):
+            created = initialize_protected_inbox(self.runtime, inbox, keys, self.password)
+        self.assertTrue(checked)
+        self.assertNotEqual(created.inbox_id, self.inbox.inbox_id)
 
     def test_stream_provenance_survives_interrupted_link_and_rejects_mismatch(self) -> None:
         from evernook.vault_crypto import _decrypt_event, _unlock

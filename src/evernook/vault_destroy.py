@@ -14,6 +14,7 @@ residual undelete risk and external copies are documented boundaries.
 from __future__ import annotations
 
 from contextlib import closing
+from datetime import datetime, timezone
 import ctypes
 from ctypes import wintypes
 import hashlib
@@ -26,7 +27,8 @@ import sqlite3
 import stat
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
+from uuid import UUID
 
 from .backup import _json_bytes
 from .missing_vault import attachment, multi_attachment
@@ -60,20 +62,26 @@ def _record_path(runtime: MemoryRuntime, inbox_id: str) -> Path:
     return runtime.root / f'vault-destruction-{inbox_id}.json'
 
 
-def _load_record(runtime: MemoryRuntime, inbox_id: str) -> dict[str, Any] | None:
+def _load_record(runtime: MemoryRuntime, inbox_id: str, *, verify_permissions: bool = True) -> dict[str, Any] | None:
     path = _record_path(runtime, inbox_id)
-    verify_private_directory(runtime.root, extra_files=(path,))
+    if verify_permissions:
+        verify_private_directory(runtime.root, extra_files=(path,))
     if not path.exists():
         return None
     try:
-        value = _json_bytes(path.read_bytes()[:65537], 65536)
+        with path.open('rb') as source:
+            value = _json_bytes(source.read(65537), 65536)
         content = value['content']
         expected = hmac.digest(runtime._fingerprint_key, b'evernook-vault-destruction-v1\0'
                                + _json(content).encode(), hashlib.sha256).hex()
+        legacy = {'version', 'inbox_id', 'steps'}
+        fields = legacy | {'inbox_dir', 'key_dir', 'identities', 'transition', 'client_id', 'authorized_at'}
         if (set(value) != {'content', 'authentication'} or not isinstance(content, dict)
-                or set(content) != {'version', 'inbox_id', 'steps'} or type(content['version']) is not int
-                or content['version'] != 1 or content['inbox_id'] != inbox_id
+                or set(content) not in (legacy, fields) or type(content['version']) is not int
+                or content['version'] not in (1, 2) or content['inbox_id'] != inbox_id
+                or (content['version'] == 2 and set(content) != fields)
                 or not isinstance(content['steps'], dict)
+                or set(content['steps']) != set(_STEPS)
                 or any(key not in _STEPS or state not in ('pending', 'done')
                        for key, state in content['steps'].items())
                 or not hmac.compare_digest(value['authentication'], expected)):
@@ -81,6 +89,28 @@ def _load_record(runtime: MemoryRuntime, inbox_id: str) -> dict[str, Any] | None
         return content
     except (OSError, ValueError, TypeError, KeyError):
         raise MemoryFailure('vault_destruction_record_invalid') from None
+
+
+def pending_records(runtime: MemoryRuntime) -> list[dict[str, Any]]:
+    """A durable authorization freezes protected access until recovery finishes."""
+    records = []
+    for path in runtime.root.glob('vault-destruction-*.json'):
+        inbox_id = path.name[len('vault-destruction-'):-len('.json')]
+        try:
+            if str(UUID(inbox_id)) != inbox_id:
+                raise ValueError()
+        except ValueError:
+            raise MemoryFailure('vault_destruction_record_invalid') from None
+        record = _load_record(runtime, inbox_id, verify_permissions=False)
+        if (record is not None and record['steps'].get('verify_password') == 'done'
+                and record['steps'].get('release_binding') != 'done'):
+            records.append(record)
+    return records
+
+
+def require_no_pending(runtime: MemoryRuntime) -> None:
+    if pending_records(runtime):
+        raise MemoryFailure('vault_destruction_in_progress')
 
 
 def _save_record(runtime: MemoryRuntime, content: dict[str, Any]) -> None:
@@ -99,7 +129,12 @@ def _hold_and_check(path: Path) -> tuple[Any, int]:
     kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
     kernel.CreateFileW.restype = wintypes.HANDLE
-    handle = kernel.CreateFileW(str(path), 0x10000 | 0x80, 0x1 | 0x2, None, 3, 0x02000000, None)
+    kernel.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+    kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    share = 0x1 if stat.S_ISDIR(before.st_mode) else 0x3
+    handle = kernel.CreateFileW(str(path), 0x10000 | 0x80, share, None, 3, 0x02200000, None)
     if handle == wintypes.HANDLE(-1).value:
         raise MemoryFailure('vault_destroy_busy')
     try:
@@ -116,26 +151,37 @@ def _hold_and_check(path: Path) -> tuple[Any, int]:
 
 
 def _unlink_held(kernel: Any, fd: int) -> None:
+    try:
+        _mark_delete(kernel, fd)
+    finally:
+        os.close(fd)
+
+
+def _mark_delete(kernel: Any, fd: int) -> None:
     disposition = ctypes.c_ubyte(1)
     if not kernel.SetFileInformationByHandle(msvcrt.get_osfhandle(fd), 4, ctypes.byref(disposition), 1):
-        os.close(fd)
         raise MemoryFailure('vault_destroy_failed')
-    os.close(fd)
 
 
-def _delete_contents(directory: Path, allowed: tuple[str, ...]) -> None:
+def _delete_contents(directory: Path, allowed: tuple[str, ...], *, on_empty: Callable[[], None] | None = None) -> None:
     """Unlink exactly the expected children; tolerate already-deleted files."""
     if not directory.exists():
-        return
+        raise MemoryFailure('vault_destroy_outcome_unknown')
     verify_private_directory(directory)
-    present = sorted(child.name for child in directory.iterdir())
-    if any(name not in allowed for name in present):
-        raise MemoryFailure('vault_destroy_unknown_content')
-    for name in present:
-        kernel, fd = _hold_and_check(directory / name)
-        _unlink_held(kernel, fd)
-    if directory.exists():
-        directory.rmdir()
+    kernel, directory_fd = _hold_and_check(directory)
+    try:
+        present = sorted(child.name for child in directory.iterdir())
+        if any(name not in allowed or not stat.S_ISREG((directory / name).lstat().st_mode) for name in present):
+            raise MemoryFailure('vault_destroy_unknown_content')
+        for name in present:
+            child_kernel, fd = _hold_and_check(directory / name)
+            _unlink_held(child_kernel, fd)
+        _mark_delete(kernel, directory_fd)
+        if on_empty is not None:
+            on_empty()
+    finally:
+        if directory_fd != -1:
+            os.close(directory_fd)
 
 
 def _resolve_bound_target(runtime: MemoryRuntime, core: sqlite3.Connection,
@@ -165,69 +211,87 @@ def _resolve_bound_target(runtime: MemoryRuntime, core: sqlite3.Connection,
     return str(restored['inbox_id'])
 
 
-def _release_binding(runtime: MemoryRuntime, core: sqlite3.Connection, inbox_id: str) -> None:
-    """Keep the binding invariant: fewer vaults degrade, none returns to local.
-
-    A multi set that still holds at least two members keeps its authenticated
-    binding (primary is re-derived if it was destroyed); one remaining member
-    degrades to the single binding; no remaining member clears the protected
-    flags so ordinary memory stays readable in local mode again.
-    """
+def _release_plan(runtime: MemoryRuntime, core: sqlite3.Connection, inbox_id: str) -> dict[str, Any]:
+    """Capture both sides before changing any file; the HMAC journal owns replay."""
     from .vault_multi_binding import BINDING_NAME as MULTI_NAME, _auth as multi_auth, read as read_multi
-    from .vault_single_binding import BINDING_NAME as SINGLE_NAME, _auth as single_auth
+    from .vault_single_binding import BINDING_NAME as SINGLE_NAME, _auth as single_auth, read as read_single
     config = _load(runtime.root / 'runtime.json')
+    filenames = ('runtime.json', MULTI_NAME, SINGLE_NAME)
+    files: dict[str, Any] = {name: {'before': _load(runtime.root / name) if (runtime.root / name).exists() else None,
+                    'after': None} for name in filenames}
+    files['runtime.json']['after'] = config
+    tables: dict[str, Any] = {}
+    for name in ('restored_multi_attachment_v1', 'restored_vault_attachment_v1'):
+        exists = core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        rows = [list(row) for row in core.execute(f'SELECT id,content,authentication FROM {name}')] if exists else None
+        tables[name] = {'before': rows, 'after': None}
+    entry: dict[str, Any] | None
     if config.get('protected_multi_binding') is True:
         binding = read_multi(runtime)
         if binding is None:
             raise MemoryFailure('protected_multi_binding_mismatch')
+        entry = next(item for item in binding['inboxes'] if item['inbox_id'] == inbox_id)
         remaining = [item for item in binding['inboxes'] if item.get('inbox_id') != inbox_id]
-        has_marker = core.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='restored_multi_attachment_v1'").fetchone()
-        marker = multi_attachment(runtime, core) if has_marker else None
+        marker = multi_attachment(runtime, core)
         if len(remaining) >= 2:
-            if binding['primary'] == inbox_id:
-                binding = {**binding, 'inboxes': remaining, 'primary': remaining[0]['inbox_id']}
-            else:
-                binding = {**binding, 'inboxes': remaining}
-            _atomic_json(runtime.root / MULTI_NAME,
-                         {'content': binding, 'authentication': multi_auth(runtime, binding)})
+            binding = {**binding, 'inboxes': remaining,
+                       'primary': remaining[0]['inbox_id'] if binding['primary'] == inbox_id else binding['primary']}
+            files[MULTI_NAME]['after'] = {'content': binding, 'authentication': multi_auth(runtime, binding)}
             if marker is not None:
                 content = {'version': 1, 'receipt_auth': marker['receipt_auth'], 'binding': binding}
                 authentication = hmac.digest(runtime._fingerprint_key, b'evernook-multi-vault-attachment-v1\0'
                                              + _json(content).encode(), hashlib.sha256).hex()
-                core.execute('UPDATE restored_multi_attachment_v1 SET content=?, authentication=? WHERE id=1',
-                             (_json(content), authentication))
-        else:
-            (runtime.root / MULTI_NAME).unlink()
+                tables['restored_multi_attachment_v1']['after'] = [[1, _json(content), authentication]]
+        elif remaining:
+            single = {'version': 1, **remaining[0]}
+            files[SINGLE_NAME]['after'] = {'content': single, 'authentication': single_auth(runtime, single)}
+            files['runtime.json']['after'] = {key: value for key, value in config.items() if key != 'protected_multi_binding'}
+            files['runtime.json']['after']['protected_single_binding'] = True
             if marker is not None:
-                core.execute('DROP TABLE restored_multi_attachment_v1')
-            if len(remaining) == 1:
-                entry = remaining[0]
-                single = {'version': 1, 'inbox_id': entry['inbox_id'], 'key_id': entry['key_id'],
-                          'inbox_dir': entry['inbox_dir'], 'key_dir': entry['key_dir'],
-                          'material': entry['material']}
-                _atomic_json(runtime.root / SINGLE_NAME,
-                             {'content': single, 'authentication': single_auth(runtime, single)})
-                degraded = {key: value for key, value in config.items() if key != 'protected_multi_binding'}
-                degraded['protected_single_binding'] = True
-                _atomic_json(runtime.root / 'runtime.json', degraded)
-                return
-            _atomic_json(runtime.root / 'runtime.json',
-                         {'schema_version': 1, 'data_dir': config['data_dir'],
-                          'busy_timeout_ms': config['busy_timeout_ms']})
-        return
-    if config.get('protected_single_binding') is True:
-        (runtime.root / SINGLE_NAME).unlink()
-        _atomic_json(runtime.root / 'runtime.json',
-                     {'schema_version': 1, 'data_dir': config['data_dir'],
-                      'busy_timeout_ms': config['busy_timeout_ms']})
-        return
-    restored = attachment(runtime, core)
-    if restored is not None and restored['inbox_id'] == inbox_id:
-        core.execute('DROP TABLE restored_vault_attachment_v1')
-        _atomic_json(runtime.root / 'runtime.json',
-                     {'schema_version': 1, 'data_dir': config['data_dir'],
-                      'busy_timeout_ms': config['busy_timeout_ms']})
+                content = {**single, 'receipt_auth': marker['receipt_auth']}
+                authentication = hmac.digest(runtime._fingerprint_key, b'evernook-vault-attachment-v1\0'
+                                             + _json(content).encode(), hashlib.sha256).hex()
+                tables['restored_vault_attachment_v1']['after'] = [[1, _json(content), authentication]]
+    else:
+        entry = read_single(runtime) if config.get('protected_single_binding') is True else attachment(runtime, core)
+        if entry is None or entry['inbox_id'] != inbox_id:
+            raise MemoryFailure('vault_destroy_unbound')
+        remaining = []
+    if not remaining:
+        files['runtime.json']['after'] = {key: config[key] for key in ('schema_version', 'data_dir', 'busy_timeout_ms')}
+    return {'files': files, 'tables': tables, 'key_id': entry['key_id']}
+
+
+def _release_binding(runtime: MemoryRuntime, core: sqlite3.Connection, inbox_id: str,
+                     plan: dict[str, Any]) -> None:
+    """Idempotently publish only the exact before/after states in the journal."""
+    from .vault_retirement import record as retire
+    files, tables = plan['files'], plan['tables']
+    if (set(files) != {'runtime.json', 'protected-multi-binding.json', 'protected-single-binding.json'}
+            or set(tables) != {'restored_multi_attachment_v1', 'restored_vault_attachment_v1'}):
+        raise MemoryFailure('vault_destruction_record_invalid')
+    for name, change in files.items():
+        path = runtime.root / name
+        current = _load(path) if path.exists() else None
+        if current not in (change['before'], change['after']):
+            raise MemoryFailure('vault_destruction_state_changed')
+    for name, change in tables.items():
+        exists = core.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        current_rows = [list(row) for row in core.execute(f'SELECT id,content,authentication FROM {name}')] if exists else None
+        if current_rows not in (change['before'], change['after']):
+            raise MemoryFailure('vault_destruction_state_changed')
+    retire(runtime, core, inbox_id, plan['key_id'])
+    for name, change in tables.items():
+        core.execute(f'DROP TABLE IF EXISTS {name}')
+        if change['after'] is not None:
+            core.execute(f'CREATE TABLE {name} (id INTEGER PRIMARY KEY CHECK(id=1), content TEXT NOT NULL, authentication TEXT NOT NULL)')
+            core.executemany(f'INSERT INTO {name} VALUES (?,?,?)', change['after'])
+    for name, change in files.items():
+        path = runtime.root / name
+        if change['after'] is None:
+            path.unlink(missing_ok=True)
+        else:
+            _atomic_json(path, change['after'])
 
 
 def destroy_vault(config: Path, access: Access, inbox_dir: Path, key_dir: Path, password: bytes, *,
@@ -261,8 +325,27 @@ def destroy_vault(config: Path, access: Access, inbox_dir: Path, key_dir: Path, 
             with runtime._connection(ownership_exclusive=True, check=remaining) as core:
                 core.execute('BEGIN IMMEDIATE')
                 _authorize_admin(runtime, access)
-                inbox_id = _resolve_bound_target(runtime, core, inbox_dir, key_dir)
-                record = _load_record(runtime, inbox_id)
+                pending = pending_records(runtime)
+                record = None
+                if pending:
+                    if len(pending) == 1 and pending[0]['version'] == 1:
+                        # Legacy journals have no paths or publication intent.
+                        # Upgrade only while the original authenticated binding
+                        # can still prove the caller's exact target.
+                        try:
+                            legacy_id = _resolve_bound_target(runtime, core, inbox_dir, key_dir)
+                        except MemoryFailure:
+                            raise MemoryFailure('vault_destruction_legacy_recovery_required') from None
+                        if legacy_id != pending[0]['inbox_id']:
+                            raise MemoryFailure('vault_destroy_unbound')
+                    elif (len(pending) != 1 or pending[0].get('inbox_dir') != str(inbox_dir)
+                          or pending[0].get('key_dir') != str(key_dir)):
+                        raise MemoryFailure('vault_destruction_in_progress')
+                    record = pending[0]
+                    inbox_id = str(record['inbox_id'])
+                else:
+                    inbox_id = _resolve_bound_target(runtime, core, inbox_dir, key_dir)
+                    record = _load_record(runtime, inbox_id)
                 authorized = record is not None and record['steps'].get('verify_password') == 'done'
                 if not authorized:
                     # First authorization: the live vault must still exist and
@@ -286,9 +369,26 @@ def destroy_vault(config: Path, access: Access, inbox_dir: Path, key_dir: Path, 
                                 or not hmac.compare_digest(bytes(settings['runtime_binding']), binding_key)):
                             raise MemoryFailure('protected_attachment_mismatch')
                     _unlock(_LiveVault(key_dir, public, recipient), password)
-                if record is None:
-                    record = {'version': 1, 'inbox_id': inbox_id,
-                              'steps': {step: 'pending' for step in _STEPS}}
+                if record is None or record['version'] == 1:
+                    steps = record['steps'] if record is not None else {step: 'pending' for step in _STEPS}
+                    identities = {}
+                    for path, step in ((inbox_dir, 'delete_inbox'), (key_dir, 'delete_keys')):
+                        try:
+                            info = path.lstat()
+                            identities[str(path)] = [info.st_dev, info.st_ino]
+                        except FileNotFoundError:
+                            if steps[step] != 'done':
+                                raise MemoryFailure('vault_destroy_outcome_unknown') from None
+                            identities[str(path)] = [0, 0]
+                    record = {'version': 2, 'inbox_id': inbox_id,
+                              'inbox_dir': str(inbox_dir), 'key_dir': str(key_dir),
+                              'identities': identities,
+                              'transition': _release_plan(runtime, core, inbox_id),
+                              'client_id': access.client_id,
+                              'authorized_at': datetime.now(timezone.utc).isoformat(),
+                              'steps': steps}
+                if record['version'] != 2:
+                    raise MemoryFailure('vault_destruction_record_invalid')
                 if record['inbox_id'] != inbox_id or set(record['steps']) != set(_STEPS):
                     raise MemoryFailure('vault_destruction_record_invalid')
 
@@ -303,28 +403,33 @@ def destroy_vault(config: Path, access: Access, inbox_dir: Path, key_dir: Path, 
                 # the material is gone.
                 mark('freeze_service')
                 check()
-                _delete_contents(inbox_dir, INBOX_FILES)
-                mark('delete_inbox')
-                check()
-                _delete_contents(key_dir, KEY_FILES)
-                mark('delete_keys')
+                for directory, allowed, step in ((inbox_dir, INBOX_FILES, 'delete_inbox'),
+                                                  (key_dir, KEY_FILES, 'delete_keys')):
+                    if record['steps'][step] != 'done':
+                        if directory.exists():
+                            info = directory.lstat()
+                            if [info.st_dev, info.st_ino] != record['identities'][str(directory)]:
+                                raise MemoryFailure('vault_destroy_unsafe')
+                        _delete_contents(directory, allowed, on_empty=lambda: mark(step))
+                    check()
                 mark('remove_directories')
                 check()
                 # Every registered recovery workspace holds key or ciphertext
                 # copies and must not survive the destruction of its origin.
                 entries = _read_workspaces(runtime)
                 removed = 0
-                for entry in entries:
+                for entry in list(entries):
                     _authorize_admin(runtime, access)
-                    _remove(entry)
-                    entries.remove(entry)
-                    _save_workspaces(runtime, entries)
+                    def forget() -> None:
+                        entries.remove(entry)
+                        _save_workspaces(runtime, entries)
+                    _remove(entry, on_empty=forget)
                     removed += 1
                 mark('clean_workspaces')
                 check()
-                _release_binding(runtime, core, inbox_id)
-                mark('release_binding')
+                _release_binding(runtime, core, inbox_id, record['transition'])
                 core.execute('COMMIT')
+                mark('release_binding')
                 return {'inbox_id': inbox_id, 'steps': record['steps'], 'workspaces_removed': removed,
                         'physical_erasure_verified': False,
                         'independent_backups_scope': 'outside_local_destruction'}
