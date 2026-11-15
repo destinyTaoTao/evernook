@@ -165,6 +165,22 @@ class SemanticRecall:
         self.runtime._require_scope(access, "maintain", "semantic_refresh")
         if type(limit) is not int or not 1 <= limit <= 16:
             raise MemoryFailure("invalid_page")
+        return self._refresh(access, limit=limit, timeout=timeout, cancel=cancel)
+
+    def refresh_window(self, access: Access, *, limit: int = 1000, timeout: float = 120,
+                       cancel: threading.Event | None = None) -> SemanticStatus:
+        """Snapshot at most 1000 chunks; commit independently rechecked batches of 16.
+
+        A canceled/failed window retains completed batches, exactly as repeated
+        refresh calls do. No inference runs inside a database transaction.
+        """
+        self.runtime._require_scope(access, 'maintain', 'semantic_refresh_window')
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise MemoryFailure('invalid_page')
+        return self._refresh(access, limit=limit, timeout=timeout, cancel=cancel)
+
+    def _refresh(self, access: Access, *, limit: int, timeout: float,
+                 cancel: threading.Event | None) -> SemanticStatus:
         self._timeout(timeout)
         deadline = time.monotonic() + timeout
         def budget() -> float:
@@ -213,34 +229,38 @@ class SemanticRecall:
         if not pending:
             return self.status(access, check=budget)
         assert self._embed_documents is not None
-        vectors = self._embed_documents(tuple(item[-1] for item in pending), timeout=budget(), cancel=cancel)
-        budget()
-        if len(vectors) != len(pending):
-            raise MemoryFailure("invalid_embedding")
-        encoded = [None if vector is None else struct.pack(f"<{space.dimensions}f", *unit_vector(vector, space.dimensions))
-                   for vector in vectors]
-        writable = [(item, code) for item, code in zip(pending, encoded) if code is not None]
-        unembeddable = [item for item, code in zip(pending, encoded) if code is None]
-        self.runtime._authorize(access)
-        with self.runtime._connection(check=budget) as db:
-            db.execute("BEGIN IMMEDIATE")
-            for item, vector in writable:
-                budget()
-                message_id, version, content_version, length, count, start, end, _ = item
-                current = self.runtime._state(db, message_id)
-                if current.status != "active" or current.version != version:
-                    raise MemoryFailure("stale_source")
-                db.execute("INSERT OR REPLACE INTO semantic_documents_v1 VALUES (?,?,?,?,?,?)",
-                    (space.key, message_id, version, content_version, length, count))
-                db.execute("INSERT OR REPLACE INTO semantic_chunks_v1 VALUES (?,?,?,?,?,?,?)",
-                    (space.key, message_id, start, end, version, content_version, vector))
-                db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
-                    AND (state_version<>? OR content_version<>?)""",
-                    (space.key, message_id, version, content_version))
+        for begin in range(0, len(pending), 16):
             budget()
-            db.execute("COMMIT")
-        if unembeddable:
-            self._mark_failures(access, unembeddable, check=budget)
+            batch = pending[begin:begin + 16]
+            vectors = self._embed_documents(tuple(item[-1] for item in batch), timeout=budget(), cancel=cancel)
+            budget()
+            if len(vectors) != len(batch):
+                raise MemoryFailure("invalid_embedding")
+            encoded = [None if vector is None else struct.pack(f"<{space.dimensions}f", *unit_vector(vector, space.dimensions))
+                       for vector in vectors]
+            writable = [(item, code) for item, code in zip(batch, encoded) if code is not None]
+            unembeddable = [item for item, code in zip(batch, encoded) if code is None]
+            self.runtime._require_scope(access, "maintain", "semantic_refresh_commit")
+            with self.runtime._connection(check=budget) as db:
+                db.execute("BEGIN IMMEDIATE")
+                for item, vector in writable:
+                    budget()
+                    message_id, version, content_version, length, count, start, end, _ = item
+                    current = self.runtime._state(db, message_id)
+                    if current.status != "active" or current.version != version:
+                        raise MemoryFailure("stale_source")
+                    db.execute("INSERT OR REPLACE INTO semantic_documents_v1 VALUES (?,?,?,?,?,?)",
+                        (space.key, message_id, version, content_version, length, count))
+                    db.execute("INSERT OR REPLACE INTO semantic_chunks_v1 VALUES (?,?,?,?,?,?,?)",
+                        (space.key, message_id, start, end, version, content_version, vector))
+                    db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
+                        AND (state_version<>? OR content_version<>?)""",
+                        (space.key, message_id, version, content_version))
+                budget()
+                self.runtime._require_scope(access, "maintain", "semantic_refresh_commit")
+                db.execute("COMMIT")
+            if unembeddable:
+                self._mark_failures(access, unembeddable, check=budget)
         return self.status(access, check=budget)
 
     def _mark_failures(self, access: Access, items: list[tuple[str, int, int, int, int, int, int, str]], *,
