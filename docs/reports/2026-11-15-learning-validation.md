@@ -1,5 +1,7 @@
 # #121 / #148：补齐可自动执行的真实采集阶段
 
+> 资源勘误：本文旧 PID 父链峰值归属未经验证，撤回资源验收用途。修复后完整词法控制另采 33 个场景：retrieval 21 过/12 败，evidence 19 过/14 败，automatic 33 过/0 败；三维均无缺项，总计 73/26/693。该新控制补齐旧 32 例控制的处理器阶段，未覆盖另外三个 arm 或判断/维护/宿主维度。Job 窗口 257 次采样、1 次查询失败，观察 private 峰值 120684544 字节，非硬峰值。[总报告](2026-11-15-autonomous-validation.md)保留归属证据。
+
 固定 zh-learning-v1 的 raw arm 已实际采集全部 33 个场景，之前跳过的恢复、确认删除、处理器切换与三处大位置场景均执行真实协议。冻结套件 SHA256 仍为 `b96415eb4800e1afd51834ae0740f518adacacd3bc166ef679a43911ea5d8ae1`，policy/scorer 未改。
 
 完整 MiniLM + ready lexical 结果：retrieval 24 过/9 败、evidence 22 过/11 败、有限 automatic 33 过/0 败；这三维均无缺项。judgment、maintenance、host_answer 与其他三个 arm 尚未由这个采集器实现，仍按缺失保留。整个 792-cell 评分为 79 过/20 败/693 缺，不构成质量准入。无模型的独立词法控制为 32 个场景，保留 processor_changed 缺项，不能与完整模型采集混成一个成绩。

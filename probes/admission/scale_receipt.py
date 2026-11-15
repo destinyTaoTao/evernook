@@ -10,7 +10,7 @@ from pathlib import Path
 
 from evernook import Event, LocalMiniLM, MemoryRuntime, SemanticRecall, Source
 from evernook.paths import external
-from scale_ingest import save
+from probes.admission.scale_ingest import save
 
 
 def main() -> int:
@@ -33,6 +33,7 @@ def main() -> int:
     actor = runtime.access_from_file(args.fixture / "runtime/mcp-access-scale-writer.json")
     actual = runtime.status(actor).messages
     semantic = SemanticRecall(runtime, LocalMiniLM.from_file(args.embedding_config)).status(actor)
+    lexical = runtime.lexical_status(actor)
     topics = ("湖边步道观察记录", "厨房食材库存记录", "天文摄影曝光记录", "编辑器快捷键练习",
               "图书馆书架整理记录", "公交时刻抄录练习", "花园植物浇水记录", "散步路线观察笔记")
     selected = []
@@ -48,16 +49,21 @@ def main() -> int:
         expected_event = Event(source, 'user', index, when.isoformat(), 'complete', expected)
         selected.append({"index": index, "message_id": message.receipt.message_id if message else None,
             "exact_original": message is not None and message.receipt.original_saved and message.event == expected_event})
-    complete = ingest is not None and actual == ingest['completed'] == ingest['expected_messages'] == manifest['expected_messages']
+    counts_complete = (ingest is not None and ingest['error_code'] is None
+        and actual == ingest['completed'] == ingest['actual_messages'] == ingest['expected_messages'] == manifest['expected_messages'])
+    complete = counts_complete and all(row['exact_original'] for row in selected)
     save(root / "report.json", {"expected_messages": manifest['expected_messages'], "actual_messages": actual,
         "writer_report_count_matches": actual == ingest['actual_messages'] if ingest is not None else None,
-        'writer_report_missing': ingest is None, 'complete_fixture': complete,
+        'writer_report_missing': ingest is None, 'counts_complete': counts_complete, 'complete_fixture': complete,
         "ingest_error_code": ingest['error_code'] if ingest is not None else 'writer_report_missing',
-        "semantic": asdict(semantic), "selected_roundtrips": selected,
-        "ready_for_full_scale_query_matrix": complete, "admission": "blocked" if not complete else "pending",
+        "semantic": asdict(semantic), 'lexical': asdict(lexical), "selected_roundtrips": selected,
+        'ready_for_target_size_measurements': complete,
+        "ready_for_full_scale_query_matrix": bool(complete and semantic.state == 'ready'
+            and not semantic.failed_chunks and lexical.state == 'ready'),
+        "admission": "blocked" if not complete else "pending",
         "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "scope": "Post-writer public status/selected-source reconciliation only. Missing target-size matrix, cold/warm timings and coverage remain unmeasured; no extrapolation or inferred vector counts."})
-    return 0 if complete and all(row["exact_original"] for row in selected) else 2
+    return 0 if complete else 2
 
 
 if __name__ == "__main__":

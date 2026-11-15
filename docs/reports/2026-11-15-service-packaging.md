@@ -1,5 +1,7 @@
 # #241：普通服务的可选保险库依赖
 
+> 资源勘误：本文旧 PID 父链峰值归属未经验证，撤回资源验收用途。最终 wheel 在真实 site-packages、无 src 路径环境下另测 31 次 IPC/context：首次 3405.21 ms，后 30 次 p50/p95 905.81/1104.46 ms，小夹具也不能保证 1 秒。Job 监控 147 次采样、零查询失败，private 观察峰值 854126592 字节。先前一个带 src 环境的 Job 尝试已明确排除安装验证，不与新结果合并。详见[总报告](2026-11-15-autonomous-validation.md)。
+
 非 editable Core 安装实测暴露普通服务启动失败：service 无条件读取单库绑定模块，该模块为一个有界文件读取 helper 引入 vault_migration，进而无条件导入可选 PyNaCl。只安装 Core/MCP 而没有 vault extra 的环境无法启动普通记忆服务。
 
 修复仅将绑定的 64 KiB 上限读取留在轻量 HMAC/JSON 校验模块，保持 duplicate-key、材料结构、认证、路径权限及错误语义；不导入迁移/加密实现。未配置保险库可以启动，配置或绑定不一致仍按原规则拒绝，未改变 vault 的依赖声明。

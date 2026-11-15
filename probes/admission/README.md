@@ -179,16 +179,23 @@ On Windows, wrap a command with:
 .venv\Scripts\python.exe probes/admission/monitor.py --output E:\lab\monitor-01 --max-seconds 900 -- COMMAND ARGUMENTS
 ```
 
-The wrapper samples its owned live process tree every 250 ms, records stdout/stderr, and reports
-the observed aggregate Private Bytes peak. Short-lived children between samples and post-root
-orphans may be missed; this is not a hard peak-memory guarantee. Query failures are explicit.
+The wrapper starts an independent Windows Job before launching the target, queries members
+including nested worker Jobs, and verifies membership on opened handles every 250 ms.
+It records stdout/stderr, creation FILETIME, launch-harness hashes and observed aggregate
+Private Bytes. Controlled wrapper overhead is included. Short-lived peaks between samples
+may be missed; this is not a hard peak-memory guarantee. Query failures are explicit.
+Old PID-parent-chain samples do not establish ownership: PID reuse was actually observed.
+Those archived resource peaks are ownership-unverified and cannot admit a resource gate;
+raw counts, timings and scores remain independently scoped. See the dated
+[erratum and independent reruns](../../docs/reports/2026-11-15-autonomous-validation.md).
 The wrapper does not kill unrelated processes or change the workstation's network/power state.
 Worker-level network blocking does not establish physical OS disconnection or sleep recovery.
 
 The wrapper now defaults to a **900-second overall operator budget**. Create `OUTPUT/STOP`
 to stop earlier. Either control attempts to terminate the owned command tree, writes an explicit
-stop reason and exits 2; termination errors remain in `stop_error` and require cleanup rather
-than implying a stopped tree. Root exit does not prove absence of orphan processes. Partial
+stop reason and exits 2; termination errors remain in `stop_error`, fallback-close errors in
+`cleanup_errors`, and actual wrapper exit is checked. Job close also reclaims owned descendants.
+No PID-tree taskkill is used. Partial
 or missing samples cannot pass admission. Run `scale_query.py` through
 this wrapper: its per-batch timeouts alone do not bound the complete matrix. A deliberately
 long formal campaign must explicitly choose a larger operator budget and record it. The

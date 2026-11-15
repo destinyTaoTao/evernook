@@ -56,8 +56,9 @@ class MonitorControlsTest(unittest.TestCase):
             self.assertEqual(root.parent, Path(tempfile.gettempdir()).resolve())
             bootstrap = ("import sys,runpy,subprocess; from pathlib import Path; "
                 "sys.argv=sys.argv[1:]; sys.path.insert(0,str(Path(sys.argv[0]).parent)); "
-                "exec('def fail(*args, **kwargs):\\n raise subprocess.CalledProcessError(1,args[0])'); "
-                "subprocess.run=fail; runpy.run_path(sys.argv[0],run_name='__main__')")
+                "from probes.admission.experiment_job import ExperimentJob; "
+                "exec('def fail(*args, **kwargs):\\n raise RuntimeError(\"injected terminate failure\")'); "
+                "ExperimentJob.terminate=fail; runpy.run_path(sys.argv[0],run_name='__main__')")
             child = "import sys,time; from pathlib import Path; Path(sys.argv[1]).touch(); time.sleep(4)"
             result = subprocess.run([sys.executable, "-c", bootstrap,
                 str(Path(__file__).with_name("monitor.py")), "--output", str(root / "monitor"),
@@ -67,9 +68,9 @@ class MonitorControlsTest(unittest.TestCase):
             report = json.loads((root / "monitor/report.json").read_text(encoding="utf-8"))
             self.assertEqual(result.returncode, 2)
             self.assertEqual(report["stop_reason"], "operator_stop")
-            self.assertEqual(report["stop_error"], "CalledProcessError")
-            self.assertFalse(report["root_exited"])
-            time.sleep(4.2)  # The deliberately unkillable synthetic child exits on its own.
+            self.assertEqual(report["stop_error"], "RuntimeError")
+            self.assertEqual(report["cleanup_errors"], ['RuntimeError'])
+            self.assertTrue(report["root_exited"], 'Closing the owned Job must still reclaim the wrapper')
 
 
 if __name__ == "__main__":

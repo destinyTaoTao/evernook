@@ -200,7 +200,8 @@
           },
           "elapsed_ms": 4758.002499991562
         }
-      ]
+      ],
+      "resource_evidence_status": "ownership_unverified_pid_parent"
     },
     "role-boundary-minimal": {
       "report_sha256": "e44c9856ab1640915b8b885403e4c3bc04c8ac1ca74ada09fa477426e942fdca",
@@ -397,7 +398,8 @@
           },
           "elapsed_ms": 5132.657800015295
         }
-      ]
+      ],
+      "resource_evidence_status": "ownership_unverified_pid_parent"
     },
     "learning-native": {
       "report_sha256": "8242b4131513c0eb03959fec282c16a092af6a7eed699b2cc5c80b929c25bd49",
@@ -945,7 +947,8 @@
           },
           "elapsed_ms": 5826.975499978289
         }
-      ]
+      ],
+      "resource_evidence_status": "ownership_unverified_pid_parent"
     }
   },
   "learning_projection": {
@@ -993,5 +996,36 @@
         "missing": 33
       }
     }
+  },
+  "resource_erratum": {
+    "status": "all original PID-parent monitor peaks ownership-unverified; excluded from resource admission",
+    "raw_scores_unchanged": true,
+    "reference": "2026-11-15-autonomous-validation.md"
+  },
+  "job_owned_rerun": {
+    "report": {
+      "artifact": "role-boundary-minimal-job-owned/report.json",
+      "bytes": 23755,
+      "sha256": "514909274fe3f178d689cce365f161227cbd1ad76508892ac27a748c9a11bf81"
+    },
+    "monitor": {
+      "returncode": 0,
+      "elapsed_seconds": 69.37531730000046,
+      "stop_reason": null,
+      "stop_error": null,
+      "root_exited": true,
+      "max_seconds": 180.0,
+      "ownership": "windows_job_v1",
+      "samples": 277,
+      "query_failures": 0,
+      "peak_observed_tree_private_bytes": 580214784
+    },
+    "raw_totals": {
+      "passed": 8,
+      "failed": 2,
+      "invalid": 0,
+      "unobserved": 0
+    },
+    "admission": "not_applicable_diagnostic"
   }
 }
