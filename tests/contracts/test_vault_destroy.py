@@ -20,10 +20,10 @@ from evernook.vault_single_binding import read as read_single
 from evernook.vault_workspace import candidate_workspace, list_workspaces
 from evernook.service import ServiceClient
 from evernook.paths import provision_private_directory
-from tests.contracts.test_vault_multi_restore import MultiVaultRestoreTests
+from tests.contracts.test_vault_multi_service import MultiVaultServiceFixture
 
 
-class VaultDestroyTests(MultiVaultRestoreTests):
+class VaultDestroyTests(MultiVaultServiceFixture):
     def start_single(self, inbox_root: Path, key_root: Path) -> ServiceClient:
         endpoint = self.config.parent / 'memory-service.json'
         old = endpoint.read_bytes()

@@ -20,8 +20,9 @@ from evernook.vault_multi_proof import prepare
 from tests.contracts.test_vault_multi_verify import MultiVaultFixture
 
 
-class MultiVaultServiceTests(MultiVaultFixture):
+class MultiVaultServiceFixture(MultiVaultFixture):
     archive_review = True
+
     def setUp(self) -> None:
         super().setUp()
         self.second.reconcile(self.owner, self.pending.object_id)
@@ -60,6 +61,8 @@ class MultiVaultServiceTests(MultiVaultFixture):
             time.sleep(.05)
         return ServiceClient(self.config)
 
+
+class MultiVaultServiceTests(MultiVaultServiceFixture):
     def test_cutover_routes_both_inboxes_and_rejects_historical_source_collision(self) -> None:
         with self.second._connection() as db:
             before = [tuple(row) for row in db.execute('SELECT * FROM objects ORDER BY id')]

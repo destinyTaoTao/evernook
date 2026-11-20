@@ -24,10 +24,10 @@ from evernook.vault_multi_restore import restore_stage
 from evernook.vault_stage_check import _locked_read, _verified_locked, check_stage
 from evernook.vault_restore import _stopped_service
 from evernook.vault_workspace import cleanup_workspaces, list_workspaces
-from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
+from tests.contracts.test_vault_multi_service import MultiVaultServiceFixture
 
 
-class MultiVaultRestoreTests(MultiVaultServiceTests):
+class MultiVaultRestoreTests(MultiVaultServiceFixture):
     def test_verified_stage_preserves_missing_gate_and_rejects_wrong_password(self) -> None:
         client = self.start(activate=True)
         keys = initialize_backup_keys(self.root / 'backup-keys', b'synthetic backup password')

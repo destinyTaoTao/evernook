@@ -21,10 +21,10 @@ from evernook.vault_local import LocalDisplayRequest
 from evernook.vault_multi_attach import _material_digests, attach_stage
 from evernook.vault_multi_restore import restore_stage
 from evernook.vault_multi_binding import read as read_binding
-from tests.contracts.test_vault_multi_restore import MultiVaultRestoreTests
+from tests.contracts.test_vault_multi_service import MultiVaultServiceFixture
 
 
-class MultiVaultAttachTests(MultiVaultRestoreTests):
+class MultiVaultAttachTests(MultiVaultServiceFixture):
     def test_destroy_recovered_member_preserves_single_attachment_and_remaining_service(self) -> None:
         from evernook.missing_vault import attachment
         from evernook.vault_destroy import destroy_vault

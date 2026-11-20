@@ -16,10 +16,10 @@ from evernook.offline_recovery import ACKNOWLEDGEMENT, OfflineRecovery
 from evernook.protected import ProtectedInbox, initialize_protected_inbox
 from evernook.runtime import _atomic_json, _load
 from evernook.service import ServiceClient
-from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
+from tests.contracts.test_vault_multi_service import MultiVaultServiceFixture
 
 
-class MultiVaultStateTests(MultiVaultServiceTests):
+class MultiVaultStateTests(MultiVaultServiceFixture):
     def test_transaction_crash_restart_and_second_recovery(self) -> None:
         third = initialize_protected_inbox(self.runtime, self.root / 'unused-inbox', self.root / 'unused-keys',
                                            b'synthetic unused vault password')

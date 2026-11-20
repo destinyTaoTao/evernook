@@ -24,10 +24,10 @@ from evernook.secure_ntfs import PrivateDirectory
 from typing import Callable
 from evernook.vault_migration import _materials
 from evernook.vault_workspace import cleanup_workspaces, list_workspaces
-from tests.contracts.test_vault_multi_service import MultiVaultServiceTests
+from tests.contracts.test_vault_multi_service import MultiVaultServiceFixture
 
 
-class MultiVaultBackupTests(MultiVaultServiceTests):
+class MultiVaultBackupTests(MultiVaultServiceFixture):
     def test_link_digest_survives_later_suppression(self) -> None:
         client = self.start(activate=True)
         keys_root = self.root / 'backup-keys'
