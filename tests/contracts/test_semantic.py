@@ -11,6 +11,7 @@ import math
 from contextlib import closing
 import tempfile
 import threading
+from typing import Any
 import unittest
 from unittest.mock import patch
 
@@ -124,6 +125,25 @@ class SemanticTests(unittest.TestCase):
         complete = restarted.refresh(self.access)
         self.assertEqual(complete.indexed_messages, 1)
         self.assertEqual(complete.stored_vectors, 3)
+
+    def test_status_and_recall_keep_legacy_vectors_without_a_failure_table(self) -> None:
+        target = self.save("合成：特别喜欢辛辣。")
+        self.assertEqual(self.workflow.refresh(self.access).state, "ready")
+        database = self.config.parent / "memory.sqlite3"
+        with closing(sqlite3.connect(database, isolation_level=None)) as db:
+            db.execute("DROP TABLE semantic_failures_v1")
+            schema_version = db.execute("PRAGMA user_version").fetchone()[0]
+
+        restarted = SemanticRecall(MemoryRuntime(self.config), self.backend)
+        status = restarted.status(self.access)
+        self.assertEqual((status.state, status.indexed_messages, status.failed_chunks, status.stored_vectors),
+                         ("ready", 1, 0, 1))
+        page = restarted.recall(self.access, "饮食偏好")
+        self.assertEqual([hit.evidence.message_id for hit in page.hits], [target])
+        self.assertIn("semantic", page.hits[0].channels)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone())
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], schema_version)
 
     def test_sparse_recent_window_expands_by_content_dense_window_keeps_global_history(self) -> None:
         target = self.save("合成：跨年承诺，喜欢辛辣。")
@@ -274,6 +294,9 @@ class SemanticTests(unittest.TestCase):
         self.assertTrue(self.workflow.recall(self.access, "饮食偏好").hits)
         self.runtime.change(self.access, Change("synthetic-change", target, 1, "suppress", evidence, "synthetic"))
         self.assertEqual(self.workflow.recall(self.access, "饮食偏好").hits, ())
+        status = self.workflow.status(self.access)
+        self.assertEqual((status.state, status.source_messages, status.indexed_messages, status.stored_vectors),
+                         ("ready", 1, 1, 2))
 
     def test_projections_protected_queries_and_invalid_vectors_never_reach_success(self) -> None:
         self.save("synthetic opaque protected", sensitive=True)
@@ -391,22 +414,65 @@ class SemanticTests(unittest.TestCase):
         result = self.workflow.recall(self.access, "饮食偏好")
         self.assertEqual({hit.evidence.message_id for hit in result.hits}, {first, second})
 
+    def test_sql_rank_counts_eligible_chunks_without_a_separate_source_scan(self) -> None:
+        when = "2021-02-01T00:00:00Z"
+        target = self.save("辛辣" * 49, when)  # Two chunks in this embedding space.
+        self.save("合成：账单", when)  # Scanned, even below the similarity threshold.
+        current = self.save("合成：当前输入辛辣", when)
+        hidden = self.save("合成：已撤回辛辣", when)
+        self.save("合成：更早的辛辣", "2020-01-01T00:00:00Z")
+        self.save("合成：未知时间的辛辣", None)
+        self.assertEqual(self.workflow.refresh(self.access).state, "ready")
+        self.runtime.change(self.access, Change("semantic-hide", hidden, 1, "suppress", target, "synthetic"))
+
+        statements: list[str] = []
+        real_connect = sqlite3.connect
+
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            db: sqlite3.Connection = real_connect(*args, **kwargs)
+            db.set_trace_callback(statements.append)
+            return db
+
+        with patch("sqlite3.connect", side_effect=connect):
+            hits, scanned, limited, _ = self.workflow._semantic(self.access, (1., 0., 0.),
+                since="2021-01-01T00:00:00Z", until="2022-01-01T00:00:00Z", minimum=.4,
+                current_input_id=current)
+        self.assertEqual([hit.message_id for hit, _ in hits], [target])
+        self.assertEqual(scanned, 3)
+        self.assertFalse(limited)
+        scans = [sql for sql in statements if "FROM semantic_chunks_v1 c" in sql and "JOIN messages" in sql]
+        self.assertEqual(len(scans), 1)
+
     def test_sql_scan_rechecks_cancellation_and_preserves_its_error_code(self) -> None:
         self.save("辛辣" * 3300)
         while self.workflow.status(self.access).pending_messages:
             self.workflow.refresh(self.access)
-        calls = 0
+        scanning = False
+        real_connect = sqlite3.connect
+
+        class CancelDuringScan(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                nonlocal scanning
+                scanning = "FROM semantic_chunks_v1 c" in sql and "JOIN messages" in sql
+                try:
+                    return super().execute(sql, parameters)
+                finally:
+                    scanning = False
+
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            db: sqlite3.Connection = real_connect(*args, **kwargs, factory=CancelDuringScan)
+            return db
+
         def check() -> float:
-            nonlocal calls
-            calls += 1
-            if calls > 12:
+            if scanning:
                 raise MemoryFailure("recall_canceled")
             return 10.
-        for native in (True, False):
-            calls = 0
-            with patch("evernook.vector_distance.importlib.import_module", side_effect=ImportError) if not native else patch.dict("os.environ", {}):
-                with self.assertRaisesRegex(MemoryFailure, "recall_canceled"):
-                    self.workflow._semantic(self.access, (1., 0., 0.), since=None, until=None, minimum=.4, check=check)
+
+        with patch("sqlite3.connect", side_effect=connect):
+            for native in (True, False):
+                with patch("evernook.vector_distance.importlib.import_module", side_effect=ImportError) if not native else patch.dict("os.environ", {}):
+                    with self.assertRaisesRegex(MemoryFailure, "recall_canceled"):
+                        self.workflow._semantic(self.access, (1., 0., 0.), since=None, until=None, minimum=.4, check=check)
 
     def test_corrupt_vector_does_not_count_as_complete_no_matching_evidence(self) -> None:
         self.save("合成：辛辣")

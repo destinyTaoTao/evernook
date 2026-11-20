@@ -25,12 +25,18 @@ def main() -> int:
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest["policy_sha256"] != hashlib.sha256(policy_raw).hexdigest():
         raise ValueError("policy_identity_mismatch")
-    finished = (root / "report.json").exists()
-    receipt = json.loads((root / ("report.json" if finished else "progress.json")).read_text(encoding="utf-8"))
+    final = root / "report.json"
+    progress = root / "progress.json"
+    selected_attempts_finished = final.exists()
+    receipt_path = final if selected_attempts_finished else progress
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8")) if receipt_path.exists() else {"results": [], "traffic": []}
+    scale = policy["scale"]
+    selected_conditions = manifest.get("selected_conditions", scale["conditions"])
+    selected_queries = manifest.get("selected_queries", scale["cells"])
     recorded = {row["result"]: row for row in receipt["results"]}
     cells: list[dict[str, Any]] = []
-    for condition in policy["scale"]["conditions"]:
-        for query in policy["scale"]["cells"]:
+    for condition in scale["conditions"]:
+        for query in scale["cells"]:
             for cache in ("warm", "fresh_process"):
                 expected = policy["scale"]["warm_samples_per_cell" if cache == "warm" else "fresh_process_samples_per_cell"]
                 samples: list[dict[str, Any]] = []
@@ -41,6 +47,8 @@ def main() -> int:
                     name = f"{condition}-{query}-{cache}-{repetition}.json"
                     attempt = recorded.get(name)
                     if attempt is None:
+                        if condition in selected_conditions and query in selected_queries:
+                            selected_attempts_finished = False
                         missing += expected if cache == "warm" else 1
                         continue
                     path = root / name
@@ -66,11 +74,14 @@ def main() -> int:
                     "complete_memory_p95_gate": complete == expected and len(valid) == expected
                         and timings["context_ms"]["p95_ms"] is not None
                         and timings["context_ms"]["p95_ms"] <= policy["latency_ms"]["complete_memory_p95"]})
-    save(destination, {"matrix_finished": finished, "manifest": manifest, "cells": cells,
+    matrix_finished = (selected_attempts_finished and selected_conditions == scale["conditions"]
+                       and selected_queries == scale["cells"])
+    save(destination, {"matrix_finished": matrix_finished, "selected_attempts_finished": selected_attempts_finished,
+        "manifest": manifest, "cells": cells,
         "traffic": receipt["traffic"], "after_messages": receipt.get("after_messages"),
         "semantic_after": receipt.get("semantic_after"), "admission": "blocked",
         "scope": "Elapsed calls include incomplete coverage. Invalid attempts and missing samples remain explicit; diagnostics and unscored warmups are excluded. Partial active batches without a completed attempt receipt are missing here. Admission also requires separate quality, coverage, latency and resource gates."})
-    return 0 if finished and all(cell["complete_memory_p95_gate"] for cell in cells) else 2
+    return 0 if matrix_finished and all(cell["complete_memory_p95_gate"] for cell in cells) else 2
 
 
 if __name__ == "__main__":

@@ -118,22 +118,33 @@ def measure(args: argparse.Namespace, policy: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    policy_raw = Path(__file__).with_name("policy.json").read_bytes()
+    policy = json.loads(policy_raw)
+    scale = policy["scale"]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--embedding-config", type=Path, required=True)
     parser.add_argument("--context-config", type=Path, required=True)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--cell", choices=("recent", "historical", "no_answer", "popular", "pure_semantic"))
+    parser.add_argument("--condition", action="append", choices=scale["conditions"],
+                        help="Run only this matrix condition; repeat to select several")
+    parser.add_argument("--matrix-query", action="append", choices=scale["cells"],
+                        help="Run only this matrix query; repeat to select several")
+    parser.add_argument("--cell", choices=(*scale["cells"], "pure_semantic"))
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--result", type=Path)
     parser.add_argument("--profile", action="store_true")
     parser.add_argument("--warmup", action="store_true")
     args = parser.parse_args()
-    policy_raw = Path(__file__).with_name("policy.json").read_bytes()
-    policy = json.loads(policy_raw)
     if args.cell:
+        if args.condition or args.matrix_query or args.output or args.result is None or args.samples < 1:
+            parser.error("--cell requires --result and a positive sample count without matrix options")
         measure(args, policy)
         return 0
+    if args.output is None or args.result is not None or args.profile or args.warmup or args.samples != 1:
+        parser.error("the matrix requires --output and uses the frozen sample counts")
+    conditions = [condition for condition in scale["conditions"] if not args.condition or condition in args.condition]
+    cells = [cell for cell in scale["cells"] if not args.matrix_query or cell in args.matrix_query]
     root = external(args.output)
     root.mkdir()
     runtime = MemoryRuntime(args.fixture / "runtime" / "runtime.json")
@@ -142,12 +153,14 @@ def main() -> int:
     semantic = SemanticRecall(runtime, LocalMiniLM.from_file(args.embedding_config))
     save(root / "manifest.json", {"fixture": str(args.fixture), "policy_sha256": hashlib.sha256(policy_raw).hexdigest(),
         "probe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), "before_messages": runtime.status(reader).messages,
-        "semantic_before": asdict(semantic.status(reader)), "cold": policy["scale"]["cold_definition"],
-        "warm": policy["scale"]["warm_definition"], "context_config_sha256": hashlib.sha256(args.context_config.read_bytes()).hexdigest(),
+        "semantic_before": asdict(semantic.status(reader)), "cold": scale["cold_definition"],
+        "warm": scale["warm_definition"], "context_config_sha256": hashlib.sha256(args.context_config.read_bytes()).hexdigest(),
+        "selected_conditions": conditions, "selected_queries": cells,
         "scope": "Core public API matrix; Python cold host, not native SDK IPC. Other recorded experiments share the machine."})
-    results = []
+    results: list[dict[str, Any]] = []
     traffic: list[dict[str, Any]] = []
-    for condition in policy["scale"]["conditions"]:
+    save(root / "progress.json", {"results": results, "traffic": traffic})
+    for condition in conditions:
         stop = threading.Event()
         ready = threading.Event()
         counters: dict[str, Any] = {"condition": condition, "completed": 0, "noops": 0, "errors": []}
@@ -190,13 +203,13 @@ def main() -> int:
             thread.start()
             ready.wait(timeout=180)
         try:
-            for cell in policy["scale"]["cells"]:
-                for cache, count in (("warm", 1), ("fresh_process", policy["scale"]["fresh_process_samples_per_cell"])):
+            for cell in cells:
+                for cache, count in (("warm", 1), ("fresh_process", scale["fresh_process_samples_per_cell"])):
                     for repetition in range(count):
                         result = root / f"{condition}-{cell}-{cache}-{repetition}.json"
                         command = [sys.executable, str(Path(__file__).resolve()), "--fixture", str(args.fixture),
                             "--embedding-config", str(args.embedding_config), "--context-config", str(args.context_config),
-                            "--cell", cell, "--samples", str(policy["scale"]["warm_samples_per_cell"] if cache == "warm" else 1),
+                            "--cell", cell, "--samples", str(scale["warm_samples_per_cell"] if cache == "warm" else 1),
                             "--result", str(result)]
                         if cache == "warm":
                             command.append("--warmup")

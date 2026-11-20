@@ -111,21 +111,22 @@ class SemanticRecall:
         return bool(db.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('semantic_spaces_v1','semantic_documents_v1','semantic_chunks_v1')").fetchone()[0] == 3)
 
     @staticmethod
-    def _covered() -> str:
+    def _covered(*, eligible_only: bool = False, has_failure_table: bool = True) -> str:
         # A chunk is acknowledged when it has a current-version vector or an explicit failure record.
-        # The CASE guard keeps older stores without the failure table reporting their existing coverage.
+        eligibility = f"AND {_ELIGIBLE}" if eligible_only else ""
+        # Older index schemas have no failure table. SQLite resolves table names before evaluation.
+        failures = """+ (SELECT count(*) FROM semantic_failures_v1 f
+                      WHERE f.space_id=d.space_id AND f.message_id=d.message_id
+                        AND f.state_version=d.state_version AND f.content_version=d.content_version)""" if has_failure_table else ""
         return f"""SELECT d.message_id FROM semantic_documents_v1 d
             LEFT JOIN visibility v ON v.message_id=d.message_id
-            JOIN messages m ON m.id=d.message_id
+            JOIN messages ON messages.id=d.message_id
             WHERE d.space_id=? AND d.state_version=COALESCE(v.version,1)
-              AND d.content_version=json_extract(m.receipt,'$.content_version')
+              AND d.content_version=json_extract(messages.receipt,'$.content_version')
               AND d.chunk_count=(SELECT count(*) FROM semantic_chunks_v1 c
                   WHERE c.space_id=d.space_id AND c.message_id=d.message_id
                     AND c.state_version=d.state_version AND c.content_version=d.content_version)
-                + CASE WHEN EXISTS (SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1')
-                  THEN (SELECT count(*) FROM semantic_failures_v1 f
-                      WHERE f.space_id=d.space_id AND f.message_id=d.message_id
-                        AND f.state_version=d.state_version AND f.content_version=d.content_version) ELSE 0 END"""
+              {failures} {eligibility}"""
 
     def _status(self, db: sqlite3.Connection) -> SemanticStatus:
         counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_ELIGIBLE}").fetchone()
@@ -135,10 +136,12 @@ class SemanticRecall:
             return SemanticStatus("disabled", None, total, 0, total, counts[1])
         if not self._present(db):
             return SemanticStatus("not_built", space.key, total, 0, total, counts[1], stored_vectors=0)
-        covered = int(db.execute(f"SELECT count(*) FROM messages WHERE {_ELIGIBLE} AND id IN ({self._covered()})", (space.key,)).fetchone()[0])
-        failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone()
+        has_failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone() is not None
+        # Check eligibility on the authoritative row already joined for the document version.
+        coverage_sql = self._covered(eligible_only=True, has_failure_table=has_failure_table)
+        covered = int(db.execute(f"SELECT count(DISTINCT message_id) FROM ({coverage_sql})", (space.key,)).fetchone()[0])
         failed = 0
-        if failure_table:
+        if has_failure_table:
             # Only failures that still describe a current recallable source version count as live.
             failed = int(db.execute(f"""SELECT count(*) FROM semantic_failures_v1 f
                 JOIN messages ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
@@ -408,13 +411,18 @@ class SemanticRecall:
                 JOIN messages ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""
-            scanned = int(db.execute("SELECT count(*) " + base, parameters).fetchone()[0])
-            # Exact search covers the eligible history BEFORE top-K. SQLite's single MIN aggregate
-            # returns its associated bare columns; grouping first prevents one long source taking every seat.
-            rows = db.execute(f"""SELECT c.message_id,c.start,c.end,c.state_version,c.content_version,
-                min(COALESCE({function}(c.vector,?),-2.0)) AS distance
-                {base} GROUP BY c.message_id ORDER BY distance,c.message_id LIMIT 100""", [encoded, *parameters])
+            # The same scan counts all eligible chunks and selects each source's best span
+            # with SQLite's MIN aggregate. Materialize only grouped metadata for count and rank.
+            rows = db.execute(f"""WITH ranked AS MATERIALIZED (
+                SELECT c.message_id,c.start,c.end,c.state_version,c.content_version,
+                    min(COALESCE({function}(c.vector,?),-2.0)) AS distance,count(*) AS chunk_count
+                {base} GROUP BY c.message_id
+            )
+            SELECT message_id,start,end,state_version,content_version,distance,
+                (SELECT sum(chunk_count) FROM ranked) AS scanned
+            FROM ranked ORDER BY distance,message_id LIMIT 100""", [encoded, *parameters])
             candidates = list(rows)
+            scanned = int(candidates[0]["scanned"]) if candidates else 0
             for row in candidates:
                 if check is not None:
                     check()

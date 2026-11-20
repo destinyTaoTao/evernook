@@ -131,6 +131,9 @@ The context config uses the target tokenizer and 4096-token policy. It runs the 
 recent/historical/no-answer/popular × idle/writing/rebuilding × warm/fresh-process matrix.
 The recent target must exist and carry the fixture's recent timestamp. Background progress
 and errors are recorded per cell; cells without verified progress are invalid workload samples.
+Repeat `--condition` or `--matrix-query` to run a selected window with the same frozen
+sample counts. Use separate fixture copies to measure independent starting conditions.
+The report records the selection and leaves all omitted cells missing.
 Rebuilding intentionally resets the derived lexical index and maintains real vectors; originals
 remain authoritative. Measurements change the synthetic runtime's audit log and background
 capture adds synthetic originals; before/after counts are recorded.
