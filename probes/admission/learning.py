@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 import hashlib
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -15,7 +15,7 @@ from typing import Any
 import evernook
 from evernook import Access, Change, Event, LocalMiniLM, MemoryRuntime, SemanticRecall, Source, initialize
 from evernook.automatic_preferences import PreferenceUpdates
-from evernook.learning_evaluation import load_suite, score
+from evernook.learning_evaluation import LearningSuite, load_suite, score
 from evernook.models import MemoryFailure
 from evernook.paths import external
 from evernook.profile import ProfileRegistry
@@ -30,13 +30,16 @@ def save(path: Path, value: object) -> None:
     path.write_bytes((json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8"))
 
 
-def implementation_identity() -> dict[str, str]:
+def implementation_identity(*probe_files: Path) -> dict[str, str]:
     package_root = Path(evernook.__file__).resolve().parent
     digest = hashlib.sha256()
     for module in sorted(path for path in package_root.iterdir() if path.suffix in ('.py', '.mjs')):
         digest.update(module.name.encode())
         digest.update(module.read_bytes())
     digest.update(Path(__file__).read_bytes())
+    for path in probe_files:
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
     try:
         package_version = version("evernook")
     except PackageNotFoundError:
@@ -79,20 +82,144 @@ print(json.dumps({'settings':asdict(updates.settings(access)),'package_root':str
     return result
 
 
+@dataclass
+class ScenarioFixture:
+    config: Path
+    runtime: MemoryRuntime
+    access: Access
+    ids: dict[str, str] = field(default_factory=dict)
+    events: dict[str, Event] = field(default_factory=dict)
+
+
+class LearningFixtures:
+    """Replay the fixed synthetic corpus through public capture and control APIs."""
+
+    def __init__(self, suite: LearningSuite, root: Path, *, full_lifecycle: bool):
+        self.suite, self.root, self.full_lifecycle = suite, root, full_lifecycle
+        self.scenarios: dict[str, ScenarioFixture] = {}
+        self.snapshots: dict[str, Path] = {}
+        self.purge_previews: dict[tuple[str, str], PurgePreview] = {}
+        self.purge_targets = {(step['scenario'], control['source_id']) for step in suite.steps for control in step['controls']
+                              if control['action'] == 'purge'}
+        self.restore_scenarios = {step['scenario'] for step in suite.steps if step['phase'] == 'restored'}
+
+    def open(self, scenario: str) -> ScenarioFixture:
+        if scenario not in self.scenarios:
+            config, access = initialize(self.root / scenario, client_id='synthetic-learning', entry='fixture',
+                                        allow_archive_review=self.full_lifecycle)
+            self.scenarios[scenario] = ScenarioFixture(config, MemoryRuntime(config), access)
+        return self.scenarios[scenario]
+
+    def apply(self, fixture: ScenarioFixture, step: dict[str, Any], detail: dict[str, Any]) -> None:
+        scenario = step['scenario']
+        if step['phase'] == 'restored':
+            self._restore(fixture, scenario, detail)
+        runtime, access, ids, events = fixture.runtime, fixture.access, fixture.ids, fixture.events
+        receipts = []
+        batch_size = 100 if len(step['add']) > 64 else 1
+        for begin in range(0, len(step['add']), batch_size):
+            aliases = step['add'][begin:begin + batch_size]
+            batch = []
+            for index, alias in enumerate(aliases):
+                source = self.suite.sources[alias]
+                batch.append(Event(Source('fixture', source['session'], 'main', alias), source['role'], len(events) + index,
+                                   source['at'], 'complete', source['text']))
+            saved = runtime.submit_many(access, tuple(batch)) if batch_size > 1 else (runtime.submit(access, batch[0]),)
+            for alias, event, receipt in zip(aliases, batch, saved, strict=True):
+                ids[alias], events[alias] = receipt.message_id, event
+                receipts.append({'source_id': alias, 'receipt': asdict(receipt)})
+                if self.full_lifecycle and (scenario, alias) in self.purge_targets:
+                    self.purge_previews[scenario, alias] = PurgeWorkflow(runtime).preview(access, 'fixture-' + alias, (receipt.message_id,))
+        for alias in step['replay']:
+            receipt = runtime.submit(access, events[alias])
+            receipts.append({'source_id': alias, 'receipt': asdict(receipt), 'replayed_same_id': receipt.message_id == ids[alias]})
+            if receipt.message_id != ids[alias]:
+                raise RuntimeError('learning_replay_identity_changed')
+        for control in step['controls']:
+            target = ids[control['source_id']]
+            if control['action'] == 'purge':
+                preview = self.purge_previews[scenario, control['source_id']]
+                result = asdict(PurgeWorkflow(runtime).purge(access, PurgeDecision(preview.request_id, ids[control['evidence_id']])))
+            else:
+                state = runtime.state(access, target)
+                result = asdict(runtime.change(access, Change('fixture-' + step['id'], target, state.version,
+                    control['action'], ids[control['evidence_id']], 'synthetic fixture control')))
+            detail.setdefault('controls', []).append(result)
+        detail['receipts'] = receipts
+
+    def _restore(self, fixture: ScenarioFixture, scenario: str, detail: dict[str, Any]) -> None:
+        runtime, access = fixture.runtime, fixture.access
+        checkpoint = capture_control_checkpoint(runtime, access)
+        reviewed = self.root / (scenario + '-replayed-archive')
+        destination = self.root / (scenario + '-restored-runtime')
+        replay_archive_controls(runtime, access, self.snapshots[scenario], reviewed, checkpoint=checkpoint)
+        old_rejection = None
+        try:
+            config, restored_access = publish_replayed_runtime(runtime, access, reviewed, destination,
+                checkpoint=checkpoint, client_id='synthetic-learning', entry='fixture')
+        except MemoryFailure as failure:
+            if failure.code != 'archive_evidence_incomplete':
+                raise
+            # A control replay cannot synthesize newer derived decisions.
+            old_rejection = failure.code
+            current = self.root / (scenario + '-current-archive')
+            runtime.export_archive(access, current)
+            reviewed = self.root / (scenario + '-current-replayed-archive')
+            replay_archive_controls(runtime, access, current, reviewed, checkpoint=checkpoint)
+            config, restored_access = publish_replayed_runtime(runtime, access, reviewed, destination,
+                checkpoint=checkpoint, client_id='synthetic-learning', entry='fixture')
+        fixture.config, fixture.runtime, fixture.access = config, MemoryRuntime(config), restored_access
+        detail['lifecycle'] = {'operation': 'control_replayed_runtime', 'control_head': checkpoint.control_head,
+            'old_archive_publication_rejection': old_rejection, 'published_archive': str(reviewed)}
+
+    def snapshot(self, scenario: str) -> None:
+        if self.full_lifecycle and scenario in self.restore_scenarios and scenario not in self.snapshots:
+            fixture = self.scenarios[scenario]
+            snapshot = self.root / (scenario + '-old-archive')
+            fixture.runtime.export_archive(fixture.access, snapshot)
+            self.snapshots[scenario] = snapshot
+
+
+def prepare_indexes(fixture: ScenarioFixture, recall: SemanticRecall, *, lexical_ready: bool,
+                    embed: bool, source_count: int) -> None:
+    runtime, access = fixture.runtime, fixture.access
+    if lexical_ready:
+        lexical = runtime.lexical_status(access)
+        while lexical.state != 'unavailable' and lexical.pending_messages:
+            lexical = runtime.refresh_lexical(access)
+        if lexical.state == 'unavailable':
+            raise MemoryFailure('lexical_index_unavailable')
+    if embed:
+        status = recall.status(access)
+        while status.state != 'unavailable' and status.pending_messages:
+            status = (recall.refresh_window(access, limit=1000, timeout=90) if source_count > 64
+                      else recall.refresh(access, limit=16, timeout=60))
+        if status.state == 'unavailable':
+            raise MemoryFailure('semantic_index_unavailable')
+
+
+def prepare_case_indexes(fixture: ScenarioFixture, recall: SemanticRecall, detail: dict[str, Any], *,
+                         embed: bool, source_count: int) -> bool:
+    try:
+        prepare_indexes(fixture, recall, lexical_ready=True, embed=embed, source_count=source_count)
+    except MemoryFailure as failure:
+        if failure.code not in {'storage_busy', 'lexical_index_unavailable', 'semantic_index_unavailable',
+                                'semantic_refresh_timeout', 'semantic_refresh_canceled', 'embedding_timeout', 'embedding_canceled'}:
+            raise
+        detail.update(missing_reason='index_preparation_failed', error_stage='prepare_indexes', error_code=failure.code)
+        return False
+    return True
+
+
 def _collect(suite_root: Path, output: Path, backend: EmbeddingBackend | None, *, lexical_ready: bool,
              full_lifecycle: bool, max_fixture_sources: int, previous_core_python: Path | None) -> dict[str, Any]:
     suite = load_suite(suite_root)
     root = external(output)
     root.mkdir()
-    runtimes: dict[str, Any] = {}
+    fixtures = LearningFixtures(suite, root, full_lifecycle=full_lifecycle)
     rows: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
     implementation = implementation_identity()
-    snapshots: dict[str, Path] = {}
-    purge_previews: dict[tuple[str, str], PurgePreview] = {}
-    purge_targets = {(step['scenario'], control['source_id']) for step in suite.steps for control in step['controls']
-                     if control['action'] == 'purge'}
-    restore_scenarios = {step['scenario'] for step in suite.steps if step['phase'] == 'restored'}
     configuration = {"model": json.dumps(asdict(backend.space), sort_keys=True) if backend else "none; lexical-only baseline",
                      "processor": "pending synthetic runtime initialization",
                      "budget": {"candidate_k": 10, "recall_timeout_seconds": 30,
@@ -117,92 +244,36 @@ def _collect(suite_root: Path, output: Path, backend: EmbeddingBackend | None, *
             detail["missing_reason"] = "scale_or_confirmed_physical_purge_not_collected"
             save(root / "details.json", details)
             continue
-        if scenario not in runtimes:
-            config, access = initialize(root / scenario, client_id="synthetic-learning", entry="fixture",
-                                        allow_archive_review=full_lifecycle)
-            runtime = MemoryRuntime(config)
-            updater = PreferenceUpdates(runtime)
-            settings = updater.settings(access)
-            if not runtimes:
+        new_scenario = scenario not in fixtures.scenarios
+        fixture = fixtures.open(scenario)
+        updater = PreferenceUpdates(fixture.runtime)
+        if new_scenario:
+            settings = updater.settings(fixture.access)
+            if len(fixtures.scenarios) == 1:
                 configuration["processor"] = settings.rules_processor
             elif configuration["processor"] != settings.rules_processor:
                 raise RuntimeError("learning_processor_changed_during_collection")
-            updater.configure(access, enabled=True, admitted_processor=settings.rules_processor)
-            runtimes[scenario] = (runtime, access, updater, {}, {})
+            updater.configure(fixture.access, enabled=True, admitted_processor=settings.rules_processor)
             detail["processor"] = settings.rules_processor
-        runtime, access, updater, ids, events = runtimes[scenario]
         if step['phase'] == 'processor_changed':
             assert previous_core_python is not None
-            before = updater.settings(access)
-            legacy = previous_processor(previous_core_python, root / scenario / 'runtime.json', access, before.rules_processor,
+            before = updater.settings(fixture.access)
+            legacy = previous_processor(previous_core_python, fixture.config, fixture.access, before.rules_processor,
                                         root / (step['id'] + '-previous-core'))
-            runtime = MemoryRuntime(root / scenario / 'runtime.json')
-            updater = PreferenceUpdates(runtime)
-            after = updater.settings(access)
+            fixture.runtime = MemoryRuntime(fixture.config)
+            updater = PreferenceUpdates(fixture.runtime)
+            after = updater.settings(fixture.access)
             if after.admitted_processor == after.rules_processor or after.admitted_processor != legacy['settings']['rules_processor']:
                 raise RuntimeError('processor_transition_not_observed')
-            runtimes[scenario] = (runtime, access, updater, ids, events)
             detail['lifecycle'] = {'operation': 'real_core_version_transition', 'previous': legacy,
                 'current': asdict(after), 'readmitted': False,
                 'scope': 'Explicit previous installed Core configured its real rules on this synthetic runtime; current Core reopened without re-admission.'}
+        fixtures.apply(fixture, step, detail)
+        runtime, access, ids, events = fixture.runtime, fixture.access, fixture.ids, fixture.events
         if step['phase'] == 'restored':
-            checkpoint = capture_control_checkpoint(runtime, access)
-            reviewed = root / (scenario + '-replayed-archive')
-            replay_archive_controls(runtime, access, snapshots[scenario], reviewed, checkpoint=checkpoint)
-            old_rejection = None
-            try:
-                config, restored_access = publish_replayed_runtime(runtime, access, reviewed, root / (scenario + '-restored-runtime'),
-                    checkpoint=checkpoint, client_id='synthetic-learning', entry='fixture')
-            except MemoryFailure as failure:
-                if failure.code != 'archive_evidence_incomplete':
-                    raise
-                # Control replay cannot synthesize newer derived decisions. Preserve that
-                # rejection, then restore an actual complete archive through the same API.
-                old_rejection = failure.code
-                current = root / (scenario + '-current-archive')
-                runtime.export_archive(access, current)
-                reviewed = root / (scenario + '-current-replayed-archive')
-                replay_archive_controls(runtime, access, current, reviewed, checkpoint=checkpoint)
-                config, restored_access = publish_replayed_runtime(runtime, access, reviewed, root / (scenario + '-restored-runtime'),
-                    checkpoint=checkpoint, client_id='synthetic-learning', entry='fixture')
-            access = restored_access
-            runtime = MemoryRuntime(config)
             updater = PreferenceUpdates(runtime)
-            runtimes[scenario] = (runtime, access, updater, ids, events)
-            detail['lifecycle'] = {'operation': 'control_replayed_runtime', 'control_head': checkpoint.control_head,
-                                   'old_archive_publication_rejection': old_rejection, 'published_archive': str(reviewed),
-                                   'settings_after_restore': asdict(updater.settings(access))}
-        receipts = []
+            detail['lifecycle']['settings_after_restore'] = asdict(updater.settings(access))
         reports = []
-        batch_size = 100 if len(step['add']) > 64 else 1
-        for begin in range(0, len(step['add']), batch_size):
-            aliases = step['add'][begin:begin + batch_size]
-            batch = []
-            for index, alias in enumerate(aliases):
-                source = suite.sources[alias]
-                batch.append(Event(Source('fixture', source['session'], 'main', alias), source['role'], len(events) + index,
-                                   source['at'], 'complete', source['text']))
-            saved = runtime.submit_many(access, tuple(batch)) if batch_size > 1 else (runtime.submit(access, batch[0]),)
-            for alias, event, receipt in zip(aliases, batch, saved, strict=True):
-                ids[alias], events[alias] = receipt.message_id, event
-                receipts.append({'source_id': alias, 'receipt': asdict(receipt)})
-                if full_lifecycle and (scenario, alias) in purge_targets:
-                    purge_previews[scenario, alias] = PurgeWorkflow(runtime).preview(access, 'fixture-' + alias, (receipt.message_id,))
-        for alias in step["replay"]:
-            receipt = runtime.submit(access, events[alias])
-            receipts.append({"source_id": alias, "receipt": asdict(receipt), "replayed_same_id": receipt.message_id == ids[alias]})
-            if receipt.message_id != ids[alias]:
-                raise RuntimeError("learning_replay_identity_changed")
-        for control in step["controls"]:
-            target = ids[control["source_id"]]
-            if control['action'] == 'purge':
-                preview = purge_previews[scenario, control['source_id']]
-                result = PurgeWorkflow(runtime).purge(access, PurgeDecision(preview.request_id, ids[control['evidence_id']]))
-                detail.setdefault('controls', []).append(asdict(result))
-            else:
-                state = runtime.state(access, target)
-                runtime.change(access, Change("fixture-" + step["id"], target, state.version,
-                    control["action"], ids[control["evidence_id"]], "synthetic fixture control"))
         for alias in step["add"] + step["replay"]:
             if len(step['available_sources']) > 64 and not updater.has_candidates(events[alias].text):
                 detail['noncandidate_sources_skipped'] = detail.get('noncandidate_sources_skipped', 0) + 1
@@ -211,14 +282,8 @@ def _collect(suite_root: Path, output: Path, backend: EmbeddingBackend | None, *
         aliases = {value: key for key, value in ids.items()}
         payload: dict[str, Any] = {}
         recall = SemanticRecall(runtime, backend)
-        if lexical_ready:
-            while runtime.lexical_status(access).pending_messages:
-                runtime.refresh_lexical(access)
-        if backend is not None:
-            status = recall.status(access)
-            while status.pending_messages:
-                status = (recall.refresh_window(access, limit=1000, timeout=90) if len(step['available_sources']) > 64
-                          else recall.refresh(access, limit=16, timeout=60))
+        prepare_indexes(fixture, recall, lexical_ready=lexical_ready, embed=backend is not None,
+                        source_count=len(step['available_sources']))
         started = time.perf_counter()
         try:
             page = recall.recall(access, step["question"], limit=10, as_of=step["as_of"], timeout=30)
@@ -265,7 +330,7 @@ def _collect(suite_root: Path, output: Path, backend: EmbeddingBackend | None, *
             recall.recall(access, "synthetic cancellation check", cancel=cancel)
         except MemoryFailure as failure:
             cancellation = failure.code
-        detail.update({"receipts": receipts, "automatic_reports": [asdict(report) for report in reports],
+        detail.update({"automatic_reports": [asdict(report) for report in reports],
             "profile": asdict(summary), "status": asdict(runtime.status(access)), "lexical": asdict(runtime.lexical_status(access)),
             "semantic": asdict(recall.status(access)), "cancellation": {"kind": "pre_canceled", "error_code": cancellation,
                 "in_flight_cancellation": "missing", "residual_processes": None}})
@@ -273,10 +338,7 @@ def _collect(suite_root: Path, output: Path, backend: EmbeddingBackend | None, *
                      "measurements": {"elapsed_ms": elapsed, "private_bytes": None, "remaining_children": None}})
         save(root / "observations.json", observations)
         save(root / "details.json", details)
-        if full_lifecycle and scenario in restore_scenarios and scenario not in snapshots:
-            snapshot = root / (scenario + '-old-archive')
-            runtime.export_archive(access, snapshot)
-            snapshots[scenario] = snapshot
+        fixtures.snapshot(scenario)
         print(json.dumps({"case_id": step["id"], "collected": sorted(payload)}), flush=True)
     save(root / "report.json", score(suite, observations))
     save(root / "collection.json", {"suite_hash": suite.suite_hash, "collector_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
