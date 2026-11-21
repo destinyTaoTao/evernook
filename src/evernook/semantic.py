@@ -61,6 +61,14 @@ class RecallPage:
     semantic_search_backend: str = "disabled"
 
 
+@dataclass(frozen=True)
+class _SemanticCandidates:
+    global_hits: list[tuple[SearchHit, float]]
+    recent_hits: list[tuple[SearchHit, float]]
+    scanned: int
+    engine: str
+
+
 class SemanticRecall:
     def __init__(self, runtime: MemoryRuntime, backend: EmbeddingBackend | None = None):
         self.runtime = runtime
@@ -411,41 +419,60 @@ class SemanticRecall:
             return tuple(hits)
 
     def _semantic(self, access: Access, vector: tuple[float, ...], *, since: str | None, until: str | None,
-                  minimum: float, check: Callable[[], float] | None = None,
-                  current_input_id: str | None = None) -> tuple[list[tuple[SearchHit, float]], int, bool, str]:
+                  recent: tuple[str, str] | None = None, minimum: float, check: Callable[[], float] | None = None,
+                  current_input_id: str | None = None) -> _SemanticCandidates:
         space = self.space
         if space is None:
-            return [], 0, False, "disabled"
+            return _SemanticCandidates([], [], 0, "disabled")
         parameters: list[object] = [space.key, current_input_id, current_input_id]
         condition = ""
-        for key, value, operator in (("since", since, ">="), ("until", until, "<")):
+        for value, operator in ((since, ">="), (until, "<")):
             if value is not None:
                 condition += f" AND occurred{operator}?"
                 parameters.append(_time(value))
-        best: list[tuple[SearchHit, float]] = []
+        recent_select = "" if recent is None else """
+            UNION ALL SELECT 1 AS is_recent, recent_top.* FROM (
+                SELECT * FROM ranked WHERE occurred>=? AND occurred<?
+                ORDER BY distance,message_id LIMIT 100
+            ) AS recent_top"""
+        if recent is not None:
+            parameters.extend(_time(boundary) for boundary in recent)
+        global_hits: list[tuple[SearchHit, float]] = []
+        recent_hits: list[tuple[SearchHit, float]] = []
         with self.runtime._connection(check=check) as db:
             db.execute("BEGIN")
             if not self._present(db):
-                return [], 0, False, "disabled"
+                return _SemanticCandidates([], [], 0, "disabled")
             function, encoded, engine = distance_function(db, vector, check=check)
             sources = recall_index.source_table(db)
             base = f"""FROM semantic_chunks_v1 c
                 JOIN {sources} ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""
-            # The same scan counts all eligible chunks and selects each source's best span
-            # with SQLite's MIN aggregate. Materialize only grouped metadata for count and rank.
+            # Occurrence time belongs to the source. All its eligible chunks share the
+            # same recent-window membership, so both rankings can use the same best span.
             rows = db.execute(f"""WITH ranked AS MATERIALIZED (
-                SELECT c.message_id,c.start,c.end,c.state_version,c.content_version,
+                SELECT c.message_id,c.start,c.end,c.state_version,occurred,
                     min(COALESCE({function}(c.vector,?),-2.0)) AS distance,count(*) AS chunk_count
                 {base} GROUP BY c.message_id
+            ), scan_stats AS MATERIALIZED (
+                SELECT sum(chunk_count) AS scanned FROM ranked
+            ), candidates AS (
+                SELECT 0 AS is_recent, global_top.* FROM (
+                    SELECT * FROM ranked ORDER BY distance,message_id LIMIT 100
+                ) AS global_top
+                {recent_select}
             )
-            SELECT message_id,start,end,state_version,content_version,distance,
-                (SELECT sum(chunk_count) FROM ranked) AS scanned
-            FROM ranked ORDER BY distance,message_id LIMIT 100""", [encoded, *parameters])
+            SELECT is_recent,message_id,start,end,state_version,distance,scanned
+            FROM candidates CROSS JOIN scan_stats
+            ORDER BY is_recent,distance,message_id""", [encoded, *parameters])
             candidates = list(rows)
             scanned = int(candidates[0]["scanned"]) if candidates else 0
+            below_minimum = None
             for row in candidates:
+                channel = int(row["is_recent"])
+                if channel == below_minimum:
+                    continue
                 if check is not None:
                     check()
                 distance = row["distance"]
@@ -453,7 +480,8 @@ class SemanticRecall:
                     raise MemoryFailure("invalid_semantic_index")
                 similarity = max(-1., min(1., 1 - float(distance)))
                 if similarity < minimum:
-                    break
+                    below_minimum = channel
+                    continue
                 original = db.execute("SELECT event,receipt FROM messages WHERE id=?", (row["message_id"],)).fetchone()
                 stored = self.runtime._stored(original)
                 start, end = int(row["start"]), int(row["end"])
@@ -465,8 +493,9 @@ class SemanticRecall:
                     int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),))
                 from .transcription import annotate
                 hit = annotate(db, hit)
-                best.append((hit, similarity))
-        return best, scanned, False, engine
+                hits = recent_hits if channel else global_hits
+                hits.append((hit, similarity))
+        return _SemanticCandidates(global_hits, recent_hits, scanned, engine)
 
     def recall(self, access: Access, query: str, *, limit: int = 10, as_of: str | None = None,
                recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
@@ -536,7 +565,7 @@ class SemanticRecall:
             degraded.append("query_coverage_limited")
         similarities: dict[str, float] = {}
         engine = "disabled"
-        scanned, scan_limited = 0, False
+        scanned = 0
         semantic_status = self.status(access, check=budget)
         if semantic_status.state != "ready":
             degraded.append("semantic_" + semantic_status.state)
@@ -548,16 +577,13 @@ class SemanticRecall:
                 if len(vectors) != 1:
                     raise MemoryFailure("invalid_embedding")
                 vector = unit_vector(vectors[0], space.dimensions)
-                global_hits, count, limited, engine = self._semantic(access, vector, since=focus_since, until=focus_until, minimum=min_similarity,
-                                                           check=budget, current_input_id=current_input_id)
-                recent_hits, recent_count, recent_limited, _ = self._semantic(access, vector, since=recent_since, until=recent_until, minimum=min_similarity,
-                    check=budget, current_input_id=current_input_id) if recent_intersects else ([], 0, False, engine)
-                scanned, scan_limited = count + recent_count, limited or recent_limited
-                channels["semantic"] = [hit for hit, _ in global_hits]
-                channels["recent_semantic"] = [hit for hit, _ in recent_hits]
-                similarities.update((hit.message_id, score) for hit, score in global_hits + recent_hits)
-                if scan_limited:
-                    degraded.append("semantic_scan_limit")
+                candidates = self._semantic(access, vector, since=focus_since, until=focus_until, minimum=min_similarity,
+                    recent=(recent_since, recent_until) if recent_intersects else None, check=budget,
+                    current_input_id=current_input_id)
+                scanned, engine = candidates.scanned, candidates.engine
+                channels["semantic"] = [hit for hit, _ in candidates.global_hits]
+                channels["recent_semantic"] = [hit for hit, _ in candidates.recent_hits]
+                similarities.update((hit.message_id, score) for hit, score in candidates.global_hits + candidates.recent_hits)
             except MemoryFailure as failure:
                 if failure.code in {"unauthorized", "incompatible_contract"}:
                     raise
@@ -606,4 +632,4 @@ class SemanticRecall:
         reasons = tuple(dict.fromkeys(degraded))
         evidence_state = "candidates" if result else ("incomplete" if reasons else "no_matching_evidence")
         return RecallPage(tuple(result), lexical.index, semantic_status, reasons, evidence_state, since, expanded, chars,
-                          window_limited, scanned, scan_limited, plan, engine)
+                          window_limited, scanned, False, plan, engine)

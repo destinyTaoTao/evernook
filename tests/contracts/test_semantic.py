@@ -468,10 +468,9 @@ class SemanticTests(unittest.TestCase):
         self.assertGreater(result.hits[0].evidence.spans[0].start, 9999)
         self.assertFalse(result.semantic_scan_limited)
         for position, vector in positions.items():
-            hits, scanned, limited, _ = self.workflow._semantic(self.access, vector, since=None, until=None, minimum=.4)
-            self.assertEqual(hits[0][0].spans[0].start, position)
-            self.assertEqual(scanned, len(starts))
-            self.assertFalse(limited)
+            candidates = self.workflow._semantic(self.access, vector, since=None, until=None, minimum=.4)
+            self.assertEqual(candidates.global_hits[0][0].spans[0].start, position)
+            self.assertEqual(candidates.scanned, len(starts))
 
     def test_long_input_keeps_explicit_intent_and_checks_the_entire_original(self) -> None:
         target = self.save("合成：辛辣的食物")
@@ -532,14 +531,46 @@ class SemanticTests(unittest.TestCase):
             return db
 
         with patch("sqlite3.connect", side_effect=connect):
-            hits, scanned, limited, _ = self.workflow._semantic(self.access, (1., 0., 0.),
+            candidates = self.workflow._semantic(self.access, (1., 0., 0.),
                 since="2021-01-01T00:00:00Z", until="2022-01-01T00:00:00Z", minimum=.4,
-                current_input_id=current)
-        self.assertEqual([hit.message_id for hit, _ in hits], [target])
-        self.assertEqual(scanned, 3)
-        self.assertFalse(limited)
+                recent=(when, "2021-02-02T00:00:00Z"), current_input_id=current)
+        self.assertEqual([hit.message_id for hit, _ in candidates.global_hits], [target])
+        self.assertEqual(candidates.recent_hits, candidates.global_hits)
+        self.assertEqual(candidates.scanned, 3)
         scans = [sql for sql in statements if "FROM semantic_chunks_v1 c" in sql and "JOIN messages" in sql]
         self.assertEqual(len(scans), 1)
+
+    def test_recall_shares_distance_calls_and_keeps_recent_candidates_outside_global_top(self) -> None:
+        for index in range(101):
+            self.save("辛辣" * 49 if index == 0 else f"合成：辛辣食品{index}")
+        recent = self.save("合成：账单", "2025-01-01T00:00:00Z")
+        while self.workflow.status(self.access).pending_messages:
+            self.workflow.refresh(self.access)
+
+        calls = 0
+
+        def distance(db: sqlite3.Connection, vector: tuple[float, ...], *,
+                     check: Callable[[], float] | None) -> tuple[str, bytes, str]:
+            def cosine(raw: bytes, _: bytes) -> float:
+                nonlocal calls
+                calls += 1
+                return 0.25 if struct.unpack("<3f", raw)[1] else 0.0
+
+            db.create_function("counted_distance", 2, cosine)
+            return "counted_distance", b"", "counted-test"
+
+        for indexed in (False, True):
+            with self.subTest(indexed=indexed):
+                self.workflow.configure_candidate_index(self.access, enabled=indexed)
+                calls = 0
+                with patch("evernook.semantic.distance_function", side_effect=distance):
+                    page = self.workflow.recall(self.access, "饮食偏好", as_of="2025-01-02T00:00:00Z",
+                                                recent_target_chars=1, limit=10)
+                self.assertEqual(calls, 103)
+                self.assertEqual(page.semantic_scanned_chunks, calls)
+                hits = {hit.evidence.message_id: hit for hit in page.hits}
+                self.assertIn(recent, hits)
+                self.assertEqual(hits[recent].channels, ("recent_semantic",))
 
     def test_sql_scan_rechecks_cancellation_and_preserves_its_error_code(self) -> None:
         self.save("辛辣" * 3300)
