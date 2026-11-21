@@ -72,7 +72,7 @@ flowchart TD
 | 问题 | 已有证据及限制 |
 | --- | --- |
 | 多年记忆的召回要多久？ | 十万条 MiniLM 向量齐全时，可重建索引将公开历史召回的三次中位数从 12.66 秒降至 9.68 秒。百万来源、10,352 条真实向量时，同一历史查询单次从 82.16 秒降至 52.38 秒。另一项十万条完整热上下文测试的无答案 p95 为 16.73 秒，仍高于 1 秒门槛。[公开召回对照](docs/reports/2026-11-21-recall-candidate-index-scale.md) · [完整上下文测量](docs/reports/2026-11-15-autonomous-validation.md) |
-| 取回原话后，模型能否判断正确？ | 冻结的 33 个合成场景中，Core 反思判断为 14 通过、15 失败、4 缺失，包含规则参与的结果。检索、证据和判断分别计分。[反思生命周期](docs/reports/2026-11-15-local-quality.md) · [观察与主题视图评测](docs/reports/2026-11-15-learning-validation.md) |
+| 取回原话后，模型能否判断正确？ | 冻结的 33 例中，Core 判断 14 通过、15 失败、4 缺失。失败里有 3 例实际检索零候选，8 例已把所需证据送到模型，仍出现否定反转、误信助手推测或严格措辞失配等问题。[逐例归因与配对实验](docs/reports/2026-11-21-reflection-failure-attribution.md) · [反思生命周期](docs/reports/2026-11-15-local-quality.md) |
 | 多个客户端同时工作时，审计和恢复能证明什么？ | dsh 混合负载窗口分别统计了已落盘写入和忙时尽力写入的管理审计。合成故障测试覆盖若干恢复边界；物理锁屏、整机丢失后的异机恢复和长期日用另行验收。[混合负载](docs/reports/2026-11-14-fingerprint-24k.md) · [恢复边界](docs/reports/architecture-review-2026-11-15.md) |
 
 架构与后续设计见[当前实现与流程图](docs/current-architecture.md)、[目标架构](docs/architecture.md)、[需求](docs/requirements.md)与[路线图](docs/roadmap.md)。开源设计对照和具体取舍见[同类系统研究](docs/research.md)。贡献代码前请阅读[贡献指南](CONTRIBUTING.md)，公开测试只使用合成材料。
