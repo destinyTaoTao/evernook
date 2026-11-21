@@ -15,7 +15,10 @@ from typing import Any
 from .automatic_preferences import PreferenceUpdates
 from .candidates import CandidateDraft, CandidateWorkflow, EvidenceSpan
 from .models import Access, MemoryFailure
-from .observations import ObservationDraft, ObservationRecord, ObservationRegistry, source_contexts
+from .observations import (
+    MAX_OBSERVATION_CONCLUSION_CHARS, MAX_OBSERVATION_EVIDENCE_CHARS, MAX_OBSERVATION_SPANS,
+    ObservationDraft, ObservationRecord, ObservationRegistry, review_basis, source_contexts,
+)
 from .preference_statements import assess_preferences
 from .runtime import MemoryRuntime, _identifier, _json
 
@@ -146,10 +149,12 @@ class ObservationProcessing:
                 db.executemany('INSERT INTO observation_atoms_v1 VALUES (?,?,?,?,?,?,?,?)', atoms)
                 observations, blocked_topics = [], []
                 for key in dict.fromkeys(str(atom[4]) for atom in atoms):
-                    if db.execute('SELECT 1 FROM observation_blocked_v1 WHERE topic_key=?', (key,)).fetchone():
+                    selected_id = self.registry._id(key, ())
+                    previous = self.registry._latest(db, selected_id)
+                    blocked = db.execute('SELECT reason FROM observation_blocked_v1 WHERE topic_key=?', (key,)).fetchone()
+                    if blocked and (previous is not None or blocked['reason'] == 'withdrawn'):
                         blocked_topics.append(key)
                         continue
-                    selected_id = self.registry._id(key, ())
                     request_id = 'observation-run:' + lease.status.run_id + ':' + hashlib.sha256(key.encode()).hexdigest()[:16]
                     if db.execute('SELECT 1 FROM observation_requests_v1 WHERE request_id=?', (request_id,)).fetchone():
                         observations.append(selected_id)
@@ -157,7 +162,6 @@ class ObservationProcessing:
                     support: list[EvidenceSpan] = []
                     counters: list[EvidenceSpan] = []
                     category = ''
-                    overflow = False
                     for atom in db.execute('SELECT * FROM observation_atoms_v1 WHERE processor=? AND topic_key=? ORDER BY message_id,start', (processor, key)):
                         budget()
                         span = EvidenceSpan(**json.loads(atom['span']))
@@ -169,10 +173,8 @@ class ObservationProcessing:
                             raise
                         (support if atom['stance'] == 'support' else counters).append(span)
                         category = str(atom['category'])
-                        if len(support) + len(counters) > 64:
-                            overflow = True
+                        if len(support) + len(counters) > MAX_OBSERVATION_SPANS:
                             break
-                    previous = self.registry._latest(db, selected_id)
                     if previous and previous.state == 'withdrawn':
                         continue  # A worker cannot resurrect an explicit user withdrawal or split.
                     if previous:
@@ -185,10 +187,16 @@ class ObservationProcessing:
                                 target = support if stance == 'support' else counters
                                 if span not in target:
                                     target.append(span)
-                    if len(support) + len(counters) > 64:
-                        overflow = True
-                    if overflow:
-                        db.execute('INSERT INTO observation_blocked_v1 VALUES (?,?,?,?)', (key, processor, lease.status.run_id, 'evidence_limit'))
+                    evidence = (*support, *counters)
+                    excerpts = dict.fromkeys(span.expected_text for span in evidence)
+                    conclusion = '偏好陈述综合（含反例则保持冲突，不推断频率）：' + '；'.join(excerpts)
+                    if (blocked or len(evidence) > MAX_OBSERVATION_SPANS
+                            or sum(len(span.expected_text) for span in evidence) > MAX_OBSERVATION_EVIDENCE_CHARS
+                            or len(conclusion) > MAX_OBSERVATION_CONCLUSION_CHARS):
+                        # A legacy orphan marker has lost its decisions. Recreate only a reviewable parent.
+                        db.execute('''INSERT INTO observation_blocked_v1 VALUES (?,?,?,?) ON CONFLICT(topic_key)
+                            DO UPDATE SET processor=excluded.processor,run_id=excluded.run_id,reason=excluded.reason''',
+                            (key, processor, lease.status.run_id, 'legacy_unknown' if blocked else 'evidence_limit'))
                         # Full atoms (including the overflowing denial) remain available through evidence().
                         # Withdraw the usable head instead of publishing a truncated belief or blocking other slots.
                         placeholder = ObservationDraft(key, '证据超限，需拆分后审查。', tuple(support[:1]), tuple(counters[:1]), category,
@@ -199,9 +207,7 @@ class ObservationProcessing:
                         blocked_topics.append(key)
                         observations.append(selected_id)
                         continue
-                    excerpts = list(dict.fromkeys(span.expected_text for span in (*support, *counters)))
-                    conclusion = '偏好陈述综合（含反例则保持冲突，不推断频率）：' + '；'.join(excerpts)
-                    values = [PreferenceUpdates._key_value(span.expected_text, category)[1] for span in (*support, *counters)]
+                    values = [PreferenceUpdates._key_value(span.expected_text, category)[1] for span in evidence]
                     disputed = any(PreferenceUpdates._conflicts(left, right, category) for index, left in enumerate(values)
                         for right in values[index + 1:])
                     draft = self.registry._canonical(ObservationDraft(key, conclusion, tuple(support), tuple(counters), category,
@@ -241,9 +247,7 @@ class ObservationProcessing:
             db.execute('BEGIN')
             if not db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_atoms_v1'").fetchone():
                 return {'rows': [], 'next_offset': None}
-            atoms = db.execute('''SELECT a.span,a.stance FROM observation_atoms_v1 a JOIN messages m ON m.id=a.message_id
-                WHERE a.topic_key=? GROUP BY a.span,a.stance ORDER BY m.received,m.id,a.start LIMIT ? OFFSET ?''',
-                (topic_key, limit + 1, offset)).fetchall()
+            atoms = review_basis(db, topic_key, self.registry._id(topic_key, ()), limit=limit + 1, offset=offset).fetchall()
             rows: list[dict[str, Any]] = []
             for atom in atoms[:limit]:
                 try:

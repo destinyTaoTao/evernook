@@ -299,6 +299,142 @@ class ObservationTests(unittest.TestCase):
         other, _ = PreferenceUpdates._key_value('我喜欢阅读。', 'general_interest')
         self.assertEqual(len(self.registry.related(self.access, other).rows), 1)
 
+    def test_conclusion_character_limit_does_not_block_unrelated_observations(self) -> None:
+        worker = ObservationProcessing(self.runtime)
+        worker.configure(self.access, enabled=True)
+        versions = [f'我平时习惯用Visual Studio Code 2026.11.{index:04d}。' for index in range(60)]
+        self.source(''.join(versions[:30]))
+        first = worker.tick(self.access, timeout=10)
+        view_id, = first['observation_ids']
+        pending = self.registry.read(self.access, view_id)
+        assert pending.record is not None
+        key = pending.record.draft.topic_key
+        self.source(''.join(versions[30:]) + '我不再习惯用Visual Studio Code。')
+        self.source('我喜欢阅读。')
+
+        result = worker.tick(self.access, timeout=10)
+        self.assertEqual(result['processed'], 2)
+        self.assertEqual(result['blocked_topics'], [key])
+        self.assertEqual(self.registry.read(self.access, view_id).state, 'needs_review')
+        remaining = worker.evidence(self.access, key, limit=32, offset=32)
+        self.assertEqual(len(remaining['rows']), 29)
+        self.assertTrue(any(row['stance'] == 'counterevidence' for row in remaining['rows']))
+        other, = [item for item in result['observation_ids'] if item != view_id]
+        self.assertEqual(self.registry.read(self.access, other).state, 'candidate')
+        self.assertEqual(worker.tick(self.access)['state'], 'idle')
+
+    def test_merging_reviewed_spans_respects_total_evidence_character_limit(self) -> None:
+        from evernook.automatic_preferences import PreferenceUpdates
+        worker = ObservationProcessing(self.runtime)
+        worker.configure(self.access, enabled=True)
+        key, _ = PreferenceUpdates._key_value('我喜欢摄影。', 'general_interest')
+        excerpt = '合成材料' * 256
+        source = self.source(excerpt * 16)
+        spans = tuple(replace(source, start=start, end=start + len(excerpt), expected_text=excerpt)
+            for start in range(0, len(source.expected_text), len(excerpt)))
+        parent = self.registry.propose(self.access, 'reviewed', replace(self.draft(spans), topic_key=key))
+        denial = self.source('我不喜欢摄影。')
+
+        result = worker.tick(self.access, timeout=10)
+        self.assertEqual(result['blocked_topics'], [key])
+        self.assertEqual(self.registry.read(self.access, parent.observation_id).state, 'needs_review')
+        first = worker.evidence(self.access, key, limit=10)
+        second = worker.evidence(self.access, key, limit=10, offset=first['next_offset'])
+        evidence = first['rows'] + second['rows']
+        self.assertIsNone(second['next_offset'])
+        self.assertEqual([row['start'] for row in evidence if row['stance'] == 'support'],
+            [span.start for span in spans])
+        self.assertEqual([row['quote'] for row in evidence if row['stance'] == 'counterevidence'], ['我不喜欢摄影。'])
+        self.assertEqual(worker.tick(self.access)['state'], 'idle')
+        confirmation = self.source('合成：停止使用旧材料。')
+        self.runtime.change(self.access, Change('hide-manual', source.message_id, 1, 'suppress', confirmation.message_id, 'synthetic'))
+        live = worker.evidence(self.access, key)
+        self.assertEqual([row['message_id'] for row in live['rows']], [denial.message_id])
+        children = (replace(self.draft((), (denial,)), topic_key='photo:denial'),
+            replace(self.draft((confirmation,)), topic_key='photo:review'))
+        split = self.registry.split(self.access, 'split-live', parent.observation_id, parent.revision + 1,
+            children, confirmation_id=confirmation.message_id)
+        self.assertEqual([child.state for child in split], ['candidate', 'candidate'])
+
+    def test_purged_quarantine_head_rebuilds_from_later_already_processed_sources(self) -> None:
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+        worker = ObservationProcessing(self.runtime)
+        worker.configure(self.access, enabled=True)
+        versions = ''.join(f'我常用Java{index:>68}。' for index in range(30))
+        old = self.source(versions)
+        blocked = worker.tick(self.access, timeout=10)
+        key, = blocked['blocked_topics']
+        view_id, = blocked['observation_ids']
+        first_basis = worker.evidence(self.access, key)
+        self.assertEqual(len(first_basis['rows']), 30)
+        self.assertIsNone(first_basis['next_offset'])
+        later = self.source('我不常用Java。')
+        worker.tick(self.access, timeout=10)
+        purge = PurgeWorkflow(self.runtime)
+        preview = purge.preview(self.access, 'purge-quarantine', (old.message_id,))
+        confirmation = self.source('合成：确认删除已选来源。')
+        purge.purge(self.access, PurgeDecision(preview.request_id, confirmation.message_id))
+
+        self.assertEqual(worker.status(self.access)['blocked_topics'], 0)
+        worker.tick(self.access, timeout=10)
+        rebuilt = self.registry.read(self.access, view_id)
+        self.assertEqual(rebuilt.state, 'candidate')
+        self.assertEqual([item['message_id'] for item in rebuilt.source_contexts], [later.message_id])
+        self.assertEqual(rebuilt.independent_counterevidence, 1)
+        self.assertEqual(worker.tick(self.access)['state'], 'idle')
+
+    def test_legacy_orphan_quarantine_with_new_evidence_has_a_reviewable_parent(self) -> None:
+        from evernook.automatic_preferences import PreferenceUpdates
+        from evernook.archive import capture_control_checkpoint, replay_archive_controls
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+        from evernook.runtime_restore import publish_replayed_runtime
+        worker = ObservationProcessing(self.runtime)
+        worker.configure(self.access, enabled=True)
+        key, _ = PreferenceUpdates._key_value('我喜欢摄影。', 'general_interest')
+        with self.runtime._connection() as db:
+            db.execute('INSERT INTO observation_blocked_v1 VALUES (?,?,?,?)',
+                (key, 'older-rules', 'purged-run', 'evidence_limit'))
+        first = self.source('我喜欢摄影。')
+        second = self.source('我不喜欢摄影。')
+        result = worker.tick(self.access, timeout=10)
+        view_id, = result['observation_ids']
+        self.assertEqual(self.registry.read(self.access, view_id).state, 'needs_review')
+        evidence = worker.evidence(self.access, key)
+        self.assertEqual([row['message_id'] for row in evidence['rows']], [first.message_id, second.message_id])
+        self.runtime.export_archive(self.access, self.root / 'snapshot')
+        checkpoint = capture_control_checkpoint(self.runtime, self.access)
+        reviewed = replay_archive_controls(self.runtime, self.access, self.root / 'snapshot', self.root / 'replay', checkpoint=checkpoint)
+        config, self.access = publish_replayed_runtime(self.runtime, self.access, reviewed.root, self.root / 'restored',
+            checkpoint=checkpoint, client_id='restored', entry='owner')
+        self.runtime = MemoryRuntime(config)
+        worker = ObservationProcessing(self.runtime)
+        purge = PurgeWorkflow(self.runtime)
+        preview = purge.preview(self.access, 'purge-legacy-basis', (first.message_id,))
+        confirmation = self.source('合成：确认删除已选来源。')
+        purge.purge(self.access, PurgeDecision(preview.request_id, confirmation.message_id))
+        worker.tick(self.access, timeout=10)
+        self.assertEqual(worker.registry.read(self.access, view_id).state, 'needs_review')
+        self.assertEqual([row['message_id'] for row in worker.evidence(self.access, key)['rows']], [second.message_id])
+
+    def test_purging_withdrawn_quarantine_does_not_recreate_parent(self) -> None:
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+        worker = ObservationProcessing(self.runtime)
+        worker.configure(self.access, enabled=True)
+        old = self.source(''.join(f'我常用Java{index:>68}。' for index in range(30)))
+        blocked = worker.tick(self.access, timeout=10)
+        view_id, = blocked['observation_ids']
+        withdrawal = self.source('合成：撤回观察。')
+        self.registry.decide(self.access, 'withdraw', view_id, 1, action='withdraw', confirmation_id=withdrawal.message_id)
+        purge = PurgeWorkflow(self.runtime)
+        preview = purge.preview(self.access, 'purge-withdrawn', (old.message_id,))
+        confirmation = self.source('合成：确认删除已选来源。')
+        purge.purge(self.access, PurgeDecision(preview.request_id, confirmation.message_id))
+        self.source('我常用Java。')
+        result = worker.tick(self.access, timeout=10)
+        self.assertEqual(result['blocked_topics'], blocked['blocked_topics'])
+        with self.assertRaisesRegex(MemoryFailure, 'observation_not_found'):
+            self.registry.read(self.access, view_id)
+
     def test_overflow_split_must_include_the_late_counterevidence_not_only_old_head(self) -> None:
         worker = ObservationProcessing(self.runtime)
         worker.configure(self.access, enabled=True)

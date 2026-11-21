@@ -20,6 +20,9 @@ from .safety import credential_signal
 
 OBSERVATION_TABLES = ('observation_events_v1', 'observation_requests_v1', 'observation_policy_v1',
     'observation_progress_v1', 'observation_atoms_v1', 'observation_runs_v1', 'observation_blocked_v1')
+MAX_OBSERVATION_SPANS = 64
+MAX_OBSERVATION_EVIDENCE_CHARS = 16384
+MAX_OBSERVATION_CONCLUSION_CHARS = 2048
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,20 @@ def source_contexts(db: sqlite3.Connection, spans: tuple[EvidenceSpan, ...], sta
     return tuple(contexts)
 
 
+def review_basis(db: sqlite3.Connection, topic_key: str, observation_id: str, *,
+                limit: int = -1, offset: int = 0) -> sqlite3.Cursor:
+    """Take one ordered union of the rule atoms and the quarantined head's retained evidence."""
+    return db.execute('''WITH head AS (
+        SELECT state,record FROM observation_events_v1 WHERE observation_id=? ORDER BY revision DESC LIMIT 1
+    ), basis(span,stance) AS (
+        SELECT span,stance FROM observation_atoms_v1 WHERE topic_key=?
+        UNION SELECT s.value,'support' FROM head,json_each(head.record,'$.draft.support') s WHERE head.state='needs_review'
+        UNION SELECT c.value,'counterevidence' FROM head,json_each(head.record,'$.draft.counterevidence') c WHERE head.state='needs_review'
+    ) SELECT b.span,b.stance FROM basis b JOIN messages m ON m.id=json_extract(b.span,'$.message_id')
+        ORDER BY m.received,m.id,json_extract(b.span,'$.start'),b.span,b.stance LIMIT ? OFFSET ?''',
+        (observation_id, topic_key, limit, offset))
+
+
 class ObservationRegistry:
     def __init__(self, runtime: MemoryRuntime):
         self.runtime = runtime
@@ -140,14 +157,14 @@ class ObservationRegistry:
     @staticmethod
     def _canonical(draft: ObservationDraft) -> ObservationDraft:
         if (not isinstance(draft, ObservationDraft) or type(draft.inference) is not bool or not draft.inference or type(draft.disputed) is not bool
-                or not isinstance(draft.conclusion, str) or not 1 <= len(draft.conclusion.strip()) <= 2048
+                or not isinstance(draft.conclusion, str) or not 1 <= len(draft.conclusion.strip()) <= MAX_OBSERVATION_CONCLUSION_CHARS
                 or credential_signal(draft.conclusion) or not isinstance(draft.support, tuple)
-                or not isinstance(draft.counterevidence, tuple) or not 1 <= len(draft.support) + len(draft.counterevidence) <= 64):
+                or not isinstance(draft.counterevidence, tuple) or not 1 <= len(draft.support) + len(draft.counterevidence) <= MAX_OBSERVATION_SPANS):
             raise MemoryFailure('invalid_observation')
         if any(not isinstance(span, EvidenceSpan) or not isinstance(span.expected_text, str)
                for span in (*draft.support, *draft.counterevidence)):
             raise MemoryFailure('invalid_observation_span')
-        if sum(len(span.expected_text) for span in (*draft.support, *draft.counterevidence)) > 16384:
+        if sum(len(span.expected_text) for span in (*draft.support, *draft.counterevidence)) > MAX_OBSERVATION_EVIDENCE_CHARS:
             raise MemoryFailure('observation_evidence_budget')
         for span in (*draft.support, *draft.counterevidence):
             _identifier(span.message_id)
@@ -400,7 +417,8 @@ class ObservationRegistry:
             version = ProfileRegistry._confirmation(db, confirmation_id)
             required_support, required_counters = set(parent.draft.support), set(parent.draft.counterevidence)
             if parent.state == 'needs_review' and db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_atoms_v1'").fetchone():
-                for atom in db.execute('SELECT DISTINCT span,stance FROM observation_atoms_v1 WHERE topic_key=?', (parent.draft.topic_key,)):
+                required_support, required_counters = set(), set()
+                for atom in review_basis(db, parent.draft.topic_key, observation_id):
                     span = EvidenceSpan(**json.loads(atom['span']))
                     try:
                         source_contexts(db, (span,), atom['stance'])
@@ -440,16 +458,35 @@ def remove_sources(db: sqlite3.Connection, ids: tuple[str, ...]) -> None:
         if (targets.intersection(span.message_id for span in (*record.draft.support, *record.draft.counterevidence))
                 or record.confirmation_id in targets):
             affected.add(record.observation_id)
+    quarantined_keys = set()
+    has_worker = db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_runs_v1'").fetchone()
     for observation_id in affected:
+        if has_worker:
+            head = db.execute("""SELECT topic_key,state FROM observation_events_v1
+                WHERE observation_id=? AND EXISTS (SELECT 1 FROM observation_events_v1
+                    WHERE observation_id=? AND state='needs_review') ORDER BY revision DESC LIMIT 1""",
+                (observation_id, observation_id)).fetchone()
+            if head:
+                key = str(head['topic_key'])
+                if head['state'] == 'withdrawn':
+                    db.execute("UPDATE observation_blocked_v1 SET reason='withdrawn' WHERE topic_key=?", (key,))
+                else:
+                    quarantined_keys.add(key)
+                    db.execute("DELETE FROM observation_blocked_v1 WHERE topic_key=? AND reason='evidence_limit'", (key,))
         db.execute('DELETE FROM observation_events_v1 WHERE observation_id=?', (observation_id,))
         db.execute('DELETE FROM observation_requests_v1 WHERE observation_id=?', (observation_id,))
-    if db.execute("SELECT 1 FROM sqlite_master WHERE name='observation_runs_v1'").fetchone():
+    if has_worker:
         runs: set[str] = set()
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='candidate_runs_v1'").fetchone():
             runs.update(str(row['id']) for row in db.execute('SELECT id,sources FROM candidate_runs_v1')
                         if targets.intersection(item[0] for item in json.loads(row['sources'])))
         runs.update(str(row['run_id']) for row in db.execute('SELECT * FROM observation_runs_v1')
                     if affected.intersection(json.loads(row['observation_ids'])))
+        # Older workers recorded no observation ID for sources processed while a topic was blocked.
+        for key in quarantined_keys:
+            runs.update(str(row[0]) for row in db.execute('''SELECT DISTINCT p.run_id FROM observation_atoms_v1 a
+                JOIN observation_progress_v1 p ON p.message_id=a.message_id AND p.processor=a.processor
+                WHERE a.topic_key=?''', (key,)))
         # Surviving sources need a retryable candidate lease as well as cleared progress.
         # Leave any unrelated observation request receipts intact; the worker reuses them.
         for run in runs:
