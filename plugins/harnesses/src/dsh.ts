@@ -131,7 +131,7 @@ export async function installMemory(ctx: Context, config: Config) {
         } })));
     } catch (error) { await consolidation?.close(); await client.close(); throw error; }
   }
-  let closed = false;
+  let closing: Promise<void> | undefined;
   const captureRuns = new Map<string, Promise<void>>();
   const captureGaps = new Map<string, string[]>();
   const protectedTexts = new Map<string, Set<string>>();
@@ -263,16 +263,18 @@ export async function installMemory(ctx: Context, config: Config) {
     through.set(sessionId, events.at(-1)?.seq ?? -1);
     await work?.capture(header, events, origin);
   }
-  function capture(session: Session): Promise<void> {
-    const id = String(session.id);
+  function queueCapture(id: string, operation: () => Promise<void>): Promise<void> {
+    if (closing) return Promise.reject(new Error('evernook:adapter_closed'));
     const prior = captureRuns.get(id) ?? Promise.resolve();
-    const run = prior.catch(() => {}).then(async () => {
-      if (closed) throw new Error('evernook:adapter_closed');
+    const run = prior.catch(() => {}).then(operation);
+    captureRuns.set(id, run);
+    return run.finally(() => { if (captureRuns.get(id) === run) captureRuns.delete(id); });
+  }
+  function capture(session: Session): Promise<void> {
+    return queueCapture(String(session.id), async () => {
       await ctx.sessions.flush(session);
       await ingest(session.header, session.snapshotEvents(), session.inheritedEventCount);
     });
-    captureRuns.set(id, run);
-    return run.finally(() => { if (captureRuns.get(id) === run) captureRuns.delete(id); });
   }
 
   async function budgetedPayload(sessionId: string, input: string, inputId: string, signal?: AbortSignal) {
@@ -334,7 +336,7 @@ export async function installMemory(ctx: Context, config: Config) {
 
   async function persistToolPublication(exec: Readonly<ToolExecution>, result: unknown,
       phase: 'call' | 'result' | 'ptc-call' | 'ptc-log', content: readonly ContentBlock[] = []) {
-    if (closed || !exec.agent) throw new Error('evernook:tool_session_unavailable');
+    if (closing || !exec.agent) throw new Error('evernook:tool_session_unavailable');
     const session = exec.agent.session;
     await capture(session);
     const input = latest.get(String(session.id));
@@ -587,16 +589,26 @@ export async function installMemory(ctx: Context, config: Config) {
         protected_originals_not_saved: protectedTexts.get(key)?.size ?? 0, excluded_history_messages: excludedHistory.get(key) ?? 0,
         provider_history: protectedTexts.get(key)?.size ? 'current_safe_turn_only' : 'native_history' };
     },
-    async rescan(sessionId: SessionId) {
-      const handle = await ctx.sessionPersistence.open(sessionId, 'read');
-      try { const contents = await handle.read(); through.delete(String(sessionId)); await ingest(handle.header, contents.events, handle.inheritedEventCount); }
-      finally { await handle.close(); }
+    rescan(sessionId: SessionId) {
+      const id = String(sessionId);
+      return queueCapture(id, async () => {
+        const handle = await ctx.sessionPersistence.open(sessionId, 'read');
+        try {
+          const contents = await handle.read();
+          through.delete(id);
+          await ingest(handle.header, contents.events, handle.inheritedEventCount);
+        } finally { await handle.close(); }
+      });
     },
-    async close() {
-      if (closed) return;
-      closed = true;
-      try { for (const dispose of disposers.reverse()) dispose(); }
-      finally { try { await consolidation?.close(); } finally { await client.close(); } }
+    close() {
+      closing ??= Promise.resolve().then(async () => {
+        try { for (const dispose of disposers.reverse()) dispose(); }
+        finally {
+          await Promise.allSettled(captureRuns.values());
+          try { await consolidation?.close(); } finally { await client.close(); }
+        }
+      });
+      return closing;
     },
   };
 }

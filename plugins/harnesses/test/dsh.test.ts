@@ -1626,6 +1626,52 @@ test('real native host saves user input before provider and injects sourced evid
   } finally { await host.close(); }
 });
 
+test('dsh rescan waits for a capture of the same session while another session remains readable', async t => {
+  const host = await boot(new Synthetic());
+  const first = await host.create('capture-rescan-first');
+  const other = await host.create('capture-rescan-other');
+  const started = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  const flush = SessionStore.prototype.flush;
+  t.mock.method(SessionStore.prototype, 'flush', async function (this: SessionStore, ...args: Parameters<typeof flush>) {
+    if (args[0] === first.agent.session) { started.resolve(); await resume.promise; }
+    return flush.apply(this, args);
+  });
+  const open = t.mock.method(host.ctx.sessionPersistence, 'open');
+  const capture = host.memory.capture(first.agent.session);
+  await started.promise;
+  const rescan = host.memory.rescan(first.agent.session.id);
+  try {
+    await host.memory.rescan(other.agent.session.id);
+    assert.equal(open.mock.calls.some(call => call.arguments[0] === first.agent.session.id), false,
+      'the same-session scan must take its persistence snapshot after live capture finishes');
+  } finally {
+    resume.resolve();
+    await Promise.all([capture, rescan]);
+    await first.dispose(); await other.dispose(); await host.close();
+  }
+});
+
+test('dsh unload drains accepted capture and rescan before closing their transport', async () => {
+  const host = await boot(new Synthetic());
+  const handle = await host.create('drain-capture');
+  const session = handle.agent.session;
+  const input = 'synthetic pending capture during unload';
+  session.append('user/message', user('drain-input', input), { surfaceOp: 'append' });
+  try {
+    const capture = host.memory.capture(session);
+    const rescan = host.memory.rescan(session.id);
+    const firstClose = host.memory.close();
+    const secondClose = host.memory.close().then(() => {
+      assert.equal(host.rows().filter(row => row.event.role === 'user' && row.event.text === input).length, 1);
+    });
+    const results = await Promise.allSettled([capture, rescan, firstClose, secondClose]);
+    assert.deepEqual(results.map(result => result.status === 'rejected' ? String(result.reason) : 'ok'), Array(4).fill('ok'));
+    await assert.rejects(host.memory.capture(session), /evernook:adapter_closed/);
+    await assert.rejects(host.memory.rescan(session.id), /evernook:adapter_closed/);
+  } finally { await handle.dispose(); await host.close(); }
+});
+
 test('provider interruption publishes no buffered prefix and fresh adapter replays durable native records idempotently', async () => {
   const adapter = new Synthetic();
   adapter.interrupt = true;
