@@ -7,16 +7,39 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 from evernook import Access, Event, MemoryRuntime, Source, initialize
+from evernook import service_transport
 from evernook.runtime import pair_client
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient, client_access
 from evernook.service_transport import authenticate_client, receive_json, send_json
 from tests.contracts.fixture_cleanup import cleanup_fixture
+
+
+class ClientHandshakeTests(unittest.TestCase):
+    def test_cancel_while_waiting_for_authentication_reply(self) -> None:
+        client, peer = socket.socketpair()
+        signal = threading.Event()
+        with client, peer:
+            def cancel_after_challenge() -> None:
+                peer.settimeout(3)
+                if peer.recv(32):
+                    signal.set()
+
+            observer = threading.Thread(target=cancel_after_challenge)
+            observer.start()
+            try:
+                with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                    authenticate_client(client, bytes(32), time.monotonic() + 3, cancel=signal)
+            finally:
+                observer.join(timeout=4)
+            self.assertFalse(observer.is_alive())
 
 
 class ServiceTests(unittest.TestCase):
@@ -58,6 +81,46 @@ class ServiceTests(unittest.TestCase):
     def event(self) -> dict[str, object]:
         return asdict(Event(Source("test", "s", "main", "1"), "user", 1,
             None, "complete", "合成：我喜欢在湿地观察白鹭。"))
+
+    def test_precanceled_call_does_not_connect(self) -> None:
+        cancel = threading.Event()
+        cancel.set()
+        with patch("evernook.service.socket.create_connection", wraps=socket.create_connection) as connect:
+            with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                self.client.call(self.access, "remember", {"event": self.event()}, cancel=cancel)
+            connect.assert_not_called()
+
+    def test_cancellation_at_handshake_completion_does_not_send_request(self) -> None:
+        signal = threading.Event()
+
+        def finish_handshake(connection: socket.socket, key: bytes, deadline: float,
+                             *, cancel: threading.Event | None = None) -> bytes:
+            session = authenticate_client(connection, key, deadline, cancel=cancel)
+            signal.set()
+            return session
+
+        with patch("evernook.service.authenticate_client", side_effect=finish_handshake), \
+                patch("evernook.service.send_json", wraps=send_json) as send:
+            with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                self.client.call(self.access, "remember", {"event": self.event()}, cancel=signal)
+            self.assertEqual(send.call_count, 0)
+        self.assertEqual(self.client.call(self.access, "status", {})["ledger"]["messages"], 0)
+
+    def test_cancel_during_request_encoding_does_not_write_frame(self) -> None:
+        signal = threading.Event()
+        encode = json.dumps
+
+        def cancel_after_encoding(value: object, **kwargs: Any) -> str:
+            encoded = encode(value, **kwargs)
+            if isinstance(value, dict) and value.get("operation") == "remember":
+                signal.set()
+            return encoded
+
+        with patch.object(json, "dumps", side_effect=cancel_after_encoding), \
+                patch.object(service_transport, "_write", wraps=service_transport._write) as write:
+            with self.assertRaisesRegex(MemoryFailure, "service_canceled"):
+                self.client.call(self.access, "remember", {"event": self.event()}, cancel=signal)
+            self.assertEqual([len(call.args[1]) for call in write.call_args_list], [32, 32])
 
     def test_embedding_config_failure_does_not_block_mcp_capture_or_discovery(self) -> None:
         self.processes[-1].terminate()

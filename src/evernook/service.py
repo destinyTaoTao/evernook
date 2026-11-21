@@ -162,6 +162,8 @@ class ServiceClient:
              *, timeout: float = 30, cancel: threading.Event | None = None) -> Any:
         if not 0 < timeout <= 300:
             raise MemoryFailure("invalid_service_timeout")
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure("service_canceled")
         try:
             verify_private_directory(self.config.parent, extra_files=(self.config.parent / ENDPOINT,))
             endpoint = json.loads((self.config.parent / ENDPOINT).read_text(encoding="utf-8"))
@@ -173,10 +175,13 @@ class ServiceClient:
                 raise MemoryFailure("invalid_service_endpoint")
             deadline = time.monotonic() + timeout
             with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=min(timeout, 5)) as connection:
-                session = authenticate_client(connection, key, deadline)
+                session = authenticate_client(connection, key, deadline, cancel=cancel)
                 request = {"version": 1, "access": asdict(access), "operation": operation, "arguments": arguments}
                 private = operation in PRIVATE_OPERATIONS
-                send_json(connection, seal_private_frame(session, request, direction='request') if private else request, deadline)
+                frame = seal_private_frame(session, request, direction='request') if private else request
+                if cancel is not None and cancel.is_set():
+                    raise MemoryFailure("service_canceled")
+                send_json(connection, frame, deadline, cancel=cancel)
                 response = receive_json(connection, deadline, cancel)
                 if private:
                     if 'sealed' not in response:

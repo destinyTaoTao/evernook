@@ -22,6 +22,8 @@ Core 0.1.61 起，已激活账本不带激活参数重启时如可选抽取或�
 
 Python 客户端 `ServiceClient(config).call(access, operation, arguments, timeout=30)` 支持 remember/read/search/recall/status，参数映射已有 Core 操作。已提交但响应丢失时须按来源重投或按ID回查，网络异常不证明提交失败。截止时间或认证失败不回退直写库。
 
+传入 `cancel` 时，客户端在连接前检查已有取消信号，在等待认证回复期间轮询，并在普通或加密业务帧编码完毕、写入套接字前再次检查。上述检查发现取消时返回 `service_canceled`。越过最后检查的取消可能与发送或提交并发，调用方仍须凭原来源重试或回查。
+
 Core 0.1.51 起，已激活服务还支持可信 CLI `persona-read`、`persona-history`、`persona-set` 和 `persona-rollback`；通过 `--require-service` 强制走服务，Python 可调用 `ServiceClient.call(access, 'cli', {'command': 'persona-read', 'input': {}})`。读取沿用 recall 权限，设置与回滚沿用 accept 权限、有效用户来源、预期版本及幂等请求 ID。设置／回滚是可信调用端的维护操作：调用端必须自行建立实际用户确认，不能把模型的声明或布尔字段当作确认；MCP 模型工具不提供这些操作。它们不自动扩展人设权限，也不意味着 dsh 已提供人设编辑界面或日用准入。
 
 #178 对隔离合成库验证源码人设、服务与上下文 23 项和伙伴上下文 5 项；非 editable wheel 的服务与伙伴上下文 7 项通过。新增真实服务测试覆盖四个 CLI、API、重启、并发版本冲突、幂等、普通身份写入拒绝、凭证格式拒绝、助手来源拒绝及 MCP 写入拒绝；最终 MCP 拒绝断言在源码与安装版分别复测。strict mypy 通过。未访问用户人设，也未在 dsh 页面或真实模型请求中验收。

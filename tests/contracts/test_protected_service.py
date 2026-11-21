@@ -231,9 +231,9 @@ class ProtectedServiceTests(unittest.TestCase):
         transmitted: list[object] = []
         received: list[object] = []
         send, receive = send_json, receive_json
-        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
+        def capture_send(connection: socket.socket, value: object, deadline: float, *, cancel: threading.Event | None = None) -> None:
             transmitted.append(value)
-            send(connection, value, deadline)
+            send(connection, value, deadline, cancel=cancel)
         def capture_receive(connection: socket.socket, deadline: float, cancel: object = None) -> object:
             value = receive(connection, deadline, cancel)  # type: ignore[arg-type]
             received.append(value)
@@ -333,8 +333,9 @@ class ProtectedServiceTests(unittest.TestCase):
             'synthetic-private-asr-sentinel-168', 'synthetic-asr', 'model-v1', 'en-US', 'remote', 0, 500, None, True)
         import evernook.service as service_module
         sent: list[object] = []
-        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
-            sent.append(value); send_json(connection, value, deadline)
+        def capture_send(connection: socket.socket, value: object, deadline: float, *, cancel: threading.Event | None = None) -> None:
+            sent.append(value)
+            send_json(connection, value, deadline, cancel=cancel)
         with patch.object(service_module, 'send_json', side_effect=capture_send):
             protected = client.submit_transcription(self.owner, private)
         self.assertNotIn(private.text, json.dumps(sent))
@@ -413,8 +414,9 @@ class ProtectedServiceTests(unittest.TestCase):
         import evernook.service as service_module
         sent: list[object] = []
         received: list[object] = []
-        def capture_send(connection: socket.socket, value: object, deadline: float) -> None:
-            sent.append(value); send_json(connection, value, deadline)
+        def capture_send(connection: socket.socket, value: object, deadline: float, *, cancel: threading.Event | None = None) -> None:
+            sent.append(value)
+            send_json(connection, value, deadline, cancel=cancel)
         def capture_receive(connection: socket.socket, deadline: float, cancel: object = None) -> object:
             value = receive_json(connection, deadline, cancel)  # type: ignore[arg-type]
             received.append(value); return value

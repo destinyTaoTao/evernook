@@ -14,22 +14,20 @@ from .models import MemoryFailure
 MAX_FRAME = 8 * 1024 * 1024
 
 
-def _timeout(connection: socket.socket, deadline: float) -> None:
+def _timeout(connection: socket.socket, deadline: float, *, polling: bool = False) -> None:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise MemoryFailure("service_timeout")
-    connection.settimeout(remaining)
+    connection.settimeout(min(0.1, remaining) if polling else remaining)
 
 
 def _read(connection: socket.socket, size: int, deadline: float,
           cancel: threading.Event | None = None) -> bytes:
     parts: list[bytes] = []
     while size:
-        _timeout(connection, deadline)
-        if cancel is not None:
-            if cancel.is_set():
-                raise MemoryFailure("service_canceled")
-            connection.settimeout(min(0.1, deadline - time.monotonic()))
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure("service_canceled")
+        _timeout(connection, deadline, polling=cancel is not None)
         try:
             part = connection.recv(min(size, 65536))
         except TimeoutError:
@@ -52,10 +50,11 @@ def _session_key(key: bytes, challenge: bytes, nonce: bytes) -> bytes:
     return hmac.digest(key, b'evernook-private-session-v1' + challenge + nonce, 'sha256')
 
 
-def authenticate_client(connection: socket.socket, key: bytes, deadline: float) -> bytes:
+def authenticate_client(connection: socket.socket, key: bytes, deadline: float,
+                        *, cancel: threading.Event | None = None) -> bytes:
     challenge = secrets.token_bytes(32)
     _write(connection, challenge, deadline)
-    reply = _read(connection, 64, deadline)
+    reply = _read(connection, 64, deadline, cancel)
     expected = hmac.digest(key, b"evernook-server-v1" + challenge + reply[:32], "sha256")
     if not hmac.compare_digest(reply[32:], expected):
         raise MemoryFailure("service_authentication_failed")
@@ -144,8 +143,12 @@ def receive_json(connection: socket.socket, deadline: float,
         raise MemoryFailure("invalid_service_json") from None
 
 
-def send_json(connection: socket.socket, value: object, deadline: float) -> None:
+def send_json(connection: socket.socket, value: object, deadline: float,
+              *, cancel: threading.Event | None = None) -> None:
     raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if len(raw) > MAX_FRAME:
         raise MemoryFailure("service_frame_too_large")
-    _write(connection, len(raw).to_bytes(4, "big") + raw, deadline)
+    frame = len(raw).to_bytes(4, "big") + raw
+    if cancel is not None and cancel.is_set():
+        raise MemoryFailure("service_canceled")
+    _write(connection, frame, deadline)
