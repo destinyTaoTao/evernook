@@ -17,9 +17,10 @@ from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVI
 from .query_plan import QueryPlan, plan_query
 from .vector_distance import distance_function
 from .lexical import NORMALIZATION_IDENTITY, matching_spans, query_expression
+from . import recall_index
 
 
-_ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
+_ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,8 @@ class SemanticRecall:
         return bool(db.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('semantic_spaces_v1','semantic_documents_v1','semantic_chunks_v1')").fetchone()[0] == 3)
 
     @staticmethod
-    def _covered(*, eligible_only: bool = False, has_failure_table: bool = True) -> str:
+    def _covered(*, eligible_only: bool = False, has_failure_table: bool = True,
+                 sources: str = "messages") -> str:
         # A chunk is acknowledged when it has a current-version vector or an explicit failure record.
         eligibility = f"AND {_ELIGIBLE}" if eligible_only else ""
         # Older index schemas have no failure table. SQLite resolves table names before evaluation.
@@ -120,7 +122,7 @@ class SemanticRecall:
                         AND f.state_version=d.state_version AND f.content_version=d.content_version)""" if has_failure_table else ""
         return f"""SELECT d.message_id FROM semantic_documents_v1 d
             LEFT JOIN visibility v ON v.message_id=d.message_id
-            JOIN messages ON messages.id=d.message_id
+            JOIN {sources} ON messages.id=d.message_id
             WHERE d.space_id=? AND d.state_version=COALESCE(v.version,1)
               AND d.content_version=json_extract(messages.receipt,'$.content_version')
               AND d.chunk_count=(SELECT count(*) FROM semantic_chunks_v1 c
@@ -129,7 +131,8 @@ class SemanticRecall:
               {failures} {eligibility}"""
 
     def _status(self, db: sqlite3.Connection) -> SemanticStatus:
-        counts = db.execute(f"SELECT count(*),max(received) FROM messages WHERE {_ELIGIBLE}").fetchone()
+        sources = recall_index.source_table(db)
+        counts = db.execute(f"SELECT count(*),max(received) FROM {sources} WHERE {_ELIGIBLE}").fetchone()
         total = int(counts[0])
         space = self.space
         if space is None:
@@ -138,18 +141,33 @@ class SemanticRecall:
             return SemanticStatus("not_built", space.key, total, 0, total, counts[1], stored_vectors=0)
         has_failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone() is not None
         # Check eligibility on the authoritative row already joined for the document version.
-        coverage_sql = self._covered(eligible_only=True, has_failure_table=has_failure_table)
+        coverage_sql = self._covered(eligible_only=True, has_failure_table=has_failure_table, sources=sources)
         covered = int(db.execute(f"SELECT count(DISTINCT message_id) FROM ({coverage_sql})", (space.key,)).fetchone()[0])
         failed = 0
         if has_failure_table:
             # Only failures that still describe a current recallable source version count as live.
             failed = int(db.execute(f"""SELECT count(*) FROM semantic_failures_v1 f
-                JOIN messages ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
+                JOIN {sources} ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
                 WHERE f.space_id=? AND {_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
                   AND f.content_version=json_extract(messages.receipt,'$.content_version')""", (space.key,)).fetchone()[0])
         vectors = int(db.execute("SELECT count(*) FROM semantic_chunks_v1 WHERE space_id=?", (space.key,)).fetchone()[0])
         return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
                               None, failed, vectors)
+
+    def candidate_index_enabled(self, access: Access) -> bool:
+        self.runtime._authorize(access)
+        with self.runtime._connection() as db:
+            return recall_index.enabled(db)
+
+    def configure_candidate_index(self, access: Access, *, enabled: bool, rebuild: bool = False) -> bool:
+        self.runtime._require_scope(access, "maintain", "configure_recall_candidate_index")
+        if type(enabled) is not bool or type(rebuild) is not bool or (rebuild and not enabled):
+            raise MemoryFailure("invalid_recall_candidate_index")
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            recall_index.configure(db, enabled=enabled, rebuild=rebuild)
+            db.execute("COMMIT")
+        return enabled
 
     def status(self, access: Access, *, check: Callable[[], float] | None = None) -> SemanticStatus:
         self.runtime._require_scope(access, "recall", "semantic_status")
@@ -325,7 +343,9 @@ class SemanticRecall:
         since, chars, scanned = base, 0, 0
         # Unknown/future source times never pretend to be recent. They remain in global recall.
         with self.runtime._connection() as db:
-            for row in db.execute(f"""SELECT event,receipt,occurred FROM messages WHERE {_ELIGIBLE}
+            db.execute("BEGIN")
+            sources = recall_index.source_table(db, chronological=True)
+            for row in db.execute(f"""SELECT event,receipt,occurred FROM {sources} WHERE {_ELIGIBLE}
                     AND occurred<=? AND (? IS NULL OR messages.id<>?) ORDER BY occurred DESC,id LIMIT 257""",
                     (instant, current_input_id, current_input_id)):
                 # The scan-limit return wins at the boundary: verified recent rows must not be dropped
@@ -356,6 +376,7 @@ class SemanticRecall:
         expression = " OR ".join("(" + query_expression((word,)) + ")" for word in words)
         with self.runtime._connection(check=check) as db:
             db.execute("BEGIN")
+            sources = recall_index.source_table(db)
             parameters: list[object] = [expression, NORMALIZATION_IDENTITY, current_input_id, current_input_id]
             condition = ""
             for value, operator in ((since, ">="), (until, "<")):
@@ -365,7 +386,7 @@ class SemanticRecall:
             rows = db.execute(f"""WITH ranked AS MATERIALIZED (
                 SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
                 FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
-                JOIN messages ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
+                JOIN {sources} ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE lexical MATCH ? AND d.normalization_version=? AND (? IS NULL OR messages.id<>?)
                   AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}
                 ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
@@ -407,8 +428,9 @@ class SemanticRecall:
             if not self._present(db):
                 return [], 0, False, "disabled"
             function, encoded, engine = distance_function(db, vector, check=check)
+            sources = recall_index.source_table(db)
             base = f"""FROM semantic_chunks_v1 c
-                JOIN messages ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
+                JOIN {sources} ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""
             # The same scan counts all eligible chunks and selects each source's best span

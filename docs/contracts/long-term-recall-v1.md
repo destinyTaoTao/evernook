@@ -23,3 +23,18 @@ Core 0.1.60 起独立服务将嵌入配置和后端绑定到进程生命周期�
 取消从dsh AbortSignal经MemoryClient/MCP传到服务；直连stdio的recall/context也各有协作取消事件。SQLite progress handler及提交前显式检查维持错误语义。取消不是撤销已经完成的原始证据写入；刷新结果仍以实际状态及回执为准。
 
 本契约是功能及覆盖语义，日常质量/时延/资源准入沿用#81/#84；#121冻结套件的失败、缺失及实际宿主回答继续分别报告。
+
+## 可选来源候选索引
+
+直接维护模式下，有 `maintain` 权限的本地操作者可在写入维护窗口启用索引。以下示例中，`$runtimeConfig` 和 `$clientFile` 分别是既有运行库配置和调用端凭据文件的路径。
+
+```powershell
+evernook prepare-recall-candidate-index --config $runtimeConfig --access $clientFile
+evernook status --config $runtimeConfig --access $clientFile
+evernook rebuild-recall-candidate-index --config $runtimeConfig --access $clientFile
+evernook remove-recall-candidate-index --config $runtimeConfig --access $clientFile
+```
+
+新库默认关闭。`status` 的 `recall_candidate_index` 表示两个索引的定义均已核实。Python 入口为 `SemanticRecall(runtime).configure_candidate_index(access, enabled=True)`，传入 `rebuild=True` 可重建，传入 `enabled=False` 可移除。已激活服务模式的库遵循现有维护入口限制。
+
+SQLite 为有非空普通原文的消息维护两个部分索引，按来源 ID 提供内容版本与时间，按发生时间定位近期窗口。来源抑制、更正、生成内容排除和向量版本仍在检索事务内核对。向量通道继续计算全部合格片段的精确距离，最终证据返回原文。构建和重建需要额外磁盘，在一个写事务内完成。配置失败会回滚。索引缺失或定义不匹配时，查询使用原有来源路径。遇到同名异构对象，维护命令返回 `recall_candidate_index_conflict` 供操作者核对。

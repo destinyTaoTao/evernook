@@ -186,6 +186,9 @@ def _parser() -> Parser:
         ("rebuild-index", "Rebuild the lexical index from retained evidence"),
         ("prepare-search-acceleration", "Trusted optional covering-index build; may temporarily block writers"),
         ("remove-search-acceleration", "Trusted removal of the optional search covering index"),
+        ("prepare-recall-candidate-index", "Build optional source and time indexes for recall"),
+        ("rebuild-recall-candidate-index", "Rebuild recall source and time indexes in one write transaction"),
+        ("remove-recall-candidate-index", "Remove optional recall source and time indexes"),
         ("prepare-lexical-id-acceleration", "Trusted optional FTS ID rebuild; requires a writer maintenance window"),
         ("remove-lexical-id-acceleration", "Trusted reverse rebuild of the optional FTS ID index"),
         ("prepare-search-checkpoint", "Trusted explicit lexical coverage checkpoint build; requires FTS ID acceleration"),
@@ -897,6 +900,9 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
     if args.command in ("prepare-search-acceleration", "remove-search-acceleration"):
         return {"enabled": runtime.configure_lexical_acceleration(access,
             enabled=args.command == "prepare-search-acceleration")}
+    if args.command in ("prepare-recall-candidate-index", "rebuild-recall-candidate-index", "remove-recall-candidate-index"):
+        return {"enabled": SemanticRecall(runtime).configure_candidate_index(access,
+            enabled=args.command != "remove-recall-candidate-index", rebuild=args.command == "rebuild-recall-candidate-index")}
     if args.command in ("prepare-lexical-id-acceleration", "remove-lexical-id-acceleration"):
         return {"enabled": runtime.configure_lexical_id_acceleration(access,
             enabled=args.command == "prepare-lexical-id-acceleration")}
@@ -910,7 +916,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             "lexical": asdict(runtime.lexical_status(access)),
             "lexical_acceleration": runtime.lexical_acceleration_enabled(access),
             "lexical_id_acceleration": runtime.lexical_id_acceleration_enabled(access),
-            "lexical_checkpoint": runtime.lexical_checkpoint_enabled(access), "consumer_running": False}
+            "lexical_checkpoint": runtime.lexical_checkpoint_enabled(access),
+            "recall_candidate_index": SemanticRecall(runtime).candidate_index_enabled(access), "consumer_running": False}
 
 
 def main() -> None:

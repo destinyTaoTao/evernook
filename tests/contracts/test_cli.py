@@ -14,6 +14,16 @@ from contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_recall_candidate_index_cli_lifecycle(self) -> None:
+        for operation, expected in (("status", False), ("prepare-recall-candidate-index", True),
+                                    ("rebuild-recall-candidate-index", True), ("remove-recall-candidate-index", False)):
+            with self.subTest(operation=operation):
+                if operation != "status":
+                    _, changed = self.invoke(operation)
+                    self.assertEqual(changed["result"], {"enabled": expected})
+                _, status = self.invoke("status")
+                self.assertEqual(status["result"]["recall_candidate_index"], expected)
+
     def test_checkpoint_requires_explicit_id_index_and_is_reversible_via_cli(self) -> None:
         _, before = self.invoke("status")
         self.assertFalse(before["result"]["lexical_checkpoint"])

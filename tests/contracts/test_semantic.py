@@ -15,7 +15,7 @@ from typing import Any
 import unittest
 from unittest.mock import patch
 
-from evernook import Access, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
+from evernook import Access, Capture, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
 
 
 class SyntheticEmbedding:
@@ -71,6 +71,104 @@ class SemanticTests(unittest.TestCase):
         self.sequence += 1
         return self.runtime.submit(self.access, Event(Source("test", "session", "main", str(self.sequence)),
             "user", self.sequence, when, "complete", text, sensitive)).message_id
+
+    def test_candidate_index_preserves_recall_and_tracks_live_writes_and_controls(self) -> None:
+        target = self.save("合成：特别喜欢辛辣。" * 15)
+        self.save("合成：另一个辛辣食物。", when=None)
+        self.save("合成投影。", sensitive=True)
+        self.save("")
+        generated = self.runtime.submit_capture(self.access, Capture(
+            Event(Source("test", "session", "main", "generated"), "tool", 5, None, "complete", "合成辛辣食物。"),
+            "tool_result", input_id=target, tool_name="evernook_memory_reflect"))
+        self.runtime.refresh_lexical(self.access)
+        self.workflow.refresh(self.access)
+        def page() -> object:
+            return self.workflow.recall(self.access, "辛辣食物", as_of="2025-01-01T00:00:00Z",
+                                        recent_target_chars=64, limit=20)
+        before = page()
+        self.assertTrue(self.workflow.configure_candidate_index(self.access, enabled=True))
+        self.workflow = SemanticRecall(MemoryRuntime(self.config), self.backend)
+        self.assertEqual(self.workflow.status(self.access).source_messages, 2)
+        scoped = self.workflow.recall(self.access, "辛辣食物", as_of="2025-01-01T00:00:00Z",
+                                     since="2020-01-01T00:00:00Z", current_input_id=target)
+        self.assertEqual(scoped.hits, ())
+        self.assertNotIn(generated.message.message_id, {hit.evidence.message_id for hit in
+            self.workflow.recall(self.access, "辛辣食物").hits})
+        self.assertEqual(page(), before)
+        self.save("合成：新的辛辣食物。", when="2024-12-31T00:00:00Z")
+        instruction = self.save("合成：抑制。")
+        self.runtime.change(self.access, Change("suppress-index-target", target, 1, "suppress", instruction, "合成"))
+        during = page()
+        self.assertTrue(self.workflow.configure_candidate_index(self.access, enabled=True, rebuild=True))
+        self.assertEqual(page(), during)
+        self.assertFalse(self.workflow.configure_candidate_index(self.access, enabled=False))
+        self.assertEqual(page(), during)
+
+    def test_candidate_index_maintenance_preserves_an_active_lexical_checkpoint(self) -> None:
+        self.save("合成覆盖。" * 4)
+        self.runtime.refresh_lexical(self.access)
+        self.runtime.configure_lexical_id_acceleration(self.access, enabled=True)
+        self.runtime.configure_lexical_checkpoint(self.access, enabled=True)
+        for active, rebuild in ((True, False), (True, True), (False, False)):
+            self.workflow.configure_candidate_index(self.access, enabled=active, rebuild=rebuild)
+            self.assertTrue(self.runtime.lexical_checkpoint_enabled(self.access))
+
+    def test_partial_or_conflicting_candidate_index_uses_original_recall(self) -> None:
+        from evernook import recall_index
+        self.save("合成：喜欢辛辣。")
+        self.runtime.refresh_lexical(self.access)
+        self.workflow.refresh(self.access)
+        def page() -> object:
+            return self.workflow.recall(self.access, "饮食偏好", as_of="2025-01-01T00:00:00Z")
+        baseline = page()
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        with self.runtime._connection() as db:
+            db.execute(f"DROP INDEX {recall_index.BY_SOURCE}")
+        self.assertFalse(self.workflow.candidate_index_enabled(self.access))
+        self.assertEqual(page(), baseline)
+        with self.runtime._connection() as db:
+            db.execute(f"CREATE INDEX {recall_index.BY_SOURCE} ON messages(received)")
+        self.assertFalse(self.workflow.candidate_index_enabled(self.access))
+        self.assertEqual(page(), baseline)
+        for enabled in (True, False):
+            with self.assertRaisesRegex(MemoryFailure, "recall_candidate_index_conflict"):
+                self.workflow.configure_candidate_index(self.access, enabled=enabled)
+
+    def test_candidate_index_rejects_duplicate_schema_names_in_either_order(self) -> None:
+        from evernook import recall_index
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        with self.runtime._connection() as db:
+            name = recall_index.BY_SOURCE
+            (definition,) = db.execute("SELECT sql FROM sqlite_master WHERE name=?", (name,)).fetchone()
+            for trigger_first in (True, False):
+                with self.subTest(trigger_first=trigger_first):
+                    if trigger_first:
+                        db.execute(f"DROP INDEX {name}")
+                    db.execute(f"CREATE TRIGGER {name} AFTER UPDATE ON messages BEGIN SELECT 1; END")
+                    if trigger_first:
+                        db.execute(definition)
+                    self.assertFalse(recall_index.enabled(db))
+                    with self.assertRaisesRegex(MemoryFailure, "recall_candidate_index_conflict"):
+                        recall_index.configure(db, enabled=False, rebuild=False)
+                    db.execute(f"DROP TRIGGER {name}")
+                    self.assertTrue(recall_index.enabled(db))
+
+    def test_candidate_rebuild_failure_preserves_both_indexes_and_evidence(self) -> None:
+        from evernook import recall_index
+        original = self.save("合成可验证原文。")
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        real_connect = sqlite3.connect
+        def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            db: sqlite3.Connection = real_connect(*args, **kwargs)
+            db.set_authorizer(lambda action, name, _table, _schema, _trigger:
+                sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_CREATE_INDEX and name == recall_index.BY_TIME
+                else sqlite3.SQLITE_OK)
+            return db
+        with patch("sqlite3.connect", side_effect=connect), self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            self.workflow.configure_candidate_index(self.access, enabled=True, rebuild=True)
+        self.assertTrue(self.workflow.candidate_index_enabled(self.access))
+        self.assertEqual(self.workflow.status(self.access).source_messages, 1)
+        self.assertIsNotNone(self.runtime.read(self.access, original))
 
     def test_semantic_paraphrase_fuses_with_lexical_and_references_exact_source(self) -> None:
         target = self.save("合成：小林喜欢辛辣的食物🙂。")
