@@ -173,6 +173,37 @@ def append(runtime: MemoryRuntime, access: Access, event: Event, *, index: int, 
         return result
 
 
+def _page_text(db: sqlite3.Connection, head: sqlite3.Row, start: int, end: int) -> str:
+    if start == end:
+        return ""
+    # The committed code-point counts are monotone, including chunks that released
+    # no text. Seek by the existing (message_id, chunk_index) primary key.
+    stream_id = head["message_id"]
+    low, high = 0, head["next_index"]
+    offset = 0
+    while low < high:
+        middle = (low + high) // 2
+        row = db.execute("""SELECT json_extract(receipt,'$.committed_chars') FROM text_stream_chunks_v1
+            WHERE message_id=? AND chunk_index=?""", (stream_id, middle)).fetchone()
+        if row is None or type(row[0]) is not int:
+            raise MemoryFailure("storage_unavailable")
+        if row[0] <= start:
+            low, offset = middle + 1, row[0]
+        else:
+            high = middle
+
+    parts = []
+    for text, chunk_end in db.execute("""SELECT text,json_extract(receipt,'$.committed_chars') FROM text_stream_chunks_v1
+            WHERE message_id=? AND chunk_index>=? ORDER BY chunk_index""", (stream_id, low)):
+        if chunk_end != offset + len(text):
+            raise MemoryFailure("storage_unavailable")
+        parts.append(text[max(0, start - offset):end - offset])
+        offset = chunk_end
+        if offset >= end:
+            return "".join(parts)
+    raise MemoryFailure("storage_unavailable")
+
+
 def read(runtime: MemoryRuntime, access: Access, source: Source, *, cursor: int = 0, limit: int = 2048) -> StreamPage:
     from .runtime import _identifier, _json
     runtime._require_scope(access, "recall", "read_stream")
@@ -191,11 +222,11 @@ def read(runtime: MemoryRuntime, access: Access, source: Source, *, cursor: int 
             raise MemoryFailure("stream_unavailable")
         if head["final_message_id"] and runtime._state(db, head["final_message_id"]).status != "active":
             raise MemoryFailure("stream_unavailable")
-        text = "".join(str(row[0]) for row in db.execute(
-            "SELECT text FROM text_stream_chunks_v1 WHERE message_id=? ORDER BY chunk_index", (head["message_id"],)))
-        if cursor > len(text):
+        committed = head["committed_chars"]
+        if cursor > committed:
             raise MemoryFailure("invalid_stream_page")
-        end = min(len(text), cursor + limit)
-        return StreamPage(head["message_id"], source, head["state"], text[cursor:end], cursor, end,
-            end if end < len(text) else None, len(text), head["pending_chars"], head["next_index"],
+        end = min(committed, cursor + limit)
+        text = _page_text(db, head, cursor, end)
+        return StreamPage(head["message_id"], source, head["state"], text, cursor, end,
+            end if end < committed else None, committed, head["pending_chars"], head["next_index"],
             head["state"] == "complete", head["final_message_id"])

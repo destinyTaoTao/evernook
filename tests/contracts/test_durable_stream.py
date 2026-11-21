@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -63,6 +66,51 @@ class DurableStreamTests(unittest.TestCase):
             receipt = self.runtime.append_stream(self.access, replace(self.event, completion="canceled"), index=2, carry="", input_id=self.input.message_id)
             self.assertEqual(receipt.state, "canceled")
             self.assertEqual(self.runtime.read_stream(self.access, self.event.source).text, "合成片段。合成片段。")
+
+    def test_small_replay_pages_only_materialize_intersecting_chunks(self) -> None:
+        chunks = [f"{index:02d}" + "样" * 120 + "\0🙂。" for index in range(16)]
+        for index, chunk in enumerate(chunks):
+            self.runtime.append_stream(self.access, self.event, index=2 * index, carry="", input_id=self.input.message_id)
+            self.runtime.append_stream(self.access, replace(self.event, text=chunk),
+                index=2 * index + 1, carry="", input_id=self.input.message_id)
+        full = "".join(chunks)
+        self.runtime = MemoryRuntime(self.config)
+        original = self.runtime._connection
+        transferred = 0
+
+        @contextmanager
+        def counted_connection() -> Iterator[sqlite3.Connection]:
+            def decode(value: bytes) -> str:
+                nonlocal transferred
+                text = value.decode("utf-8")
+                transferred += text.count("样")
+                return text
+
+            with original() as db:
+                db.text_factory = decode
+                yield db
+
+        with patch.object(self.runtime, "_connection", counted_connection):
+            for cursor in (0, 12 * len(chunks[0]), 15 * len(chunks[0]) - 3, len(full)):
+                with self.subTest(cursor=cursor):
+                    transferred = 0
+                    page = self.runtime.read_stream(self.access, self.event.source, cursor=cursor, limit=7)
+                    self.assertEqual(page.text, full[cursor:cursor + 7])
+                    self.assertEqual(page.committed_chars, len(full))
+                    self.assertEqual(page.next_cursor, cursor + 7 if cursor + 7 < len(full) else None)
+                    self.assertLessEqual(transferred, 240 if cursor < len(full) else 0)
+            with self.assertRaisesRegex(MemoryFailure, "invalid_stream_page"):
+                self.runtime.read_stream(self.access, self.event.source, cursor=len(full) + 1)
+
+    def test_inconsistent_chunk_position_cannot_return_shifted_evidence(self) -> None:
+        for index, text in enumerate(("第一段。", "0123456789。")):
+            receipt = self.runtime.append_stream(self.access, replace(self.event, text=text),
+                index=index, carry="", input_id=self.input.message_id)
+        with self.runtime._connection() as db:
+            db.execute("""UPDATE text_stream_chunks_v1 SET receipt=json_set(receipt,'$.committed_chars',5)
+                WHERE message_id=? AND chunk_index=0""", (receipt.stream_id,))
+        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+            self.runtime.read_stream(self.access, self.event.source, cursor=6, limit=3)
 
     def test_split_sensitive_signal_is_never_released_or_persisted_as_original(self) -> None:
         text = "普通前缀。password=synthetic-private-stream-value"
