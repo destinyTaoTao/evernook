@@ -58,6 +58,19 @@ _LEXICAL_QUERY_CANDIDATE_LIMIT = 4096
 _LEXICAL_ID_BUILD = "evernook_lexical_id_build_v1"
 
 
+@dataclass(frozen=True)
+class _SearchCoverage:
+    status: LexicalStatus
+    indexed_query: str
+    pending_query: str | None
+
+
+def _search_words(query: str, mode: str) -> tuple[str, ...]:
+    if credential_signal(query):
+        raise MemoryFailure("protected_query")
+    return tuple(dict.fromkeys(normalize(word) for word in ([query] if mode == "exact" else query.split())))
+
+
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -1247,89 +1260,99 @@ class MemoryRuntime:
             query.encode("utf-8", errors="strict")
         except UnicodeError:
             raise MemoryFailure("invalid_encoding") from None
-        if credential_signal(query):
-            raise MemoryFailure("protected_query")
-        words = tuple(dict.fromkeys(normalize(word) for word in ([query] if mode == "exact" else query.split())))
+        words = _search_words(query, mode)
         if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
             raise MemoryFailure("invalid_page")
         start, end = _time(since) if since is not None else None, _time(until) if until is not None else None
         if start is not None and end is not None and start >= end:
             raise MemoryFailure("invalid_time_range")
-        recallable = _RECALLABLE + (' AND ' + _MEMORY_EVIDENCE if memory_evidence_only else '')
         with self._connection(check=budget) as db:
             db.execute("BEGIN")
-            from .lexical_checkpoint import search_state
-            checkpoint = search_state(db, budget)
-            if checkpoint is None:
-                status, indexed_query = self._search_index(db, budget)
-            else:
-                status, indexed_query = checkpoint.status, checkpoint.valid_query
-            scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {recallable}
-                  AND (? IS NULL OR messages.id<>?)"""
-            base = "SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version " + scope
-            order = " ORDER BY occurred,received,messages.id"
-            parameters: tuple[object, ...] = (start, start, end, end, current_input_id, current_input_id)
-            used_index = status.state in {"ready", "behind"}
-            reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
-            try:
-                pending = (f"messages.id IN ({checkpoint.pending_query})" if checkpoint is not None
-                    else f"messages.id NOT IN ({indexed_query})")
-                condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR {pending})" if used_index else ""
-                search_parameters = parameters + (query_expression(words),) if used_index else parameters
-                large_candidates = False
-                if status.state == "ready" or checkpoint is not None:
-                    # A small complete candidate set avoids scanning every source as pending.
-                    # Large matches retain the ordered-source path so popular queries can stop early.
-                    available = db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters)
-                    candidate_limit = min(_LEXICAL_QUERY_CANDIDATE_LIMIT,
-                        available // (2 if status.state != "ready" else 1))
-                    if candidate_limit > 0:
-                        candidates = []
-                        for row in db.execute("SELECT message_id FROM lexical WHERE lexical MATCH ? LIMIT ?",
-                                (query_expression(words), candidate_limit + 1)):
+            coverage = self._search_coverage(db, budget)
+            return self._search_snapshot(db, coverage, words, start=start, end=end, limit=limit, offset=offset,
+                budget=budget, current_input_id=current_input_id, memory_evidence_only=memory_evidence_only)
+
+    def _search_coverage(self, db: sqlite3.Connection, check: Callable[[], object]) -> _SearchCoverage:
+        from .lexical_checkpoint import search_state
+        checkpoint = search_state(db, check)
+        if checkpoint is not None:
+            return _SearchCoverage(checkpoint.status, checkpoint.valid_query, checkpoint.pending_query)
+        status, indexed_query = self._search_index(db, check)
+        return _SearchCoverage(status, indexed_query, None)
+
+    def _search_snapshot(self, db: sqlite3.Connection, coverage: _SearchCoverage, words: tuple[str, ...], *,
+                         start: float | None, end: float | None, limit: int, offset: int,
+                         budget: Callable[[], float], current_input_id: str | None,
+                         memory_evidence_only: bool) -> SearchPage:
+        # Reuse only within the transaction that verified this coverage and owns its temporary tables.
+        status, indexed_query, pending_query = coverage.status, coverage.indexed_query, coverage.pending_query
+        recallable = _RECALLABLE + (' AND ' + _MEMORY_EVIDENCE if memory_evidence_only else '')
+        scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+            WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {recallable}
+              AND (? IS NULL OR messages.id<>?)"""
+        base = "SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version " + scope
+        order = " ORDER BY occurred,received,messages.id"
+        parameters: tuple[object, ...] = (start, start, end, end, current_input_id, current_input_id)
+        used_index = status.state in {"ready", "behind"}
+        reason = {"not_built": "index_not_built", "unavailable": "index_unavailable", "behind": "index_behind"}.get(status.state)
+        try:
+            pending = (f"messages.id IN ({pending_query})" if pending_query is not None
+                else f"messages.id NOT IN ({indexed_query})")
+            condition = f" AND (messages.id IN (SELECT message_id FROM lexical WHERE lexical MATCH ?) OR {pending})" if used_index else ""
+            search_parameters = parameters + (query_expression(words),) if used_index else parameters
+            large_candidates = False
+            if status.state == "ready" or pending_query is not None:
+                # A small complete candidate set avoids scanning every source as pending.
+                # Large matches retain the ordered-source path so popular queries can stop early.
+                available = db.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - len(parameters)
+                candidate_limit = min(_LEXICAL_QUERY_CANDIDATE_LIMIT,
+                    available // (2 if status.state != "ready" else 1))
+                if candidate_limit > 0:
+                    candidates = []
+                    for row in db.execute("SELECT message_id FROM lexical WHERE lexical MATCH ? LIMIT ?",
+                            (query_expression(words), candidate_limit + 1)):
+                        budget()
+                        candidates.append(row[0])
+                    unindexed = []
+                    if pending_query is not None and status.state != "ready":
+                        for row in db.execute(pending_query + " LIMIT ?", (candidate_limit + 1,)):
                             budget()
-                            candidates.append(row[0])
-                        unindexed = []
-                        if checkpoint is not None and status.state != "ready":
-                            for row in db.execute(checkpoint.pending_query + " LIMIT ?", (candidate_limit + 1,)):
-                                budget()
-                                unindexed.append(row[0])
-                        if len(candidates) <= candidate_limit and len(unindexed) <= candidate_limit:
-                            ids = tuple(dict.fromkeys(candidates + unindexed))
-                            condition = " AND messages.id IN (" + ",".join("?" for _ in ids) + ")" if ids else " AND 0"
-                            search_parameters = parameters + ids
-                        else:
-                            large_candidates = True
-                hits = []
-                if checkpoint is not None and large_candidates:
-                    ordered_scope = scope.replace("FROM messages LEFT JOIN", "FROM messages INDEXED BY message_time LEFT JOIN", 1)
-                    probe = f"""WITH evernook_checkpoint_ordered AS MATERIALIZED (
-                        SELECT messages.id,messages.occurred,messages.received {ordered_scope}
-                        ORDER BY occurred,received,messages.id LIMIT 256)
-                        SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
-                        FROM evernook_checkpoint_ordered candidate JOIN messages ON messages.id=candidate.id
-                        LEFT JOIN visibility v ON v.message_id=messages.id WHERE
-                        (EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH
-                            ('message_id:"'||replace(messages.id,'"','""')||'" AND ('||?||')')
-                            AND message_id=messages.id) OR {pending})
-                        ORDER BY candidate.occurred,candidate.received,candidate.id"""
-                    hits = self._search_hits(db, probe, parameters + (query_expression(words),), words, limit, offset, check=budget)
-                # A bounded lookahead proves a page only when its next hit also exists.
-                # Inconclusive probes must read the complete original candidate range.
-                if len(hits) <= limit:
-                    hits = self._search_hits(db, base + condition + order,
-                        search_parameters, words, limit, offset, check=budget)
-            except sqlite3.Error:
-                budget()
-                if not used_index:
-                    raise
-                used_index, reason = False, "index_unavailable"
-                status = replace(status, state="unavailable", indexed_messages=0,
-                                 pending_messages=status.source_messages, indexed_watermark=None)
-                hits = self._search_hits(db, base + order, parameters, words, limit, offset, check=budget)
+                            unindexed.append(row[0])
+                    if len(candidates) <= candidate_limit and len(unindexed) <= candidate_limit:
+                        ids = tuple(dict.fromkeys(candidates + unindexed))
+                        condition = " AND messages.id IN (" + ",".join("?" for _ in ids) + ")" if ids else " AND 0"
+                        search_parameters = parameters + ids
+                    else:
+                        large_candidates = True
+            hits = []
+            if pending_query is not None and large_candidates:
+                ordered_scope = scope.replace("FROM messages LEFT JOIN", "FROM messages INDEXED BY message_time LEFT JOIN", 1)
+                probe = f"""WITH evernook_checkpoint_ordered AS MATERIALIZED (
+                    SELECT messages.id,messages.occurred,messages.received {ordered_scope}
+                    ORDER BY occurred,received,messages.id LIMIT 256)
+                    SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                    FROM evernook_checkpoint_ordered candidate JOIN messages ON messages.id=candidate.id
+                    LEFT JOIN visibility v ON v.message_id=messages.id WHERE
+                    (EXISTS (SELECT 1 FROM lexical WHERE lexical MATCH
+                        ('message_id:"'||replace(messages.id,'"','""')||'" AND ('||?||')')
+                        AND message_id=messages.id) OR {pending})
+                    ORDER BY candidate.occurred,candidate.received,candidate.id"""
+                hits = self._search_hits(db, probe, parameters + (query_expression(words),), words, limit, offset, check=budget)
+            # A bounded lookahead proves a page only when its next hit also exists.
+            # Inconclusive probes must read the complete original candidate range.
+            if len(hits) <= limit:
+                hits = self._search_hits(db, base + condition + order,
+                    search_parameters, words, limit, offset, check=budget)
+        except sqlite3.Error:
             budget()
-            return SearchPage(tuple(hits[:limit]), offset + limit if len(hits) > limit else None, status, used_index, reason)
+            if not used_index or not db.in_transaction:
+                raise
+            used_index, reason = False, "index_unavailable"
+            status = replace(status, state="unavailable", indexed_messages=0,
+                             pending_messages=status.source_messages, indexed_watermark=None)
+            hits = self._search_hits(db, base + order, parameters, words, limit, offset, check=budget)
+        budget()
+        return SearchPage(tuple(hits[:limit]), offset + limit if len(hits) > limit else None, status, used_index, reason)
 
     def _search_hits(self, db: sqlite3.Connection, sql: str, parameters: tuple[object, ...],
                      words: tuple[str, ...], limit: int, offset: int,
@@ -1375,6 +1398,8 @@ class MemoryRuntime:
                 if indexed is None:
                     indexed = db.execute(f"SELECT count(*),max(messages.received) {_LEXICAL_VALID_ROWS} AND {_RECALLABLE}").fetchone()
         except sqlite3.Error:
+            if not db.in_transaction:
+                raise
             return LexicalStatus("unavailable", source, 0, source, counts[1], None)
         covered = int(indexed[0])
         return LexicalStatus("ready" if covered == source else "behind", source, covered, source - covered, counts[1], indexed[1])

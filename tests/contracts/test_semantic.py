@@ -113,6 +113,70 @@ class SemanticTests(unittest.TestCase):
             self.workflow.configure_candidate_index(self.access, enabled=active, rebuild=rebuild)
             self.assertTrue(self.runtime.lexical_checkpoint_enabled(self.access))
 
+    def test_literal_channels_share_the_lexical_coverage_snapshot(self) -> None:
+        from evernook import lexical_checkpoint
+
+        latest = self.save("合成 风铃", when="2025-01-01T00:00:00Z")
+        self.save("合成的旧风铃")
+        self.runtime.refresh_lexical(self.access)
+        for checkpoint_enabled in (False, True):
+            with self.subTest(checkpoint=checkpoint_enabled):
+                if checkpoint_enabled:
+                    self.runtime.configure_lexical_id_acceleration(self.access, enabled=True)
+                    self.runtime.configure_lexical_checkpoint(self.access, enabled=True)
+                with patch.object(lexical_checkpoint, "search_state", wraps=lexical_checkpoint.search_state) as state:
+                    page = self.workflow.recall(self.access, "合成 风铃", as_of="2025-01-02T00:00:00Z")
+                self.assertEqual(state.call_count, 1)
+                self.assertEqual(page.lexical.state, "ready")
+                self.assertEqual(page.hits[0].evidence.message_id, latest)
+                self.assertTrue({"exact", "lexical", "recent_lexical"}.issubset(page.hits[0].channels))
+
+    def test_literal_fallback_cannot_reuse_coverage_after_the_snapshot_is_lost(self) -> None:
+        target = self.save("合成：旧风铃")
+        self.runtime.refresh_lexical(self.access)
+        search_hits = self.runtime._search_hits
+
+        for lose_snapshot in (False, True):
+            with self.subTest(lose_snapshot=lose_snapshot):
+                calls = 0
+
+                def fail_first(db: sqlite3.Connection, *args: Any, **kwargs: Any) -> list[Any]:
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        if lose_snapshot:
+                            db.execute("ROLLBACK")
+                        raise sqlite3.OperationalError("synthetic lexical fault")
+                    return search_hits(db, *args, **kwargs)
+
+                with patch.object(self.runtime, "_search_hits", side_effect=fail_first):
+                    if lose_snapshot:
+                        with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+                            self.workflow.recall(self.access, "风铃")
+                        self.assertEqual(calls, 1)
+                    else:
+                        page = self.workflow.recall(self.access, "风铃")
+                        self.assertIn("index_unavailable", page.degraded)
+                        self.assertEqual(page.hits[0].evidence.message_id, target)
+
+    def test_literal_coverage_fails_closed_if_the_status_read_loses_its_snapshot(self) -> None:
+        self.save("合成：风铃")
+        self.runtime.refresh_lexical(self.access)
+        real_connect = sqlite3.connect
+
+        class LoseCoverageSnapshot(sqlite3.Connection):
+            def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+                if sql.startswith("SELECT count(*),max(messages.received)"):
+                    super().execute("ROLLBACK")
+                    raise sqlite3.OperationalError("synthetic lexical coverage fault")
+                return super().execute(sql, parameters)
+
+        with patch("sqlite3.connect", side_effect=lambda *args, **kwargs: real_connect(
+            *args, **kwargs, factory=LoseCoverageSnapshot
+        )):
+            with self.assertRaisesRegex(MemoryFailure, "storage_unavailable"):
+                self.workflow.recall(self.access, "风铃")
+
     def test_partial_or_conflicting_candidate_index_uses_original_recall(self) -> None:
         from evernook import recall_index
         self.save("合成：喜欢辛辣。")
@@ -292,7 +356,9 @@ class SemanticTests(unittest.TestCase):
                 raise MemoryFailure("recall_canceled")
             return 1.0
 
-        since, expanded, chars, limited = self.workflow._recent(self.access, "2026-10-30T00:00:00Z", 8192, 7, check=check)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            since, expanded, chars, limited = self.workflow._recent(db, "2026-10-30T00:00:00Z", 8192, 7, check=check)
         self.assertTrue(limited)
         self.assertEqual(calls["count"], 256)  # The limit return precedes the 257th budget check.
         self.assertTrue(since.startswith("2026-10-23"))  # Dense recent content keeps the full 7-day floor.
@@ -481,6 +547,20 @@ class SemanticTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "protected_query"):
             self.workflow.recall(self.access, "password=synthetic-secret " + "x" * 400, query_intent="饮食偏好")
         self.assertEqual(len(self.backend.calls), calls)
+
+    def test_bounded_tail_is_checked_again_before_embedding(self) -> None:
+        from evernook.query_plan import plan_query
+        from evernook.safety import credential_signal
+
+        synthetic = "a" + "sk-" + "z" * 12 + " " + "x" * 240
+        self.assertFalse(credential_signal(synthetic))
+        self.assertTrue(credential_signal(plan_query(synthetic).query))
+        self.save("合成：辛辣")
+        self.workflow.refresh(self.access)
+        calls = list(self.backend.calls)
+        with self.assertRaisesRegex(MemoryFailure, "protected_query"):
+            self.workflow.recall(self.access, synthetic)
+        self.assertEqual(self.backend.calls, calls)
 
     def test_long_input_without_explicit_intent_discloses_bounded_tail_plan(self) -> None:
         target = self.save("合成：辛辣的食物")

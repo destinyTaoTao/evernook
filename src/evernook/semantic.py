@@ -13,7 +13,7 @@ import time
 
 from .embedding import EmbeddingBackend, EmbeddingSpace, unit_vector
 from .models import Access, LexicalStatus, MemoryFailure, SearchHit, SearchPage, SearchSpan
-from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVIDENCE, _time
+from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVIDENCE, _search_words, _time
 from .query_plan import QueryPlan, plan_query
 from .vector_distance import distance_function
 from .lexical import NORMALIZATION_IDENTITY, matching_spans, query_expression
@@ -343,30 +343,24 @@ class SemanticRecall:
         if type(value) not in (float, int) or not math.isfinite(value) or not 0 < value <= 120:
             raise MemoryFailure("invalid_timeout")
 
-    def _recent(self, access: Access, as_of: str, target_chars: int, days: int, *, check: Callable[[], float] | None = None,
+    def _recent(self, db: sqlite3.Connection, as_of: str, target_chars: int, days: int, *, check: Callable[[], float],
                 current_input_id: str | None = None) -> tuple[str, bool, int, bool]:
-        self.runtime._authorize(access)
         instant = _time(as_of)
         base = instant - timedelta(days=days).total_seconds()
         since, chars, scanned = base, 0, 0
         # Unknown/future source times never pretend to be recent. They remain in global recall.
-        with self.runtime._connection() as db:
-            db.execute("BEGIN")
-            sources = recall_index.source_table(db, chronological=True)
-            for row in db.execute(f"""SELECT event,receipt,occurred FROM {sources} WHERE {_ELIGIBLE}
-                    AND occurred<=? AND (? IS NULL OR messages.id<>?) ORDER BY occurred DESC,id LIMIT 257""",
-                    (instant, current_input_id, current_input_id)):
-                # The scan-limit return wins at the boundary: verified recent rows must not be dropped
-                # to a deadline/cancel firing on exactly the row where the partial window is promised.
-                if scanned == 256:
-                    return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, True
-                if check is not None:
-                    check()
-                scanned += 1
-                chars += len(self.runtime._stored(row).event.text)
-                since = min(since, float(row["occurred"]))
-                if chars >= target_chars:
-                    break
+        sources = recall_index.source_table(db, chronological=True)
+        for row in db.execute(f"""SELECT event,receipt,occurred FROM {sources} WHERE {_ELIGIBLE}
+                AND occurred<=? AND (? IS NULL OR messages.id<>?) ORDER BY occurred DESC,id LIMIT 257""",
+                (instant, current_input_id, current_input_id)):
+            if scanned == 256:
+                return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, True
+            check()
+            scanned += 1
+            chars += len(self.runtime._stored(row).event.text)
+            since = min(since, float(row["occurred"]))
+            if chars >= target_chars:
+                break
         return datetime.fromtimestamp(since, timezone.utc).isoformat(), since < base, chars, False
 
     def _keyword(self, access: Access, query: str, *, since: str | None, until: str | None,
@@ -512,6 +506,8 @@ class SemanticRecall:
             raise MemoryFailure("invalid_time_range")
         plan = replace(plan_query(query, query_intent), since=since, until=until)
         query = plan.query
+        if cancel is not None and not isinstance(cancel, threading.Event):
+            raise MemoryFailure("invalid_cancel")
         deadline = time.monotonic() + timeout
         def budget() -> float:
             if cancel is not None and cancel.is_set():
@@ -521,14 +517,6 @@ class SemanticRecall:
                 raise MemoryFailure("recall_timeout")
             return left
         budget()
-        def literal(*, mode: str = "lexical", since: str | None = None, until: str | None = None) -> SearchPage:
-            try:
-                return self.runtime.search(access, query, mode=mode, since=since, until=until,
-                                           limit=100, timeout=budget(), cancel=cancel, current_input_id=current_input_id, memory_evidence_only=True)
-            except MemoryFailure as failure:
-                if failure.code in {"search_timeout", "search_canceled"}:
-                    raise MemoryFailure(failure.code.replace("search_", "recall_", 1)) from None
-                raise
         if type(limit) is not int or not 1 <= limit <= 100:
             raise MemoryFailure("invalid_page")
         if type(recent_target_chars) is not int or not 1 <= recent_target_chars <= 1048576:
@@ -537,19 +525,29 @@ class SemanticRecall:
             raise MemoryFailure("invalid_recent_window")
         if type(min_similarity) not in (int, float) or not math.isfinite(min_similarity) or not -1 <= min_similarity <= 1:
             raise MemoryFailure("invalid_similarity")
-        # Core validation and protected-query refusal happen before any model invocation.
-        lexical = literal(since=focus_since, until=focus_until)
-        budget()
-        exact = literal(mode="exact", since=focus_since, until=focus_until)
-        instant = as_of if as_of is not None else datetime.now(timezone.utc).isoformat()
-        since, expanded, chars, window_limited = self._recent(access, instant, recent_target_chars, recent_days,
-                                                           check=budget, current_input_id=current_input_id)
-        # until is exclusive; one microsecond includes the reference instant in this channel.
-        until = (datetime.fromtimestamp(_time(instant), timezone.utc) + timedelta(microseconds=1)).isoformat()
-        recent_since = max((value for value in (since, focus_since) if value is not None), key=_time)
-        recent_until = min((value for value in (until, focus_until) if value is not None), key=_time)
-        recent_intersects = _time(recent_since) < _time(recent_until)
-        recent_lexical = literal(since=recent_since, until=recent_until) if recent_intersects else None
+        # The literal channels share the coverage proof and its temporary tables in one read snapshot.
+        self.runtime._require_scope(access, "recall", "search")
+        lexical_words, exact_words = _search_words(query, "lexical"), _search_words(query, "exact")
+        with self.runtime._connection(check=budget) as db:
+            db.execute("BEGIN")
+            coverage = self.runtime._search_coverage(db, budget)
+
+            def literal(words: tuple[str, ...], start: float | None, end: float | None) -> SearchPage:
+                return self.runtime._search_snapshot(db, coverage, words, start=start, end=end, limit=100, offset=0,
+                    budget=budget, current_input_id=current_input_id, memory_evidence_only=True)
+
+            lexical = literal(lexical_words, lower, upper)
+            exact = literal(exact_words, lower, upper)
+            instant = as_of if as_of is not None else datetime.now(timezone.utc).isoformat()
+            since, expanded, chars, window_limited = self._recent(db, instant, recent_target_chars, recent_days,
+                                                               check=budget, current_input_id=current_input_id)
+            # until is exclusive; one microsecond includes the reference instant in this channel.
+            until = (datetime.fromtimestamp(_time(instant), timezone.utc) + timedelta(microseconds=1)).isoformat()
+            recent_since = max((value for value in (since, focus_since) if value is not None), key=_time)
+            recent_until = min((value for value in (until, focus_until) if value is not None), key=_time)
+            recent_start, recent_end = _time(recent_since), _time(recent_until)
+            recent_intersects = recent_start < recent_end
+            recent_lexical = literal(lexical_words, recent_start, recent_end) if recent_intersects else None
         channels: dict[str, list[SearchHit]] = {"exact": list(exact.hits), "lexical": list(lexical.hits),
                                                "recent_lexical": list(recent_lexical.hits) if recent_lexical is not None else []}
         degraded = [reason for reason in (lexical.fallback_reason, exact.fallback_reason) if reason is not None]
