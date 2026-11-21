@@ -21,6 +21,8 @@ from . import recall_index
 
 
 _ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
+_KEYWORD_LIMIT = 100
+_KEYWORD_PREFIX_SIZE = 256
 
 
 @dataclass(frozen=True)
@@ -379,26 +381,51 @@ class SemanticRecall:
         with self.runtime._connection(check=check) as db:
             db.execute("BEGIN")
             sources = recall_index.source_table(db)
-            parameters: list[object] = [expression, NORMALIZATION_IDENTITY, current_input_id, current_input_id]
+            parameters: list[object] = [NORMALIZATION_IDENTITY, current_input_id, current_input_id]
             condition = ""
             for value, operator in ((since, ">="), (until, "<")):
                 if value is not None:
                     condition += f" AND occurred{operator}?"
                     parameters.append(_time(value))
-            rows = db.execute(f"""WITH ranked AS MATERIALIZED (
-                SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
-                FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
-                JOIN {sources} ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE lexical MATCH ? AND d.normalization_version=? AND (? IS NULL OR messages.id<>?)
-                  AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}
-                ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
-                ORDER BY best,message_id LIMIT 100""", parameters)
-            candidates = list(rows)
+            eligibility = f"""d.normalization_version=? AND (? IS NULL OR messages.id<>?)
+                AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}"""
+            try:
+                prefix = db.execute(f"""WITH keyword_prefix AS MATERIALIZED (
+                    SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?
+                    ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?
+                ), qualified AS MATERIALIZED (
+                    SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best
+                    FROM keyword_prefix
+                    CROSS JOIN lexical_docs d ON d.message_id=keyword_prefix.message_id
+                    CROSS JOIN {sources} ON messages.id=d.message_id
+                    WHERE {eligibility} GROUP BY messages.id ORDER BY best,message_id LIMIT ?
+                )
+                SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)
+                LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id""",
+                    (expression, _KEYWORD_PREFIX_SIZE, *parameters, _KEYWORD_LIMIT)).fetchall()
+            except sqlite3.DatabaseError as error:
+                check()
+                if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_CORRUPT_VTAB or not db.in_transaction:
+                    raise
+                # The exact query can discard damaged orphan index rows before scoring.
+                prefix = []
+            candidates = [row["message_id"] for row in prefix if row["message_id"] is not None]
+            # Eligibility is per source, so its first row in BM25/ID order gives
+            # its best score. An exhausted prefix or 100 qualified IDs proves
+            # the result even when the boundary scores tie.
+            if not prefix or (prefix[0]["examined"] == _KEYWORD_PREFIX_SIZE and len(candidates) < _KEYWORD_LIMIT):
+                candidates = [row["message_id"] for row in db.execute(f"""WITH ranked AS MATERIALIZED (
+                    SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
+                    FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
+                    JOIN {sources} ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
+                    WHERE lexical MATCH ? AND {eligibility}
+                    ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
+                    ORDER BY best,message_id LIMIT ?""", (expression, *parameters, _KEYWORD_LIMIT))]
             hits = []
             for candidate in candidates:
                 check()
                 row = db.execute("""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
-                    FROM messages LEFT JOIN visibility v ON v.message_id=messages.id WHERE messages.id=?""", (candidate["message_id"],)).fetchone()
+                    FROM messages LEFT JOIN visibility v ON v.message_id=messages.id WHERE messages.id=?""", (candidate,)).fetchone()
                 message = self.runtime._stored(row)
                 spans = next((spans for word in words if (spans := matching_spans(message.event.text, (word,), check=check))), ())
                 if not spans:

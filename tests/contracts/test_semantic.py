@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 import subprocess
 import sys
 import sqlite3
 import struct
 import math
-from contextlib import closing
+from contextlib import closing, contextmanager
 import tempfile
 import threading
 from typing import Any
@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 from evernook import Access, Capture, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
+from evernook.models import SearchHit
 
 
 class SyntheticEmbedding:
@@ -751,6 +752,81 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual({hit.evidence.message_id for hit in result.hits}, {first, second})
         self.assertTrue(all(hit.channels.count("keyword") == 1 for hit in result.hits))
         self.assertTrue(all(hit.score < .02 for hit in result.hits))
+
+    def test_keyword_prefix_keeps_exact_ties_and_falls_back_for_sparse_eligibility(self) -> None:
+        from evernook.lexical import index_terms
+
+        old_date, recent_date = "2020-01-01T00:00:00Z", "2025-01-01T00:00:00Z"
+        receipts = self.runtime.submit_many(self.access, tuple(
+            Event(Source("test", "keyword-prefix", "main", str(number)), "user", number,
+                  old_date if number < 60 else recent_date, "complete", "合成：风铃。")
+            for number in range(80)
+        )) + self.runtime.submit_many(self.access, tuple(
+            Event(Source("test", "keyword-prefix", "main", str(number)), "user", number,
+                  recent_date, "complete", "合成：风铃。")
+            for number in range(80, 130)
+        ))
+        self.assertEqual(self.runtime.refresh_lexical_window(self.access, transaction_size=80).state, "ready")
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        all_ids = sorted(receipt.message_id for receipt in receipts)
+
+        def keyword(*, since: str | None = None, current: str | None = None) -> tuple[SearchHit, ...]:
+            return self.workflow._keyword(self.access, "风铃", since=since, until=None,
+                                          check=lambda: 10.0, current_input_id=current)
+
+        statements: list[str] = []
+        connection = self.runtime._connection
+
+        @contextmanager
+        def traced(**kwargs: Any) -> Iterator[sqlite3.Connection]:
+            with connection(**kwargs) as db:
+                db.set_trace_callback(statements.append)
+                yield db
+
+        def fell_back() -> bool:
+            return any(sql.startswith("WITH ranked AS MATERIALIZED") for sql in statements)
+
+        with patch.object(self.runtime, "_connection", side_effect=traced):
+            with patch("evernook.semantic._KEYWORD_PREFIX_SIZE", 104):
+                tied = keyword()
+        self.assertEqual([hit.message_id for hit in tied], all_ids[:100])
+        self.assertFalse(fell_back())
+
+        recent_ids = sorted(receipt.message_id for receipt in receipts[60:])
+        hidden, stale, current, stronger = recent_ids[:3] + recent_ids[-1:]
+        self.runtime.change(self.access, Change("hide-keyword-prefix", hidden, 1, "suppress", stronger, "synthetic"))
+        with self.runtime._connection() as db:
+            db.execute("UPDATE lexical_docs SET content_version=content_version+1 WHERE message_id=?", (stale,))
+            db.executemany("INSERT INTO lexical(message_id,terms) VALUES (?,?)",
+                [(stronger, index_terms("风铃风铃"))] * 110)
+        statements.clear()
+        with patch.object(self.runtime, "_connection", side_effect=traced):
+            with patch("evernook.semantic._KEYWORD_PREFIX_SIZE", 104):
+                focused = keyword(since=recent_date, current=current)
+        self.assertTrue(fell_back())
+        with patch("evernook.semantic._KEYWORD_PREFIX_SIZE", 1):
+            exact = keyword(since=recent_date, current=current)
+        self.assertEqual(focused, exact)
+        self.assertEqual([hit.message_id for hit in focused], [stronger, *recent_ids[3:-1]])
+
+    def test_keyword_falls_back_if_an_ineligible_fts_row_cannot_be_scored(self) -> None:
+        from evernook.lexical import index_terms
+
+        target = self.save("合成：风铃。")
+        self.runtime.refresh_lexical(self.access)
+        with self.runtime._connection() as db:
+            orphan = db.execute("INSERT INTO lexical(message_id,terms) VALUES (?,?)",
+                                ("synthetic-orphan", index_terms("风铃"))).lastrowid
+            db.execute("DELETE FROM lexical_docsize WHERE id=?", (orphan,))
+        page = SemanticRecall(self.runtime).recall(self.access, "风铃")
+        self.assertNotIn("keyword_unavailable", page.degraded)
+        self.assertEqual(page.hits[0].evidence.message_id, target)
+        self.assertIn("keyword", page.hits[0].channels)
+        with self.runtime._connection() as db:
+            db.execute("DELETE FROM lexical_docsize WHERE id IN (SELECT rowid FROM lexical WHERE message_id=?)", (target,))
+        damaged = SemanticRecall(self.runtime).recall(self.access, "风铃")
+        self.assertIn("keyword_unavailable", damaged.degraded)
+        self.assertNotIn("keyword", damaged.hits[0].channels)
 
 
 if __name__ == "__main__":

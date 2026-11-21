@@ -1,0 +1,3373 @@
+{
+  "cases": {
+    "historical": {
+      "arms": {
+        "baseline": {
+          "keyword_sql_execute_wall_seconds": {
+            "median": 22.18905839999934,
+            "nearest_rank": 4,
+            "p95": 26.796786499995505
+          },
+          "keyword_wall_seconds": {
+            "median": 22.213742899999488,
+            "nearest_rank": 4,
+            "p95": 26.821661699999822
+          },
+          "total_wall_seconds": {
+            "median": 36.16466684999614,
+            "nearest_rank": 4,
+            "p95": 40.70225189998746
+          }
+        },
+        "candidate": {
+          "keyword_sql_execute_wall_seconds": {
+            "median": 2.431728550007392,
+            "nearest_rank": 4,
+            "p95": 2.5454078000038862
+          },
+          "keyword_wall_seconds": {
+            "median": 2.4523545500051114,
+            "nearest_rank": 4,
+            "p95": 2.5638373999972828
+          },
+          "total_wall_seconds": {
+            "median": 16.35578335000173,
+            "nearest_rank": 4,
+            "p95": 18.881338399995002
+          }
+        }
+      },
+      "canonical_full_recall_page": {
+        "degraded": [],
+        "evidence_state": "candidates",
+        "hits": [
+          {
+            "channels": [
+              "exact",
+              "lexical",
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+              "occurred_at": "2021-01-02T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630780+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 1,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000001",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000001：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.045773898232914625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              "occurred_at": "2023-10-03T00:00:00+00:00",
+              "received_at": "2026-11-15T09:59:34.929856+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 505050,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0505050",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0505050：天文摄影曝光记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.01639344262295082,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              "occurred_at": "2021-01-06T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630949+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 5,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000005",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000005：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.016129032258064516,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              "occurred_at": "2021-01-04T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630875+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 3,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000003",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000003：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015873015873015872,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              "occurred_at": "2021-01-08T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.631035+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 7,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000007",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000007：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+              "occurred_at": "2024-11-08T00:00:00+00:00",
+              "received_at": "2026-11-15T10:01:56.349799+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 707070,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0707070",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0707070：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015384615384615385,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "998bdde3-7668-4067-abad-0e456cd5e474",
+              "occurred_at": "2022-01-11T00:00:00+00:00",
+              "received_at": "2026-11-15T10:00:10.502464+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 555555,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0555555",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0555555：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015151515151515152,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:02:39.481853+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 777777,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0777777",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0777777：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014925373134328358,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+              "occurred_at": "2022-08-27T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:10.288755+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 303030,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0303030",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0303030：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014705882352941176,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+              "occurred_at": "2021-08-14T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:28.591396+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 333333,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0333333",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0333333：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014492753623188406,
+            "similarity": null
+          }
+        ],
+        "lexical": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "state": "ready"
+        },
+        "query_plan": {
+          "kind": "original",
+          "limited": false,
+          "original_chars": 11,
+          "query": "合成条目0000001",
+          "represented_end": 11,
+          "represented_start": 0,
+          "since": null,
+          "until": null
+        },
+        "recent_content_chars": 8214,
+        "recent_expanded": false,
+        "recent_since": "2026-10-28T00:00:00+00:00",
+        "recent_window_limited": false,
+        "semantic": {
+          "error_code": null,
+          "failed_chunks": 0,
+          "indexed_messages": 1000000,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "space_id": "339d9250bf610015b5895b2ccefc8721143e844c860763cc8a01f0cae1b76b1a",
+          "state": "ready",
+          "stored_vectors": 1000000
+        },
+        "semantic_scan_limited": false,
+        "semantic_scanned_chunks": 1000000,
+        "semantic_search_backend": "sqlite-vec-0.1.9-exact"
+      },
+      "canonical_keyword_candidate_order": [
+        "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+        "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+        "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+        "71281625-4c61-470c-afd3-ba3e8695b3d5",
+        "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+        "998bdde3-7668-4067-abad-0e456cd5e474",
+        "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+        "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+        "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+        "0a0e5cb4-636d-4991-bc85-6193fc49ec3d",
+        "148b9fef-bf9d-43e9-a8fa-70bd04a2678e",
+        "15dd2fea-fe42-4821-aadb-f3fcb266937e",
+        "2a52c44b-e4b1-4431-95b6-3ea3c6bdd7f1",
+        "2faa8101-d928-4dc9-b3a8-825223884797",
+        "34560072-1857-427b-a086-e471685e8f69",
+        "6305ec76-2d74-4f7b-9ea2-3039eb9bf8a9",
+        "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+        "680161ba-e490-4ec3-a34e-06317d41b49c",
+        "6c37e14f-e0f7-4b27-8b1e-1bb61a195eae",
+        "8080f64b-888d-4b11-8d7a-dfc9cb2bb42f",
+        "9e775985-f588-4bf0-a93e-dd74898c5058",
+        "9f23297e-e2d1-41fb-928e-0a19a01139cd",
+        "a14ea55d-31b2-49ce-914a-d3172d039d8b",
+        "a6b8f2ba-cae0-486e-a849-27a76554cb58",
+        "adda710b-40a3-4873-94fb-b66772f7d625",
+        "b6981a6a-876b-4465-958e-fef0e47092e7",
+        "bbceb46a-2377-442e-b5a5-9e3260549bc1",
+        "c3ca087a-e2b9-41ed-9db7-3987d72be962",
+        "c6a5cfc7-38bf-4d49-87f8-138d1b514774",
+        "c7f666ab-c17e-4d6c-b3ef-c24b79a7d9cb",
+        "cac9658c-82e8-4667-9109-68beaf31a6df",
+        "d1843bf9-e026-4247-b224-797630ac5842",
+        "d2edb476-f76b-49a3-862e-fd62d955885a",
+        "d43a8177-8cae-4182-9dcd-1a9a0b7f0e2b",
+        "d53ec44b-7971-4f03-a779-59cc975677b0",
+        "df1c90eb-a8d7-4119-ac23-75ff48754278",
+        "e09d0503-4f1b-4440-860e-d9713792e471",
+        "e1ee2e59-c76a-4917-9738-7fa900ca0ca6",
+        "ed095402-517e-449a-8fe8-c9a20fea8d64",
+        "f1aab4bd-413a-4d28-a8c4-0b6654557dc5",
+        "f8461430-4136-43f3-b333-0388bd9b4d47",
+        "046ab2f6-690f-4ee9-916c-995c54305d64",
+        "071200c8-9d86-4201-a730-e46709f8341c",
+        "0bf5835b-f129-4d7d-a316-82bdf47eb596",
+        "1730ed27-ec94-44a3-b322-dbdc4967afed",
+        "1ac4f91f-5c0e-4fd4-afbf-bcb99ca4bfb8",
+        "1d41cc84-4749-4175-a2eb-e70241aba85c",
+        "1eba91e3-a29d-458f-a4f4-0a1a208f25f2",
+        "1fbd4d0a-7abf-41f9-b130-17b2a557c736",
+        "219c0da1-6069-48db-abd8-9eb86201ab40",
+        "23d6bd16-de09-4444-8111-711cf09d8d9c",
+        "265626d3-5b5d-4dd0-b981-1482825d2a37",
+        "2cf7d2ef-c5f7-44b2-9b78-e6611514b130",
+        "3360a1ac-70b6-4b83-b66b-231e20119937",
+        "3d6a2c45-9db7-4e9b-9d66-549c6817526e",
+        "3ed768dc-5232-48b5-a431-444f70f7d39e",
+        "41657be0-c423-4a22-83fd-bf40aedf94c3",
+        "43b20f11-f211-4776-a870-ca511e75e924",
+        "49657ad1-912c-48d9-a4ad-d26dcd64a245",
+        "49c6b4b8-1011-4636-bae2-eb619421b742",
+        "4e8d84db-aee2-425e-aac6-c30df60cbb98",
+        "554b7cd4-689a-4f3f-9421-cb946d859faf",
+        "562a8c07-a28f-4be3-8c05-804aa3b13e78",
+        "56c20f69-80ea-4b88-a67c-63111491090d",
+        "591943b7-a257-497f-98c6-8691acb176aa",
+        "5ab651c9-5bc8-45b5-9459-3efd0ddc722f",
+        "5b041284-0231-414c-af60-8010de791ae2",
+        "5d609964-07fa-4964-9a7e-02f7f8a02095",
+        "6469b17d-3130-48fc-9bf9-196104f35cd9",
+        "6901782f-38d5-44ca-8987-189262c94237",
+        "6f1c31cc-e350-4e15-af56-75e682f5a8b5",
+        "6f308133-a5ad-4af9-938a-cda6e64292f8",
+        "6fa63de6-809e-43c4-939d-62dfb5e45e59",
+        "7d213094-9eae-4896-acdb-259ae4ee87c9",
+        "7fda330a-3b68-44cf-ac5c-b80d09b29574",
+        "811d1a99-b24c-4943-94c8-8c6829c37730",
+        "818c10e0-ee3d-4840-b63c-6d8666fcc0fd",
+        "825b0034-c966-48af-bc80-5fe410146c02",
+        "85b190b5-a46a-4b24-91f7-a3ce769d9e9d",
+        "8927efa7-03f1-4aff-9972-ac11fc255d15",
+        "8b2a9405-afed-4a4e-b48f-6803c02572f5",
+        "8c18c755-b1f6-4c3b-af2d-79588bc97f98",
+        "905a5cf3-63f1-4bba-a706-045b9bfc3329",
+        "90e484df-910f-40a2-a245-08b6a6cd9a6d",
+        "94a21ed1-057d-4fac-934f-3d36c562aa2c",
+        "96221d1e-7356-43c9-bd98-f47ca0eb735d",
+        "9955b14e-a0a7-4b28-82a4-e9b9f2aa69ef",
+        "a2f0bc47-0d7e-4703-b5da-b7c5acacb0cb",
+        "a582f20e-8877-48c6-aa66-7e47189b7674",
+        "a91c445e-da61-4308-856c-ab37e9e6d441",
+        "acefb1ac-2904-442f-b0f2-e678dc075858",
+        "aed6b3e0-a4f7-4ee1-8f74-3d011e93546a",
+        "b0fbd003-4fd1-48a0-bc8d-5f8f0005fc83",
+        "b9470217-0aea-419b-b81d-6f4b758e615a",
+        "baa6ee82-526e-4ea3-bf27-409bee047a61",
+        "bac79d21-15be-469c-ae35-98d40f8dc2a3",
+        "c029278a-4476-420d-9772-c94bd50399c1",
+        "c19008db-572f-421f-8dc2-12fc7893c32e",
+        "c5cf41a1-b5b4-49b0-be28-3671b09c64d1",
+        "cdb12904-bcc4-4c8a-9c26-01997ba1a89e"
+      ],
+      "query": "合成条目0000001",
+      "samples_per_arm": 4,
+      "verified_equal_pairs": 4
+    },
+    "recent": {
+      "arms": {
+        "baseline": {
+          "keyword_sql_execute_wall_seconds": {
+            "median": 22.344194750003226,
+            "nearest_rank": 4,
+            "p95": 25.949467500002356
+          },
+          "keyword_wall_seconds": {
+            "median": 22.372513899994374,
+            "nearest_rank": 4,
+            "p95": 25.983185599994613
+          },
+          "total_wall_seconds": {
+            "median": 36.75410570000531,
+            "nearest_rank": 4,
+            "p95": 42.74666229999275
+          }
+        },
+        "candidate": {
+          "keyword_sql_execute_wall_seconds": {
+            "median": 2.4315614000006462,
+            "nearest_rank": 4,
+            "p95": 3.479579899998498
+          },
+          "keyword_wall_seconds": {
+            "median": 2.4523505499964813,
+            "nearest_rank": 4,
+            "p95": 3.506330899996101
+          },
+          "total_wall_seconds": {
+            "median": 16.575419499997224,
+            "nearest_rank": 4,
+            "p95": 18.58046819998708
+          }
+        }
+      },
+      "canonical_full_recall_page": {
+        "degraded": [],
+        "evidence_state": "candidates",
+        "hits": [
+          {
+            "channels": [
+              "exact",
+              "lexical",
+              "recent_lexical",
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "ed095402-517e-449a-8fe8-c9a20fea8d64",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:05:20.439952+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 999999,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0999999",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0999999：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.05928133796986256,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              "occurred_at": "2023-10-03T00:00:00+00:00",
+              "received_at": "2026-11-15T09:59:34.929856+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 505050,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0505050",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0505050：天文摄影曝光记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.01639344262295082,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              "occurred_at": "2021-01-06T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630949+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 5,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000005",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000005：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.016129032258064516,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              "occurred_at": "2021-01-04T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630875+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 3,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000003",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000003：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015873015873015872,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              "occurred_at": "2021-01-08T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.631035+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 7,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000007",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000007：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+              "occurred_at": "2024-11-08T00:00:00+00:00",
+              "received_at": "2026-11-15T10:01:56.349799+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 707070,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0707070",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0707070：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015384615384615385,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "998bdde3-7668-4067-abad-0e456cd5e474",
+              "occurred_at": "2022-01-11T00:00:00+00:00",
+              "received_at": "2026-11-15T10:00:10.502464+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 555555,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0555555",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0555555：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015151515151515152,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:02:39.481853+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 777777,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0777777",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0777777：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014925373134328358,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+              "occurred_at": "2022-08-27T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:10.288755+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 303030,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0303030",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0303030：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014705882352941176,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+              "occurred_at": "2021-08-14T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:28.591396+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 333333,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0333333",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0333333：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014492753623188406,
+            "similarity": null
+          }
+        ],
+        "lexical": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "state": "ready"
+        },
+        "query_plan": {
+          "kind": "original",
+          "limited": false,
+          "original_chars": 11,
+          "query": "合成条目0999999",
+          "represented_end": 11,
+          "represented_start": 0,
+          "since": null,
+          "until": null
+        },
+        "recent_content_chars": 8214,
+        "recent_expanded": false,
+        "recent_since": "2026-10-28T00:00:00+00:00",
+        "recent_window_limited": false,
+        "semantic": {
+          "error_code": null,
+          "failed_chunks": 0,
+          "indexed_messages": 1000000,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "space_id": "339d9250bf610015b5895b2ccefc8721143e844c860763cc8a01f0cae1b76b1a",
+          "state": "ready",
+          "stored_vectors": 1000000
+        },
+        "semantic_scan_limited": false,
+        "semantic_scanned_chunks": 1000000,
+        "semantic_search_backend": "sqlite-vec-0.1.9-exact"
+      },
+      "canonical_keyword_candidate_order": [
+        "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+        "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+        "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+        "71281625-4c61-470c-afd3-ba3e8695b3d5",
+        "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+        "998bdde3-7668-4067-abad-0e456cd5e474",
+        "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+        "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+        "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+        "0a0e5cb4-636d-4991-bc85-6193fc49ec3d",
+        "148b9fef-bf9d-43e9-a8fa-70bd04a2678e",
+        "15dd2fea-fe42-4821-aadb-f3fcb266937e",
+        "2a52c44b-e4b1-4431-95b6-3ea3c6bdd7f1",
+        "2faa8101-d928-4dc9-b3a8-825223884797",
+        "34560072-1857-427b-a086-e471685e8f69",
+        "6305ec76-2d74-4f7b-9ea2-3039eb9bf8a9",
+        "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+        "680161ba-e490-4ec3-a34e-06317d41b49c",
+        "6c37e14f-e0f7-4b27-8b1e-1bb61a195eae",
+        "8080f64b-888d-4b11-8d7a-dfc9cb2bb42f",
+        "9e775985-f588-4bf0-a93e-dd74898c5058",
+        "9f23297e-e2d1-41fb-928e-0a19a01139cd",
+        "a14ea55d-31b2-49ce-914a-d3172d039d8b",
+        "a6b8f2ba-cae0-486e-a849-27a76554cb58",
+        "adda710b-40a3-4873-94fb-b66772f7d625",
+        "b6981a6a-876b-4465-958e-fef0e47092e7",
+        "bbceb46a-2377-442e-b5a5-9e3260549bc1",
+        "c3ca087a-e2b9-41ed-9db7-3987d72be962",
+        "c6a5cfc7-38bf-4d49-87f8-138d1b514774",
+        "c7f666ab-c17e-4d6c-b3ef-c24b79a7d9cb",
+        "cac9658c-82e8-4667-9109-68beaf31a6df",
+        "d1843bf9-e026-4247-b224-797630ac5842",
+        "d2edb476-f76b-49a3-862e-fd62d955885a",
+        "d43a8177-8cae-4182-9dcd-1a9a0b7f0e2b",
+        "d53ec44b-7971-4f03-a779-59cc975677b0",
+        "df1c90eb-a8d7-4119-ac23-75ff48754278",
+        "e09d0503-4f1b-4440-860e-d9713792e471",
+        "e1ee2e59-c76a-4917-9738-7fa900ca0ca6",
+        "ed095402-517e-449a-8fe8-c9a20fea8d64",
+        "f1aab4bd-413a-4d28-a8c4-0b6654557dc5",
+        "f8461430-4136-43f3-b333-0388bd9b4d47",
+        "046ab2f6-690f-4ee9-916c-995c54305d64",
+        "071200c8-9d86-4201-a730-e46709f8341c",
+        "0bf5835b-f129-4d7d-a316-82bdf47eb596",
+        "1730ed27-ec94-44a3-b322-dbdc4967afed",
+        "1ac4f91f-5c0e-4fd4-afbf-bcb99ca4bfb8",
+        "1d41cc84-4749-4175-a2eb-e70241aba85c",
+        "1eba91e3-a29d-458f-a4f4-0a1a208f25f2",
+        "1fbd4d0a-7abf-41f9-b130-17b2a557c736",
+        "219c0da1-6069-48db-abd8-9eb86201ab40",
+        "23d6bd16-de09-4444-8111-711cf09d8d9c",
+        "265626d3-5b5d-4dd0-b981-1482825d2a37",
+        "2cf7d2ef-c5f7-44b2-9b78-e6611514b130",
+        "3360a1ac-70b6-4b83-b66b-231e20119937",
+        "3d6a2c45-9db7-4e9b-9d66-549c6817526e",
+        "3ed768dc-5232-48b5-a431-444f70f7d39e",
+        "41657be0-c423-4a22-83fd-bf40aedf94c3",
+        "43b20f11-f211-4776-a870-ca511e75e924",
+        "49657ad1-912c-48d9-a4ad-d26dcd64a245",
+        "49c6b4b8-1011-4636-bae2-eb619421b742",
+        "4e8d84db-aee2-425e-aac6-c30df60cbb98",
+        "554b7cd4-689a-4f3f-9421-cb946d859faf",
+        "562a8c07-a28f-4be3-8c05-804aa3b13e78",
+        "56c20f69-80ea-4b88-a67c-63111491090d",
+        "591943b7-a257-497f-98c6-8691acb176aa",
+        "5ab651c9-5bc8-45b5-9459-3efd0ddc722f",
+        "5b041284-0231-414c-af60-8010de791ae2",
+        "5d609964-07fa-4964-9a7e-02f7f8a02095",
+        "6469b17d-3130-48fc-9bf9-196104f35cd9",
+        "6901782f-38d5-44ca-8987-189262c94237",
+        "6f1c31cc-e350-4e15-af56-75e682f5a8b5",
+        "6f308133-a5ad-4af9-938a-cda6e64292f8",
+        "6fa63de6-809e-43c4-939d-62dfb5e45e59",
+        "7d213094-9eae-4896-acdb-259ae4ee87c9",
+        "7fda330a-3b68-44cf-ac5c-b80d09b29574",
+        "811d1a99-b24c-4943-94c8-8c6829c37730",
+        "818c10e0-ee3d-4840-b63c-6d8666fcc0fd",
+        "825b0034-c966-48af-bc80-5fe410146c02",
+        "85b190b5-a46a-4b24-91f7-a3ce769d9e9d",
+        "8927efa7-03f1-4aff-9972-ac11fc255d15",
+        "8b2a9405-afed-4a4e-b48f-6803c02572f5",
+        "8c18c755-b1f6-4c3b-af2d-79588bc97f98",
+        "905a5cf3-63f1-4bba-a706-045b9bfc3329",
+        "90e484df-910f-40a2-a245-08b6a6cd9a6d",
+        "94a21ed1-057d-4fac-934f-3d36c562aa2c",
+        "96221d1e-7356-43c9-bd98-f47ca0eb735d",
+        "9955b14e-a0a7-4b28-82a4-e9b9f2aa69ef",
+        "a2f0bc47-0d7e-4703-b5da-b7c5acacb0cb",
+        "a582f20e-8877-48c6-aa66-7e47189b7674",
+        "a91c445e-da61-4308-856c-ab37e9e6d441",
+        "acefb1ac-2904-442f-b0f2-e678dc075858",
+        "aed6b3e0-a4f7-4ee1-8f74-3d011e93546a",
+        "b0fbd003-4fd1-48a0-bc8d-5f8f0005fc83",
+        "b9470217-0aea-419b-b81d-6f4b758e615a",
+        "baa6ee82-526e-4ea3-bf27-409bee047a61",
+        "bac79d21-15be-469c-ae35-98d40f8dc2a3",
+        "c029278a-4476-420d-9772-c94bd50399c1",
+        "c19008db-572f-421f-8dc2-12fc7893c32e",
+        "c5cf41a1-b5b4-49b0-be28-3671b09c64d1",
+        "cdb12904-bcc4-4c8a-9c26-01997ba1a89e"
+      ],
+      "query": "合成条目0999999",
+      "samples_per_arm": 4,
+      "verified_equal_pairs": 4
+    }
+  },
+  "diagnosis": {
+    "diagnose.jsonl": {
+      "probe_sha256": "96ab76e5804b52b724de836b8f034a9c8ba38ec8fc37fd6b0932034b28bb2473",
+      "raw_sha256": "c2bbd954419a41a309e3b14d56700d86b37cc179fab1aa8219420688984661a5",
+      "samples": [
+        {
+          "cpu": 0.0625,
+          "elapsed": 0.07224959999439307,
+          "plan": [
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2"
+          ],
+          "preview": [
+            [
+              999999
+            ]
+          ],
+          "rows": 1,
+          "stage": "match_count"
+        },
+        {
+          "cpu": 0.671875,
+          "elapsed": 0.6877720000047702,
+          "plan": [
+            "MATERIALIZE ranked",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SCAN ranked"
+          ],
+          "preview": [
+            [
+              999999,
+              -3.0001072523400283
+            ]
+          ],
+          "rows": 1,
+          "stage": "pure_bm25"
+        },
+        {
+          "cpu": 3.96875,
+          "elapsed": 3.9913682999904267,
+          "plan": [
+            "MATERIALIZE ranked",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SCAN ranked",
+            "USE TEMP B-TREE FOR GROUP BY",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "preview": [
+            [
+              "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              -3.143575391870439e-06
+            ],
+            [
+              "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              -3.1297168996231116e-06
+            ]
+          ],
+          "rows": 100,
+          "stage": "pure_bm25_group_top"
+        },
+        {
+          "cpu": 24.203125,
+          "elapsed": 24.64065240000491,
+          "plan": [
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+            "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+            "SEARCH v USING COVERING INDEX sqlite_autoindex_visibility_1 (message_id=?) LEFT-JOIN"
+          ],
+          "preview": [
+            [
+              999999
+            ]
+          ],
+          "rows": 1,
+          "stage": "eligibility_only"
+        },
+        {
+          "cpu": 21.515625,
+          "elapsed": 22.147090900005423,
+          "plan": [
+            "MATERIALIZE ranked",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+            "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+            "SCAN ranked"
+          ],
+          "preview": [
+            [
+              999999,
+              -3.0001072523400283
+            ]
+          ],
+          "rows": 1,
+          "stage": "eligibility_bm25"
+        },
+        {
+          "cpu": 23.140625,
+          "elapsed": 23.466449400002602,
+          "plan": [
+            "MATERIALIZE ranked",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+            "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+            "SCAN ranked",
+            "USE TEMP B-TREE FOR GROUP BY",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "preview": [
+            [
+              "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              -3.143575391870439e-06
+            ],
+            [
+              "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              -3.1297168996231116e-06
+            ]
+          ],
+          "rows": 100,
+          "stage": "baseline"
+        }
+      ],
+      "settings": {
+        "cache": [
+          -2000
+        ],
+        "journal": [
+          "wal"
+        ],
+        "query": "合成条目0999999",
+        "sources": "messages INDEXED BY evernook_recall_source_v1",
+        "sqlite": "3.50.4",
+        "words": [
+          "合成",
+          "成条",
+          "条目"
+        ]
+      }
+    },
+    "diagnose_prefix.jsonl": {
+      "probe_sha256": "7a2b2d2491b24f5a196bf435e5eff51bebb732bdb3f2e403f9a6e859094baf08",
+      "raw_sha256": "b9c5f4fcee0d6a8cc66cc927ef7fa6841960b02cac27edb450921eab5ad7ac02",
+      "samples": [
+        {
+          "cpu": 2.234375,
+          "elapsed": 2.2735966999898665,
+          "plan": [
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "preview": [
+            [
+              "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              -3.143575391870439e-06
+            ],
+            [
+              "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              -3.1297168996231116e-06
+            ],
+            [
+              "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              -3.1297168996231116e-06
+            ],
+            [
+              "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              -3.1297168996231116e-06
+            ]
+          ],
+          "rows": 256,
+          "stage": "fts_exact_ordered_prefix",
+          "tail": null
+        },
+        {
+          "cpu": 2.484375,
+          "elapsed": 2.4911195000022417,
+          "plan": [
+            "MATERIALIZE pre",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "USE TEMP B-TREE FOR ORDER BY",
+            "SCAN pre",
+            "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+            "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+            "CORRELATED SCALAR SUBQUERY 2",
+            "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+            "CORRELATED SCALAR SUBQUERY 3",
+            "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+            "USE TEMP B-TREE FOR GROUP BY",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "preview": [
+            [
+              "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              -3.143575391870439e-06
+            ],
+            [
+              "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              -3.1297168996231116e-06
+            ],
+            [
+              "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              -3.1297168996231116e-06
+            ],
+            [
+              "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              -3.1297168996231116e-06
+            ]
+          ],
+          "rows": 100,
+          "stage": "ordered_prefix_with_source_joins",
+          "tail": null
+        },
+        {
+          "cpu": 0.921875,
+          "elapsed": 0.932460700001684,
+          "plan": [
+            "MATERIALIZE ranked",
+            "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+            "SCAN ranked",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ],
+          "preview": [
+            [
+              -3.143575391870439e-06,
+              1
+            ],
+            [
+              -3.1297168996231116e-06,
+              8
+            ],
+            [
+              -3.115980061740952e-06,
+              32
+            ],
+            [
+              -3.1023632833416178e-06,
+              75
+            ]
+          ],
+          "rows": 17,
+          "stage": "score_ties",
+          "tail": [
+            [
+              -2.9724669952656996e-06,
+              69740
+            ],
+            [
+              -2.9600731368489724e-06,
+              27960
+            ],
+            [
+              -2.9477822029798075e-06,
+              4440
+            ],
+            [
+              -2.9355929168575434e-06,
+              120
+            ]
+          ]
+        }
+      ],
+      "settings": {
+        "cache": [
+          -2000
+        ],
+        "journal": [
+          "wal"
+        ],
+        "query": "合成条目0999999",
+        "sources": "messages INDEXED BY evernook_recall_source_v1",
+        "sqlite": "3.50.4",
+        "words": [
+          "合成",
+          "成条",
+          "条目"
+        ]
+      }
+    }
+  },
+  "fixture_page_check": {
+    "audit_and_header_only": true,
+    "audit_rows_after": 1029138,
+    "audit_rows_before": 1028754,
+    "audit_sequence_advance": 384,
+    "changed_sqlite_pages": 24,
+    "compared_retrieval_pages": 1456052,
+    "excluded": [
+      "sqlite_database_header_page",
+      "audit_events_v1_btrees",
+      "sqlite_sequence"
+    ],
+    "measured_sha256": "8f8b57d7135e353fd4df5b7190c19e67553432a590a71c327a80d479b122fb85",
+    "page_size": 4096,
+    "retrieval_pages_sha256": "6a86e10c50b6ece01b8ff1d012e7f52517640edae07fca93c2109f3e52c7ac19",
+    "source_sha256": "084b6fb8cb1f0cb0c2b95dbf88e3b822ee8c1233f557a9c291d58c03a3248a16"
+  },
+  "keyword_explain_query_plan": {
+    "baseline": {
+      "WITH ranked AS MATERIALIZED (\n                SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank\n                FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id\n                JOIN messages INDEXED BY evernook_recall_source_v1 ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id\n                WHERE lexical MATCH ? AND d.normalization_version=? AND (? IS NULL OR messages.id<>?)\n                  AND d.content_version=json_extract(messages.receipt,'$.content_version') AND NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>'' \n                ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id\n                ORDER BY best,message_id LIMIT 100": [
+        "MATERIALIZE ranked",
+        "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+        "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+        "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+        "SCAN ranked",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    "candidate": {
+      "WITH keyword_prefix AS MATERIALIZED (\n                SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?\n                ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?\n            ), qualified AS MATERIALIZED (\n                SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best\n                FROM keyword_prefix\n                CROSS JOIN lexical_docs d ON d.message_id=keyword_prefix.message_id\n                CROSS JOIN messages INDEXED BY evernook_recall_source_v1 ON messages.id=d.message_id\n                WHERE d.normalization_version=? AND (? IS NULL OR messages.id<>?)\n                AND d.content_version=json_extract(messages.receipt,'$.content_version') AND NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''  GROUP BY messages.id ORDER BY best,message_id LIMIT ?\n            )\n            SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)\n            LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id": [
+        "CO-ROUTINE (subquery-5)",
+        "MATERIALIZE keyword_prefix",
+        "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN keyword_prefix",
+        "MATERIALIZE qualified",
+        "SCAN keyword_prefix",
+        "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+        "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN (subquery-5)",
+        "SCAN qualified LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    }
+  },
+  "method": {
+    "baseline_revision": "86a18f46026d2e7ec6937140ab7cd4eff8657c05",
+    "corpus_size": 1000000,
+    "embedding_space": {
+      "artifact_digest": "9fcc227461e400fbc2e5dd5af4d884ee47193ab7ce73492b3dbc1823da28e23a",
+      "chunk_size": 192,
+      "dimensions": 384,
+      "encoding": "mean-l2-f32-v1",
+      "model": "synthetic-text-fingerprint-384",
+      "overlap": 32,
+      "revision": "v1"
+    },
+    "p95_method": "nearest rank ceil(.95*n)",
+    "probe_sha256": "628f68d462e0523360c1dbb5fc9e45e83e2ab4ed3d8e8dab6a1327509e6b8594",
+    "python": "3.14.4",
+    "query_assessment_time": "2026-11-04T00:00:00Z",
+    "result_limit": 10,
+    "source_file_hashes": {
+      "baseline": "688622649d5cf0c503ec88f0f05023207fd52276a09c8df95e40161b22bd947d",
+      "candidate": "54b7485bc90aedad7bdf3f4e3ba4efa07485b62b026445aaf05be1cbdcbe2cbd"
+    },
+    "sqlite": "3.50.4",
+    "timeout_seconds": 120,
+    "timings_jsonl_sha256": "b917662aeefb3028c6a84cc4876ffbb7a7c659885b4f1d4454f37c42f25262a1"
+  },
+  "pairs": [
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 34.140625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.09992100000090431
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.09714799998619128
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 20.828125,
+              "seconds": 21.21455160000187
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 20.796875,
+              "seconds": 21.18991320001078
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.53125,
+              "seconds": 4.5778966000070795
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0002040999970631674
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.53125,
+              "seconds": 4.577669700011029
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.2112784000200918
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.3125,
+              "seconds": 3.3554622000083327
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.13230250000196975
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11166750000847969
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 4.5900000259280205e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004592800003592856
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.90625,
+              "seconds": 3.931861700009904
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.9179613000014797
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.53125,
+              "seconds": 4.566841099993326
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.40625,
+              "seconds": 0.4392483999981778
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.125,
+              "seconds": 4.116441899997881
+            }
+          },
+          "raw_artifact_sha256": "4f4bcc286081af6f235dc35c6d4646b6d5a0940653081f6fccd6359a9ad68dc2",
+          "scan_count": 1000000,
+          "seconds": 34.66494250000687
+        },
+        "candidate": {
+          "cpu_seconds": 15.3125,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09669369997573085
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.09824800000933465
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.328125,
+              "seconds": 2.3857290000014473
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.296875,
+              "seconds": 2.3671811999956844
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.546875,
+              "seconds": 4.568799999993644
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00023999999393709004
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.546875,
+              "seconds": 4.568534799996996
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.2146546000003582
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.34375,
+              "seconds": 3.3592564000136917
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.1338454999786336
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.11293769998883363
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 4.2400002712383866e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004385699998238124
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.78125,
+              "seconds": 3.8641350000107195
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.765625,
+              "seconds": 3.8522667000070214
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.400184400001308
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.421875,
+              "seconds": 0.42703539998910856
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.9621351000096183
+            }
+          },
+          "raw_artifact_sha256": "a1ed33b7baf0b1ac1c65d3e3be741a53a8da59d7860a9ecbab29294b2c980f1d",
+          "scan_count": 1000000,
+          "seconds": 15.590797299999394
+        }
+      },
+      "case": "recent",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "round": 1
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 36.21875,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.10036260004562791
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.1016022999829147
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 22.203125,
+              "seconds": 22.843937199999345
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 22.171875,
+              "seconds": 22.818369999993593
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.109375,
+              "seconds": 5.17890030000126
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0003132999991066754
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.109375,
+              "seconds": 5.17855349999445
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.22367360000498593
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.6875,
+              "seconds": 3.7506923000037204
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.12103909999132156
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.10023239998554345
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.7599991881288588e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.007001799996942282
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.028876800002763
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.016526300008991
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.59375,
+              "seconds": 4.665869999997085
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.43637239999952726
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.140625,
+              "seconds": 4.21886049999739
+            }
+          },
+          "raw_artifact_sha256": "600a5af6b0c626662646829f41c81ac6c5911715fb58a204d64ec82ba780f114",
+          "scan_count": 1000000,
+          "seconds": 37.09712629999558
+        },
+        "candidate": {
+          "cpu_seconds": 18.265625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.16411579998384696
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.1501200000056997
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.5625,
+              "seconds": 2.5638373999972828
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.546875,
+              "seconds": 2.5454078000038862
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.1875,
+              "seconds": 5.246119999996154
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00019130000146105886
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.1875,
+              "seconds": 5.245908099997905
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.2398957999976119
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.96875,
+              "seconds": 4.032380999982706
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.12868639999942388
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.10469100000045728
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 4.2800005758181214e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004722499987110496
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 5.421875,
+              "seconds": 5.797762100002728
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 5.40625,
+              "seconds": 5.77939549999428
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.71875,
+              "seconds": 4.7837323999992805
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.53125,
+              "seconds": 0.5461974999780068
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.171875,
+              "seconds": 4.224899699998787
+            }
+          },
+          "raw_artifact_sha256": "0a321621e13743ce3ee8884ae67ff256fc0ceeb7eb82d59658307c1cfa47cabf",
+          "scan_count": 1000000,
+          "seconds": 18.881338399995002
+        }
+      },
+      "case": "historical",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "round": 1
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 39.46875,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.16976579999027308
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.16538049998052884
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 25.9375,
+              "seconds": 26.821661699999822
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 25.90625,
+              "seconds": 26.796786499995505
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.609375,
+              "seconds": 4.660348100005649
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0002747999969869852
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.609375,
+              "seconds": 4.66004729999986
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.22255639999639243
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.4375,
+              "seconds": 3.4679965000250377
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.12188419999438338
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09844630002044141
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.2799998987466097e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.005388899997342378
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.859375,
+              "seconds": 3.9590140000073006
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.84375,
+              "seconds": 3.9465620999981184
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.6875,
+              "seconds": 4.751781500002835
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.46875,
+              "seconds": 0.46044460001576226
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.21875,
+              "seconds": 4.256067399997846
+            }
+          },
+          "raw_artifact_sha256": "605a8728576ed2f81ed352f1603131c8436dae9e3f354a46dcbd6f63375bfe2e",
+          "scan_count": 1000000,
+          "seconds": 40.70225189998746
+        },
+        "candidate": {
+          "cpu_seconds": 16.328125,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.19036999998206738
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.18888940001488663
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.4375,
+              "seconds": 2.5054447000002256
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.4375,
+              "seconds": 2.4810682000097586
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.559178300012718
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001947999990079552
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.558955699991202
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.21689109998987988
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.25,
+              "seconds": 3.3725413999782177
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11934770001971629
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09842740000749473
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.3500004317611456e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004505699995206669
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.671875,
+              "seconds": 4.770811800000956
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.671875,
+              "seconds": 4.760024600007455
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.507360500007053
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.421875,
+              "seconds": 0.44294699998863507
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.0,
+              "seconds": 4.047431300001335
+            }
+          },
+          "raw_artifact_sha256": "8a8ab0470908fbdcdb76bf28462eda156ca8c806547220150ace5bd4e4bbc55a",
+          "scan_count": 1000000,
+          "seconds": 16.90029510000022
+        }
+      },
+      "case": "historical",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "round": 2
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 37.796875,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.046875,
+              "seconds": 0.1727874000062002
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.16686189999745693
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 23.0625,
+              "seconds": 23.53047619998688
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 23.03125,
+              "seconds": 23.498476299995673
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.921875,
+              "seconds": 4.975634199989145
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00017949999892152846
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.921875,
+              "seconds": 4.975436099994113
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.23070249999000225
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.625,
+              "seconds": 3.6474039000167977
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.14132579999568406
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11882470001000911
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.229999856557697e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004793599990080111
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.6875,
+              "seconds": 4.876445800007787
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.6875,
+              "seconds": 4.865458499989472
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.84375,
+              "seconds": 4.91494450000755
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.46875,
+              "seconds": 0.47360009999829344
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.359375,
+              "seconds": 4.423432600000524
+            }
+          },
+          "raw_artifact_sha256": "a75dce98ee520e27634bdc4e5fd97f377532d8bcec135258accd39c3c70747cd",
+          "scan_count": 1000000,
+          "seconds": 38.84326890000375
+        },
+        "candidate": {
+          "cpu_seconds": 18.0625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.17845810001017526
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.1763225000613602
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.46875,
+              "seconds": 2.5189720999915153
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.4375,
+              "seconds": 2.495941600005608
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.59375,
+              "seconds": 5.670634800000698
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001900000061141327
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.59375,
+              "seconds": 5.670422499999404
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.265625,
+              "seconds": 0.2555380999983754
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 4.21875,
+              "seconds": 4.277364599998691
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.14104439999209717
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11852630000794306
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 4.2799991206265986e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.005835800009663217
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.140625,
+              "seconds": 4.252523200004362
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.125,
+              "seconds": 4.239553399995202
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 5.4375,
+              "seconds": 5.578627399998368
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.453125,
+              "seconds": 0.45365309999033343
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.984375,
+              "seconds": 5.106232600010117
+            }
+          },
+          "raw_artifact_sha256": "30d875dd697878c52ee6cbb2ab5501006a79066814878078632fc321cb783158",
+          "scan_count": 1000000,
+          "seconds": 18.58046819998708
+        }
+      },
+      "case": "recent",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "round": 2
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 41.28125,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.14768050001293886
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15246349999506492
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 25.328125,
+              "seconds": 25.983185599994613
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 25.3125,
+              "seconds": 25.949467500002356
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.5625,
+              "seconds": 4.756403599996702
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00032700000156182796
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.5625,
+              "seconds": 4.7560558000113815
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.23802279999654274
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.375,
+              "seconds": 3.532733600004576
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.13596730001154356
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.11476750001020264
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.130000550299883e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004848900003707968
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 6.1875,
+              "seconds": 6.73215870000422
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 6.1875,
+              "seconds": 6.720081899999059
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.734375,
+              "seconds": 4.776949900013278
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.484375,
+              "seconds": 0.4791972000093665
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.234375,
+              "seconds": 4.286552200006554
+            }
+          },
+          "raw_artifact_sha256": "cb18cfc46bb7e10299135aec9a21f3245e6dc89317f966b43e3970bb82826555",
+          "scan_count": 1000000,
+          "seconds": 42.74666229999275
+        },
+        "candidate": {
+          "cpu_seconds": 17.140625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.10370869998587295
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.10339589997602161
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 3.28125,
+              "seconds": 3.506330899996101
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.25,
+              "seconds": 3.479579899998498
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.203125,
+              "seconds": 5.277001599999494
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0002204000047640875
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.203125,
+              "seconds": 5.276754299993627
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.2213190000038594
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.46875,
+              "seconds": 3.5344507999980124
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15243720001308247
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.12506520000169985
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.8599999495781958e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.005229500005953014
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.828125,
+              "seconds": 3.8867050999979256
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.8764643000031356
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.4375,
+              "seconds": 4.46819639999012
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.4447123999998439
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.0,
+              "seconds": 4.007241500003147
+            }
+          },
+          "raw_artifact_sha256": "ea01641a3a93c6fa12ab657e88d4053c8b77f4e20bdb172f54420711723748a6",
+          "scan_count": 1000000,
+          "seconds": 17.560041699995054
+        }
+      },
+      "case": "recent",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "round": 3
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 34.265625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09641349996672943
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09450080001261085
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 21.25,
+              "seconds": 21.537434900004882
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 21.21875,
+              "seconds": 21.513122899996233
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.579743700000108
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001804000057745725
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.5795453999890015
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.21979479999572504
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.25,
+              "seconds": 3.3621617000026163
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11337860002822708
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09341090000816621
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.6599998818710446e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004630600000382401
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.9617406999896048
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.951306500006467
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.420732800004771
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.421875,
+              "seconds": 0.435998600005405
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 3.973966699995799
+            }
+          },
+          "raw_artifact_sha256": "02c938c48786e4f6b19ff41de601fcafb0c90755e7c50b115d864b02d67d9076",
+          "scan_count": 1000000,
+          "seconds": 34.851302600000054
+        },
+        "candidate": {
+          "cpu_seconds": 15.40625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09417910002230201
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.09471579999080859
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.328125,
+              "seconds": 2.399264400009997
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.3125,
+              "seconds": 2.382388900005026
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.4375,
+              "seconds": 4.548641600005794
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00019109999993816018
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.4375,
+              "seconds": 4.548430199996801
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.21548749999783468
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.234375,
+              "seconds": 3.3522063000127673
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.11209860000235494
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.0917438000178663
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.8299997211433947e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004417499992996454
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.04154859999835
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.921875,
+              "seconds": 4.030561999999918
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.475668300001416
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.4423645999922883
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.022882499994012
+            }
+          },
+          "raw_artifact_sha256": "ad0e7e768976d06b87e8d897938c728b913052f774c52ac425b5b831a775f23a",
+          "scan_count": 1000000,
+          "seconds": 15.811271600003238
+        }
+      },
+      "case": "historical",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "round": 3
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 34.390625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.1011321000114549
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.10057349999260623
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 21.078125,
+              "seconds": 21.58354859999963
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 21.0625,
+              "seconds": 21.559746800005087
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.671875,
+              "seconds": 4.75501800001075
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00018709999858401716
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.671875,
+              "seconds": 4.754813399995328
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.2224013999948511
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.484375,
+              "seconds": 3.5350975999899674
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.11144940000667702
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.09128099998633843
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.4900000425986946e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004956100005074404
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.796875,
+              "seconds": 3.9117838999954984
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.765625,
+              "seconds": 3.900760500007891
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.5,
+              "seconds": 4.622983399996883
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.421875,
+              "seconds": 0.43279469999833964
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.0625,
+              "seconds": 4.179780600010417
+            }
+          },
+          "raw_artifact_sha256": "11a69a9f33e8d57b7aa72bd5c30d25c624a3839c8eae09076f32062a8a504d07",
+          "scan_count": 1000000,
+          "seconds": 35.232207399996696
+        },
+        "candidate": {
+          "cpu_seconds": 15.375,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09782059999997728
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09536680001474451
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.3125,
+              "seconds": 2.3816511999903014
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.296875,
+              "seconds": 2.364998499993817
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.515625,
+              "seconds": 4.636524399989867
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00026869999419432133
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.515625,
+              "seconds": 4.636234199992032
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.21562659998016898
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.3125,
+              "seconds": 3.4083345999970334
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.11738009999680799
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09695659999852069
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.6200010324828327e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004407499989611097
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.8786661000049207
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.868705400003819
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.390625,
+              "seconds": 4.487226199998986
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.42573990000528283
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.0508379000093555
+            }
+          },
+          "raw_artifact_sha256": "04d1b64f6ea5d83ba6926cd4ae77b935f152eb2eb65422d6b7bd89703dc09ba5",
+          "scan_count": 1000000,
+          "seconds": 15.740993799990974
+        }
+      },
+      "case": "historical",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "round": 4
+    },
+    {
+      "arms": {
+        "baseline": {
+          "cpu_seconds": 33.640625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.09462380000331905
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09433000003627967
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 20.796875,
+              "seconds": 21.093710200002533
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 20.78125,
+              "seconds": 21.070268600000418
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.453125,
+              "seconds": 4.541965299998992
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001787999935913831
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.453125,
+              "seconds": 4.541768199997023
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.22003899999253917
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.265625,
+              "seconds": 3.338442300009774
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.1289808000146877
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.10844849998829886
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.0800001695752144e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004803799994988367
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.734375,
+              "seconds": 3.840412000005017
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.71875,
+              "seconds": 3.8301336000004085
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.34375,
+              "seconds": 4.4301331999886315
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.4253356999834068
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.9935594000126002
+            }
+          },
+          "raw_artifact_sha256": "22d1e3a3e4c11ac493722aec14567532c6f70ad86f6a6aa8f20b04fd86239516",
+          "scan_count": 1000000,
+          "seconds": 34.26974479999626
+        },
+        "candidate": {
+          "cpu_seconds": 15.390625,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_sql_calls": [
+            "lexical_keyword_rank_sql"
+          ],
+          "normalized_page_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.10117730000638403
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.09508530001039617
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.265625,
+              "seconds": 2.2897626999911154
+            },
+            "lexical_keyword_rank_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.234375,
+              "seconds": 2.2740992000035476
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.484375,
+              "seconds": 4.523918399994727
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00018489999638404697
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.484375,
+              "seconds": 4.523714199996903
+            },
+            "lexical_shared_coverage_coverage_status_counts_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.21793449998949654
+            },
+            "lexical_shared_coverage_coverage_status_temp_sql": {
+              "calls": 3,
+              "cpu_seconds": 3.3125,
+              "seconds": 3.3372860999952536
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.13033259999065194
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.10890570000628941
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.78999941656366e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.0046928999945521355
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.90625,
+              "seconds": 3.9184632999968017
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.890625,
+              "seconds": 3.908530200002133
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.390625,
+              "seconds": 4.410879899995052
+            },
+            "semantic_status_counts_sql": {
+              "calls": 4,
+              "cpu_seconds": 0.4375,
+              "seconds": 0.42818980001902673
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.953125,
+              "seconds": 3.971385500000906
+            }
+          },
+          "raw_artifact_sha256": "282b3236e14c2c0a3bbc031d6fb5a86cbbd4c5ea2a26e79debb8b7d948eaf1f2",
+          "scan_count": 1000000,
+          "seconds": 15.515463100004126
+        }
+      },
+      "case": "recent",
+      "changed_full_page_paths": [],
+      "changed_keyword_candidate_positions": [],
+      "changed_keyword_hit_paths": [],
+      "changed_page_paths_after_excluding_scan_count": [],
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "round": 4
+    }
+  ]
+}
