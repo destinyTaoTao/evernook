@@ -2,7 +2,7 @@
 from .models import (
     Access, ArchiveView, AttachmentInfo, AttachmentInput, AuditPage, AuditRecord, Capture, CaptureReceipt,
     Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
-    ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
+    ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, OriginalCount, OriginalCountScope, Page,
     Receipt, RuntimeStatus, Source, StoredMessage, SearchSpan, SearchHit, SearchPage, LexicalStatus,
 )
 from .runtime import HARNESS_DEFAULT_SCOPES, SCOPES, MemoryRuntime, configure_audit, configure_lockout, initialize, pair_client, unlock_pairing
@@ -24,7 +24,8 @@ __all__ = [
     "Access", "ArchiveView", "Change", "ChangeRecord", "ContextReceipt", "DerivedContext",
     "AttachmentInfo", "AttachmentInput", "Capture", "CaptureReceipt",
     "Event", "ImportantItem", "ImportantMark", "ImportantPage", "MemoryFailure", "MemoryRuntime",
-    "MessageState", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage", "initialize", "pair_client",
+    "MessageState", "OriginalCount", "OriginalCountScope", "Page", "Receipt", "RuntimeStatus", "Source", "StoredMessage",
+    "initialize", "pair_client",
     "HARNESS_DEFAULT_SCOPES", "SCOPES", "AuditPage", "AuditRecord", "configure_audit", "configure_lockout", "unlock_pairing",
     "SearchSpan", "SearchHit", "SearchPage", "LexicalStatus",
     "ArchiveStatus", "CaptureReview", "EvidenceArchive", "ImportantReview", "restore_archive", "verify_archive",

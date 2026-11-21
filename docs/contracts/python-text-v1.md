@@ -40,6 +40,20 @@ Core0.1.7的可选`configure_lexical_acceleration(access, enabled=bool)`须maint
 - 保留 Unicode code point、不做归一化；严格 UTF-8，单条文本最大 1 MiB UTF-8 字节。显式保存源时间未知和 `partial/complete/canceled/failed`。不补造完整流、不自动拼接重试。
 - `MemoryFailure.code` 是不含输入内容的固定错误码：如 `unauthorized`、`incompatible_contract`、`unauthorized_source`、`source_conflict`、`invalid_encoding`、`storage_busy`、`storage_full`、`storage_unavailable`。未知异常不能视为保存成功；中断后用原来源/内容重试确认。
 
+## 指定账本范围的原件计数
+
+`MemoryRuntime.count_user_originals(access, OriginalCountScope(entry, session, branch), evidence, *, timeout=5, cancel=None)` 接收一个 `EvidenceSpan` 元组。范围限定到指定入口、会话和分支在本次 SQLite 读快照中可见、非空、完整、活跃的普通用户文本原件。它要求 `recall` 权限，并在交付数字前重新核验调用身份与权限。结果仅描述当前账本快照中的范围，无法用于证明整个宿主会话的采集覆盖，也不推断原文符合哪些语义类别。
+
+Core 在同一快照中枚举范围内的合格原件，核对每个证据的 `message_id`、状态版本、内容版本和原文跨度。包中的唯一原件必须与枚举完全一致。同一消息的多个原文跨度只计一次。原件内容相同但消息 ID 不同仍各计一次。覆盖完整性由 Core 的枚举和核对结果决定。更正前版本、已撤销或抑制的来源、已删除来源、受保护投影、派生反思和其他角色退出计数范围。
+
+- `decision='answer'`、`reason='scope_verified'` 表示 Core 核验了这个快照里的计数。输出只有决定、计数与原因。
+- 证据为空、范围不存在、缺少可见原件、引文无效、包含其他范围或版本不符时返回 `decision='abstain'`、`count=None`、`reason='incomplete_evidence'`。
+- 范围上限为 32 个原件，输入上限为 100 个跨度以及合计 16,384 个引文 Unicode 字符。超限弃答，原因是 `evidence_budget`。时间预算接受大于零且不超过 30 秒的值，超时弃答，原因是 `timeout`。取消抛出 `original_count_canceled`。
+
+这是本地 Python SDK 操作，直接读取原始账本。无需配置反思或索引，无模型调用、网络请求或长期记忆写入。常规授权审计只记录操作，不记录引文、范围或结果。当前入口是 `MemoryRuntime`，服务协议、MCP 与 dsh 未接入这项操作。
+
+`python -m unittest discover -s tests/contracts -p test_original_count.py -v` 从独立的合成账本调用公开 Python 入口。重复引用的两个完整证据包分别返回 1 和 2，两个存在未送达原件的证据包均弃答。测试也覆盖来源撤销、证据与时间预算、并发提交期间的读快照，以及模型和网络路径均未调用的断言。
+
 ## 显式批量历史导入（2026-11-15）
 
 `submit_many(access, events: tuple[Event, ...], *, cancel=None)` 仅增加 Python 本地入口，单条 `submit`、流式发布与 MCP 工具权限不变。每批 1–100 条、正文 UTF-8 总量至多 4 MiB；各条继续做原有来源、编码、敏感分流及 HMAC 幂等校验，保留各自回执。普通库中的敏感条目仍只有投影，不能据此声称已保存加密原件。

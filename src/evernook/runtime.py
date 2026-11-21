@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from .models import (
     Access, ArchiveView, AttachmentInfo, AttachmentInput, AuditPage, AuditRecord, Capture, CaptureReceipt, Change, ChangeRecord, ContextReceipt, DerivedContext, Event,
-    ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, Page,
+    ImportantItem, ImportantMark, ImportantPage, MemoryFailure, MessageState, OriginalCount, OriginalCountScope, Page,
     Receipt, RuntimeStatus, Source, StoredMessage, SearchHit, SearchPage, LexicalStatus,
 )
 from .paths import external, provision_private_directory, verify_private_directory
@@ -31,6 +31,7 @@ from .lexical import NORMALIZATION_IDENTITY, index_terms, matching_spans, normal
 
 if TYPE_CHECKING:
     from .archive import ArchiveStatus
+    from .candidates import EvidenceSpan
     from .durable_stream import StreamPage, StreamReceipt
 
 
@@ -837,6 +838,13 @@ class MemoryRuntime:
                          json_extract(event,'$.source.branch'), json_extract(event,'$.sequence'), id
                 LIMIT ? OFFSET ?""", (start, start, end, end, limit + 1, offset)).fetchall()
             return Page(tuple(self._stored(row) for row in rows[:limit]), offset + limit if len(rows) > limit else None)
+
+    def count_user_originals(self, access: Access, scope: OriginalCountScope, evidence: tuple[EvidenceSpan, ...], *,
+                             timeout: float = 5, cancel: threading.Event | None = None) -> OriginalCount:
+        """Verify an exact count of visible user originals in one ledger scope and snapshot."""
+        from .original_count import count_user_originals
+
+        return count_user_originals(self, access, scope, evidence, timeout=timeout, cancel=cancel)
 
     def status(self, access: Access) -> RuntimeStatus:
         self._authorize(access)

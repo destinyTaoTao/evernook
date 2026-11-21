@@ -1,5 +1,6 @@
 """Caller-visible values for the version 1 ordinary-text contract."""
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 class MemoryFailure(Exception):
@@ -21,6 +22,20 @@ class Source:
     session: str
     branch: str
     event: str
+
+
+@dataclass(frozen=True)
+class OriginalCountScope:
+    entry: str
+    session: str
+    branch: str
+
+
+@dataclass(frozen=True)
+class OriginalCount:
+    decision: Literal['answer', 'abstain']
+    count: int | None
+    reason: Literal['scope_verified', 'incomplete_evidence', 'evidence_budget', 'timeout']
 
 
 @dataclass(frozen=True)
