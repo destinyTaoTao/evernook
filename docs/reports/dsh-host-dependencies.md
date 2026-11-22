@@ -50,3 +50,13 @@
 - [dsh 0.2.2-rc.1官方发布](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)
 
 版本和完整依赖来自当日npm发布清单/实际lock与audit；安全公告用于界定依赖风险，未声称EverNook页面存在已复现的利用路径。
+
+## 2026-11-22 核对上游 0.2.2-rc.5
+
+npm 的 `latest` 和 `next` 指向 `@deepseek-ai/dsh@0.2.2-rc.5`。配套的 `dsh-llm` 已固定 Zod 4.6.6，达到 #92 所跟踪公告的修复版本。原始依赖图仍包含 MCP client 2.2.0、Undici 8.11.2 和 fflate 0.8.2。[官方发布](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.5) · [LLM 包清单](https://registry.npmjs.org/@deepseek-ai/dsh-llm/0.2.2-rc.5) · [MCP 包清单](https://registry.npmjs.org/@deepseek-ai/dsh-mcp-client/0.2.2-rc.5)
+
+在 Windows、Node 24.12.0、npm 11.6.2 下，分别为原始候选和沿用本仓库四项依赖覆盖的候选生成独立锁文件。原始锁的生产审计报告 74 条 moderate 和 1 条 high，其中包括依赖传播项，直达公告分布在上述三个包。带依赖覆盖的候选以 `npm ci --ignore-scripts --omit=dev` 实际安装 604 个包，安装后生产审计为 0。读取安装树，从已安装消费者核对 76 条直接解析关系，实际版本均与依赖覆盖一致。锁文件和安装审计原始结果保存在仓库外临时目录，审计结果对应当时的咨询数据库。
+
+候选仍需适配。当前预览插件的宿主版本与 Cordis、Schemastery peer 固定在旧组合。新宿主的 `tools/post-execute` 在最终内容转换前执行；最终 `tools/result` 观察者不阻塞会话追加。请求计量仍使用估算和历史 usage 锚点，`PreparedLlmCall` 没有部署所需的完整请求计数接口。[工具流水线](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/core/tools/src/pipeline.ts#L343-L425) · [工具结果追加](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/core/tools/src/batch.ts#L138-L148) · [请求计量契约](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/llm/token-meter/README.md#measuring-pressure) · [绑定调用 API](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.5/packages/llm/llm/src/index.ts#L184-L206)
+
+本轮交付的是候选依赖的可安装证据和上游能力复核。仓库继续使用已验证的独立宿主组合。新版服务启动、插件接入和真实工具发布未验收，#92、#94、#105 继续跟踪各自门槛。
