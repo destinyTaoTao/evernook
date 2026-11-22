@@ -44,6 +44,8 @@ class SkillDraftProposer:
             if not required.issubset(self.runtime._authorize(access).scopes):
                 raise MemoryFailure("permission_denied")
             record = registry._write_decision(db, proposal)
+            from .skill_draft_schedule import discard
+            discard(db, tool_result_id)
             db.execute("COMMIT")
             return record
 

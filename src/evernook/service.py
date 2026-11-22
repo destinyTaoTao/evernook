@@ -35,6 +35,7 @@ PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inboxes', 'prote
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
     "experience-queue", "experience-read", "experience-decide",
+    "skill-draft-configure", "skill-draft-status",
     "persona-read", "persona-history", "persona-set", "persona-rollback",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
     "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state",

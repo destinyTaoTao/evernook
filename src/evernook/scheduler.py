@@ -221,19 +221,29 @@ class ConsolidationScheduler:
         """Serialize windows across hosts; expiry permits recovery after a killed worker."""
         self.runtime._require_scope(access, "maintain", "scheduler_trigger")
         token = secrets.token_urlsafe(32)
+        started = time.monotonic()
         with self.runtime._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             self._schema(db)
             previous = db.execute("SELECT expires FROM scheduler_lease_v1 WHERE id=1").fetchone()
             if previous is not None and float(previous[0]) > time.time():
                 raise MemoryFailure("candidate_run_busy")
-            ttl = math.ceil(self._settings(db).max_trigger_seconds) + 30
+            max_seconds = self._settings(db).max_trigger_seconds
+            ttl = math.ceil(max_seconds) + 30
             db.execute("INSERT INTO scheduler_lease_v1 VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET token=excluded.token,expires=excluded.expires",
                        (token, time.time() + ttl))
             db.execute("COMMIT")
         try:
             updates: list[PreferenceUpdate] = []
             result = self._trigger(access, reason=reason, provider=provider, scheduler_token=token, preference_updates=updates)
+            if reason in {'session_end', 'idle'} and result.skipped in {None, 'threshold'}:
+                from .skill_draft_schedule import SkillDraftSchedule
+                try:
+                    SkillDraftSchedule(self.runtime)._tick(access, reason=reason, scheduler_token=token,
+                        deadline=started + max_seconds, available=lambda db: self._skill_available(db, reason))
+                except MemoryFailure as error:
+                    if error.code not in {'scheduler_time_budget', 'scheduler_foreground', 'scheduler_paused', 'storage_busy'}:
+                        raise
             return replace(result, preference_updates=tuple(updates))
         finally:
             with self.runtime._connection() as db:
@@ -274,13 +284,9 @@ class ConsolidationScheduler:
             if not raw_ready and not promotions:
                 db.execute("COMMIT")
                 return SchedulerTick(reason, "threshold", (), 0, self._remaining(db))
-            if reason == "idle" and settings.idle_seconds:
-                latest = db.execute("SELECT max(received) FROM messages").fetchone()[0]
-                foreground = db.execute("SELECT max(max(active_until,last_activity)) FROM scheduler_foreground_v1").fetchone()[0]
-                last_activity = max(_time(latest) if latest is not None else 0, float(foreground or 0))
-                if time.time() - last_activity < settings.idle_seconds:
-                    db.execute("COMMIT")
-                    return SchedulerTick(reason, "idle_wait", (), 0, self._remaining(db))
+            if reason == "idle" and self._idle_waiting(db, settings):
+                db.execute("COMMIT")
+                return SchedulerTick(reason, "idle_wait", (), 0, self._remaining(db))
             candidates = [] if not raw_ready else db.execute(f"""SELECT messages.id,messages.event,messages.receipt FROM messages JOIN jobs ON jobs.message_id=messages.id
                 WHERE {_PENDING_SOURCES} ORDER BY messages.received, messages.id LIMIT ?""",
                 (sources_limit * runs_limit,)).fetchall()
@@ -453,6 +459,20 @@ class ConsolidationScheduler:
             if self._foreground_count(db):
                 return "foreground"
             return "time_budget" if time.monotonic() >= deadline else None
+
+    @staticmethod
+    def _idle_waiting(db: sqlite3.Connection, settings: _Settings) -> bool:
+        if not settings.idle_seconds:
+            return False
+        latest = db.execute("SELECT max(received) FROM messages").fetchone()[0]
+        foreground = db.execute("SELECT max(max(active_until,last_activity)) FROM scheduler_foreground_v1").fetchone()[0]
+        last_activity = max(_time(latest) if latest is not None else 0, float(foreground or 0))
+        return time.time() - last_activity < settings.idle_seconds
+
+    def _skill_available(self, db: sqlite3.Connection, reason: str) -> bool:
+        settings = self._settings(db)
+        return not (settings.paused or self._foreground_count(db)
+                    or (reason == 'idle' and self._idle_waiting(db, settings)))
 
     def _record_progress(self, progress: list[tuple[str, str, str]], scheduler_token: str) -> int:
         # Keep the whole selected window stable until every asset is durable. Partial progress

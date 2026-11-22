@@ -241,6 +241,8 @@ def _parser() -> Parser:
         ("experience-read", "Read the current source-validated experience draft/state"),
         ("experience-queue", "List current experience draft metadata for trusted review"),
         ("experience-from-navigation", "Create an extractive experience candidate from existing navigation"),
+        ("skill-draft-configure", "Configure the review-only tool outcome rules"),
+        ("skill-draft-status", "Read the skill draft policy and pending count"),
         ("purge-preview", "Preview an exact ordinary-source purge scope; does not delete evidence"),
         ("purge", "Trusted confirmed purge of the exact previewed scope; never a model tool"),
         ("persona-set", "Trusted user-confirmed persona block update; never a model tool"),
@@ -594,6 +596,19 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             raise MemoryFailure("invalid_arguments")
         value["source_ids"] = tuple(value["source_ids"])
         return purge_workflow.preview(access, **value)
+    if args.command in {"skill-draft-configure", "skill-draft-status"}:
+        from .skill_draft_schedule import SkillDraftSchedule
+        value = read_input()
+        skill_schedule = SkillDraftSchedule(runtime)
+        if args.command == "skill-draft-status":
+            if value:
+                raise MemoryFailure("invalid_arguments")
+            return skill_schedule.status(access)
+        if "tool_names" in value:
+            if not isinstance(value["tool_names"], list):
+                raise MemoryFailure("invalid_arguments")
+            value["tool_names"] = tuple(value["tool_names"])
+        return skill_schedule.configure(access, **value)
     if args.command.startswith("experience-"):
         from .candidates import EvidenceSpan
         from .experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry

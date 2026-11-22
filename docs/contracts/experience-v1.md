@@ -32,7 +32,17 @@ enable/reject/disable 都需真实、完整、原件可见的用户 confirmation
 
 `evernook.skill_drafts.SkillDraftProposer(runtime).propose(access, tool_result_id=...)` 为这条规则提供可信 Python 入口，同时要求 `recall` 和 `accept`。选择来源后，在写事务中重新核验权限、引用版本和精确跨度。每条符合条件的失败或取消工具结果生成一条确定性 `skill_draft`，重试复用该原始提议回执，当前审查状态按注册表读取。
 
-工具结果须是已保存的普通 `tool_result`，并关联同一入口、会话和分支中更早的完整用户输入。两条来源各引用最多 512 个原文字码点。失败或取消导致的 `incomplete_output` 是规则所处理的已知状态，其他采集缺口、受保护投影及派生反思结果会被跳过，返回 `None`。提议仍需用户确认才能启用。当前入口由可信 Python 调用显式触发，自动调度继续跟踪 [#56](https://github.com/destinyTaoTao/evernook/issues/56)。原生 dsh 源码提供失败结果映射，取消场景使用 Core Capture 合成回归。[规则测试](../../tests/contracts/test_skill_drafts.py)
+工具结果须是已保存的普通 `tool_result`，并关联同一入口、会话和分支中更早的完整用户输入。两条来源各引用最多 512 个原文字码点。失败或取消导致的 `incomplete_output` 是规则所处理的已知状态，其他采集缺口、受保护投影及派生反思结果会被跳过，返回 `None`。提议仍需用户确认才能启用。原生 dsh 源码提供失败结果映射，取消场景使用 Core Capture 合成回归。[规则测试](../../tests/contracts/test_skill_drafts.py)
+
+## 会话结束与空闲补跑
+
+`skill-draft-configure` 要求 `maintain` 和 `accept`。提供最多 16 个具体 `tool_names` 后进入审查模式。未配置时关闭。启用期间新提交且通过初筛的工具结果在原文提交事务中登记待办。历史结果可由可信 Python 入口显式提议。设置 `enabled=false` 会暂停已登记待办，停用期间的原文仍按正常采集路径保存。
+
+现有调度的 `session_end` 仅处理已有结束标记且早于该标记的同入口和会话结果。`idle` 可补处理其他待办，复用调度的前台让行、暂停、空闲阈值和时限。每次最多处理四条，需要 `maintain`、`recall` 和 `accept`。草案提议与待办出队在同一写事务内完成。中断、并发繁忙或进入前台时，剩余请求保留，下一次有权限的触发可继续。`skill-draft-status` 查看待办数，`experience-queue` 查阅生成的草案。
+
+原文、已生成草案及审查记录进入普通证据归档。技能调度的本机配置和待办只在运行库中生效，恢复后重新配置才会登记新结果。错误的可选策略会在状态查询报告，原始工具结果仍可保存和显式提议。普通沉淀的白名单、显式上下文选择和版本绑定的用户审查继续适用。
+
+最终运行技能、采集、调度、沉淀、归档和独立服务共 78 项契约测试，并通过全仓 strict mypy。真实本机服务使用合成会话；原生 dsh 的完整交互和真实用户 profile 仍按宿主准入范围验收。[会话时序、进程退出和恢复边界回归](../../tests/contracts/test_skill_drafts.py) · [独立服务验证](../../tests/contracts/test_service_cutover.py)
 
 `ContextPolicy.experience_ids` 可显式选择至多64项；仅纳入当前 enabled 版本，位于置顶/事实之后、普通原文之前，计入完整 token 预算。最终 SQLite 快照重验审查修订号和来源；构造途中停用/修订不能留住旧规则。草案、争议、停用或无来源项显示省略原因。known_at 历史查询暂不混入当前经验，报告 `experience_history_unavailable`，不伪装已有历史时点查询。
 
@@ -48,9 +58,11 @@ enable/reject/disable 都需真实、完整、原件可见的用户 confirmation
 | `experience-decide` | ExperienceDecision；draft.sources 为精确来源数组 |
 | `experience-read` | `{"experience_id":"..."}` |
 | `experience-from-navigation` | request_id、experience_id、expected_revision、policy_id、bucket、conditions |
+| `skill-draft-configure` | `{"tool_names":["synthetic-tool"]}` 或 `{"enabled":false}` |
+| `skill-draft-status` | `{}` |
 
-已激活的独立服务通过认证 CLI 提供 `experience-queue`、`experience-read` 和 `experience-decide`。默认与可信 MCP 仍只提供 `evernook_v1_experience(experience_id)` 读取经验。
+已激活的独立服务通过认证 CLI 提供经验审查和技能草案配置命令。默认与可信 MCP 仍只提供 `evernook_v1_experience(experience_id)` 读取经验。
 
 服务上的 `experience-decide` 回执只含 `experience_id`、`request_id`、`revision`、`content_revision`、`state`、`recorded_at`、`confirmation_id` 和 `confirmation_version`。正文与引用仍通过要求 `recall` 的 `experience-read` 查看。离线 CLI 和 Python 的 `decide` 返回原有完整 `ExperienceRecord`。
 
-尚无自动经验生成模型准入、后台提议调度、独立审查 UI、事实争议自动传播、经验历史时点查询或原生规则加载，完整票据保持开放。验证见[报告](../reports/r3-experience-2026-10-31.md)。
+生成式经验提议、独立审查 UI、事实争议自动传播、经验历史时点查询和原生规则加载仍待验收。[早期经验契约报告](../reports/r3-experience-2026-10-31.md)

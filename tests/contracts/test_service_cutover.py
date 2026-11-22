@@ -199,6 +199,40 @@ class ServiceCutoverTests(unittest.TestCase):
             listing = client.call(self.access, "mcp-list", {"profile": profile})["tools"]
             self.assertEqual({tool["name"] for tool in listing if "experience" in tool["name"]}, {"evernook_v1_experience"})
 
+    def test_skill_draft_policy_connects_real_capture_session_trigger_and_review(self) -> None:
+        maintainer = pair_client(self.config, client_id="maintainer", entry="maintainer", scopes=("maintain",),
+            access_path=self.config.parent / "mcp-access-maintainer.json")
+        self.start()
+        client = ServiceClient(self.config)
+
+        def cli(command: str, value: dict[str, Any]) -> dict[str, Any]:
+            result: dict[str, Any] = client.call(self.access, "cli", {"command": command, "input": value})
+            return result
+
+        policy = {"tool_names": ["synthetic-tool"]}
+        with self.assertRaisesRegex(MemoryFailure, "^permission_denied$"):
+            client.call(maintainer, "cli", {"command": "skill-draft-configure", "input": policy})
+        self.assertEqual(cli("skill-draft-configure", policy)["publication"], "review_only")
+
+        event = Event(Source("test", "cutover", "main", "result"), "tool", 2, None, "failed", "合成：工具执行失败。")
+        capture = client.call(self.access, "mcp", {"profile": "trusted-host", "name": "evernook_v1_capture",
+            "arguments": {"event": asdict(event), "kind": "tool_result", "tool_name": "synthetic-tool",
+                "input_id": self.receipt.message_id}})
+        self.assertEqual(capture["gaps"], ["incomplete_output"])
+        self.assertEqual(cli("skill-draft-status", {})["pending"], 1)
+        self.assertEqual(cli("experience-queue", {})["items"], [])
+        cli("scheduler-session-end", {"entry": "test", "session": "cutover"})
+        cli("scheduler-trigger", {"reason": "session_end"})
+
+        (item,) = cli("experience-queue", {})["items"]
+        self.assertEqual(item["state"], "draft")
+        entry = cli("experience-read", {"experience_id": item["experience_id"]})
+        self.assertFalse(entry["execution_authority"])
+        self.assertEqual(entry["record"]["draft"]["kind"], "skill_draft")
+        self.assertEqual([span["message_id"] for span in entry["record"]["draft"]["sources"]],
+                         [self.receipt.message_id, capture["message"]["message_id"]])
+        self.assertEqual(cli("skill-draft-status", {})["pending"], 0)
+
     def test_lost_discovery_does_not_reenable_ordinary_cli_writes(self) -> None:
         self.start()
         self.stop()

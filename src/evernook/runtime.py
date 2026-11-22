@@ -1178,6 +1178,10 @@ class MemoryRuntime:
                 gaps += ("incomplete_output",)
             result = CaptureReceipt(receipt, capture.kind, capture.input_id, capture.tool_name, tuple(infos), gaps, not gaps)
             db.execute("INSERT INTO captures VALUES (?,?,?)", (receipt.message_id, capture.input_id, _json(asdict(result))))
+            if (capture.kind == 'tool_result' and capture.event.role == 'tool'
+                    and capture.event.completion in {'failed', 'canceled'} and receipt.original_saved):
+                from .skill_draft_schedule import enqueue
+                enqueue(db, capture.event, result)
             for attachment_id, data, digest in objects:
                 db.execute("INSERT INTO attachments VALUES (?,?,?,?)", (receipt.message_id, attachment_id, data, digest))
             db.execute("COMMIT")

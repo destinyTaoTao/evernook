@@ -219,10 +219,12 @@ def export_archive(runtime: MemoryRuntime, access: Access, destination: Path) ->
             try:
                 source.backup(target, pages=256, progress=progress, sleep=0.05)
                 from .lexical_checkpoint import strip_export
+                from .skill_draft_schedule import strip_export as strip_skill_schedule
                 from .topic_view_clock import strip_export as strip_topic_clock
                 target.execute("PRAGMA trusted_schema=OFF")
                 target.execute("BEGIN IMMEDIATE")
                 strip_topic_clock(target)
+                strip_skill_schedule(target)
                 strip_export(target)
                 target.execute("COMMIT")
             finally:
