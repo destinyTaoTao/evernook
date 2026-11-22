@@ -10,7 +10,7 @@ import unittest
 from typing import Any
 
 from evernook import Change, Event, MemoryRuntime, Source, initialize, pair_client
-from contract_assertions import assert_original_roundtrip
+from tests.contracts.contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):

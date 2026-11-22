@@ -8,14 +8,14 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from unittest.mock import patch
 
 from evernook.models import MemoryFailure
 from evernook.paths import external
 from evernook.reflection import _REMOTE_EGRESS
 from evernook.reflection_remote import RemoteReflectionModel
-if __package__:
+if TYPE_CHECKING or __package__:
     from .semantic_reflection import judge, judge_generated, load_cases, packet
 else:
     from semantic_reflection import judge, judge_generated, load_cases, packet

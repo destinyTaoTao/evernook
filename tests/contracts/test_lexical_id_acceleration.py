@@ -10,9 +10,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
-import test_lexical_maintenance
-import test_lexical_window
-import test_search
+from tests.contracts import test_lexical_maintenance, test_lexical_window, test_search
 
 
 class IndexedIDSearchTests(test_search.SearchTests):

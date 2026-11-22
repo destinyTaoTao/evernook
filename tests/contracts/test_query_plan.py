@@ -14,7 +14,7 @@ from evernook.models import MemoryFailure
 from evernook.query_plan import plan_query
 from evernook.semantic import RecallPage, SemanticRecall
 from evernook.service import dispatch
-from test_semantic import SyntheticEmbedding
+from tests.contracts.test_semantic import SyntheticEmbedding
 
 
 class QueryPlanTests(unittest.TestCase):

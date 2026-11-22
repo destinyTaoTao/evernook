@@ -18,7 +18,7 @@ from typing import Any
 from mcp import Client, StdioServerParameters, stdio_client
 
 from evernook import Event, MemoryRuntime, Source, initialize, pair_client
-from contract_assertions import assert_original_roundtrip
+from tests.contracts.contract_assertions import assert_original_roundtrip
 from tests.contracts.fixture_cleanup import cleanup_fixture
 
 

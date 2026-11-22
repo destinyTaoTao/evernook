@@ -11,7 +11,7 @@ from evernook import Event, EvidenceSpan, MemoryRuntime, SemanticRecall, Source,
 from evernook.context import ContextBuilder, ContextPolicy
 from evernook.persona import PersonaRegistry, PersonaSet
 from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
-from test_context import SyntheticCounter
+from tests.contracts.test_context import SyntheticCounter
 
 
 class CompanionContextTests(unittest.TestCase):

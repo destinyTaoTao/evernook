@@ -17,9 +17,9 @@ from evernook.preference_clarifications import OpenClarification, PreferenceClar
 from evernook.preferences import PreferenceProcessor
 from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
 from evernook.purge import PurgeDecision, PurgeWorkflow
-from test_context import SyntheticCounter
-from test_preferences import WholeSourceSelector
-from test_semantic import SyntheticEmbedding
+from tests.contracts.test_context import SyntheticCounter
+from tests.contracts.test_preferences import WholeSourceSelector
+from tests.contracts.test_semantic import SyntheticEmbedding
 
 
 class PreferenceClarificationTests(unittest.TestCase):

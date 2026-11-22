@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
-import test_search
+from tests.contracts import test_search
 
 
 class AcceleratedSearchTests(test_search.SearchTests):

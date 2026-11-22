@@ -289,7 +289,7 @@ class PreferenceUpdateTests(unittest.TestCase):
 
     def test_unadmitted_model_and_ordinary_capture_identity_cannot_publish_preferences(self) -> None:
         from evernook.preferences import PreferenceProcessor
-        from test_preferences import WholeSourceSelector
+        from tests.contracts.test_preferences import WholeSourceSelector
         self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
         source = self.save('我偏好简短回答。', 'unadmitted-model')
         model = PreferenceProcessor(self.runtime, WholeSourceSelector())
@@ -478,7 +478,7 @@ class PreferenceUpdateTests(unittest.TestCase):
         self.assertEqual(FactRegistry(self.runtime).query(self.access, 'user', 'preference:answer_verbosity').knowledge_revision, 1)
 
     def test_suppression_during_context_construction_removes_both_profile_and_linked_fact(self) -> None:
-        from test_context import SyntheticCounter
+        from tests.contracts.test_context import SyntheticCounter
         self.updates.configure(self.access, enabled=True, admitted_processor=self.updates.settings(self.access).rules_processor)
         accepted = self.updates.process(self.access, (self.save('我偏好简短回答。', 'inflight'),)).updates[0]
         assert accepted.profile_tag_id is not None and accepted.predicate is not None

@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 
-import test_mcp
+from tests.contracts import test_mcp
 
 
 class ServiceMCPTests(test_mcp.MCPTests):

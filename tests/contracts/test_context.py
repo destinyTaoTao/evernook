@@ -15,7 +15,7 @@ from evernook import CandidateDraft, CandidateWorkflow, Change, Event, EvidenceS
 from evernook.context import ContextBuilder, ContextPolicy
 from evernook.facts import FactDecision, FactRegistry
 from evernook.experience import ExperienceDecision, ExperienceDraft, ExperienceRegistry
-from test_semantic import SyntheticEmbedding
+from tests.contracts.test_semantic import SyntheticEmbedding
 
 
 class SyntheticCounter:

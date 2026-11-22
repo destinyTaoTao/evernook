@@ -11,7 +11,7 @@ from evernook import windows_session
 from evernook.private_capture_local import LocalPrivateCapture, LocalPrivateWindow
 from evernook.private_session_local import LocalPrivateSession, LocalPrivateSessionWindow
 from evernook.vault_local import _load_user32, _user32, input_desktop_available
-from test_private_capture_local import FakeClient
+from tests.contracts.test_private_capture_local import FakeClient
 
 
 class _Function:

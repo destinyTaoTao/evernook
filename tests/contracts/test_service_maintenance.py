@@ -17,7 +17,7 @@ from evernook.scheduler import ConsolidationScheduler
 from evernook.service import ServiceClient
 from evernook.service_maintenance import ServiceMaintenance
 from evernook.semantic import SemanticRecall
-from test_semantic import SyntheticEmbedding
+from tests.contracts.test_semantic import SyntheticEmbedding
 from evernook.maintenance import NavigationMaintenance, NavigationPolicy
 
 

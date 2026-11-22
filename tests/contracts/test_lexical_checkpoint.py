@@ -13,7 +13,7 @@ from evernook import Change, Event, MemoryFailure, MemoryRuntime, Receipt, Sourc
 from evernook import lexical_checkpoint as checkpoint
 from evernook.purge import PurgeDecision, PurgeWorkflow
 import evernook.runtime as implementation
-import test_search
+from tests.contracts import test_search
 
 
 class CheckpointSearchContractTests(test_search.SearchTests):

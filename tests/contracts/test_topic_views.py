@@ -236,7 +236,7 @@ class TopicViewTests(unittest.TestCase):
 
     def test_normal_context_uses_bounded_current_view_and_honors_source_control(self) -> None:
         from evernook.context import ContextBuilder, ContextPolicy
-        from test_context import SyntheticCounter
+        from tests.contracts.test_context import SyntheticCounter
         source = self.save('合成：湿地见白鹭。')
         self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
         self.views.refresh(self.access, 'wetland', timeout=10)
@@ -255,7 +255,7 @@ class TopicViewTests(unittest.TestCase):
 
     def test_tokenizer_time_source_change_cannot_leave_view_or_duplicate_raw_body_in_payload(self) -> None:
         from evernook.context import ContextBuilder, ContextPolicy
-        from test_context import SyntheticCounter
+        from tests.contracts.test_context import SyntheticCounter
         source = self.save('合成：湿地旧正文。')
         self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
         self.views.refresh(self.access, 'wetland', timeout=10)
@@ -278,7 +278,7 @@ class TopicViewTests(unittest.TestCase):
 
     def test_tokenizer_time_source_change_is_blocked_without_configured_views(self) -> None:
         from evernook.context import ContextBuilder, ContextPolicy
-        from test_context import SyntheticCounter
+        from tests.contracts.test_context import SyntheticCounter
         source = self.save('合成：湿地旧正文。')
         confirmation = self.save('合成：当前会话请求。')
         runtime, access = self.runtime, self.access
@@ -296,7 +296,7 @@ class TopicViewTests(unittest.TestCase):
 
     def test_current_view_is_not_presented_as_historical_knowledge(self) -> None:
         from evernook.context import ContextBuilder, ContextPolicy
-        from test_context import SyntheticCounter
+        from tests.contracts.test_context import SyntheticCounter
         self.save('合成：湿地见白鹭。')
         self.views.configure(self.access, 'define', 'wetland', 0, self.definition())
         self.views.refresh(self.access, 'wetland', timeout=10)

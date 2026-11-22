@@ -23,7 +23,7 @@ from evernook import Event, Source, initialize, pair_client
 from evernook.service import ServiceClient
 from evernook.runtime import MemoryRuntime
 from evernook.service import _Server
-import test_tokenizer
+from tests.contracts import test_tokenizer
 
 
 class ServiceBridgeTests(unittest.IsolatedAsyncioTestCase):

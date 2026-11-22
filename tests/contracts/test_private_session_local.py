@@ -12,7 +12,7 @@ from unittest.mock import patch
 from evernook import Access, MemoryFailure
 from evernook.private_session_local import LocalPrivateSession, LocalPrivateSessionWindow
 from evernook.private_capture_local import LocalPrivateCapture
-from test_private_capture_local import FakeClient
+from tests.contracts.test_private_capture_local import FakeClient
 
 
 class PrivateSessionTests(unittest.TestCase):

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize
-from contract_assertions import assert_original_roundtrip
+from tests.contracts.contract_assertions import assert_original_roundtrip
 
 
 class TextContractTests(unittest.TestCase):
