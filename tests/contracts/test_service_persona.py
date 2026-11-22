@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+import ctypes
 import json
+import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +16,7 @@ import unittest
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.service import ServiceClient
+from probes.admission.experiment_job import ExperimentJob
 
 
 def _wire_object(value: object) -> dict[str, object]:
@@ -39,16 +44,36 @@ class ServicePersonaTests(unittest.TestCase):
             'complete', '合成：请设置温和语气。')).message_id
         self.assistant = runtime.submit(self.owner, Event(Source('owner', 's', 'main', '2'), 'assistant', 2, None,
             'complete', '合成：我猜应设置活泼语气。')).message_id
-        self.processes: list[subprocess.Popen[bytes]] = []
-        self.addCleanup(self.stop_all)
+        self.service_job: ExperimentJob | None = None
 
-    def stop_all(self) -> None:
-        for process in self.processes:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(timeout=15)
-            if process.stderr:
-                process.stderr.close()
+    def stop_service(self, job: ExperimentJob) -> None:
+        if job.handle is None:
+            return
+        with ExitStack() as cleanup:
+            cleanup.callback(job.close)
+            process = job.process
+            if process is None:
+                return
+            handles: list[int] = []
+            for pid in job.pids():
+                handle: int = job.kernel.OpenProcess(0x101000, False, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION.
+                if not handle:
+                    error = ctypes.get_last_error()
+                    if error == 87:  # A member can exit between listing it and opening a handle.
+                        continue
+                    raise ctypes.WinError(error)
+                cleanup.callback(job.kernel.CloseHandle, handle)
+                if job.contains(handle):
+                    handles.append(handle)
+            deadline = time.monotonic() + 15
+            job.terminate(process)
+            # The launcher can be gone while the actual service still owns memory-service.lock.
+            for handle in handles:
+                status = job.kernel.WaitForSingleObject(handle, max(0, math.ceil((deadline - time.monotonic()) * 1000)))
+                if status == 258:
+                    self.fail('owned service member did not exit before cleanup')
+                if status != 0:
+                    raise ctypes.WinError(ctypes.get_last_error())
 
     def start(self, *, activate: bool = False) -> ServiceClient:
         endpoint = self.config.parent / 'memory-service.json'
@@ -56,12 +81,16 @@ class ServicePersonaTests(unittest.TestCase):
         args = [sys.executable, '-B', '-m', 'evernook.service', '--config', str(self.config)]
         if activate:
             args += ['--activate-owner', str(self.owner_path)]
-        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        self.processes.append(process)
+        job = ExperimentJob()
+        self.service_job = job
+        self.addCleanup(self.stop_service, job)
+        diagnostic = self.root / 'service.stderr'
+        with open(os.devnull, 'wb') as stdout, diagnostic.open('wb') as stderr:
+            process = job.start(args, stdout, stderr)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                self.fail('isolated service failed to start: ' + (process.stderr.read().decode() if process.stderr else ''))
+                self.fail('isolated service failed to start: ' + diagnostic.read_text(encoding='utf-8', errors='replace'))
             if endpoint.exists() and endpoint.read_bytes() != old:
                 client = ServiceClient(self.config)
                 client.call(self.owner, 'status', {})
@@ -122,7 +151,8 @@ class ServicePersonaTests(unittest.TestCase):
         self.assertIn(rejected.exception.code, {'operation_not_allowed', 'unknown_tool'})
         blocks = _wire_object(cli('persona-read', {})['blocks'])
         self.assertEqual(_wire_object(blocks['tone'])['text'], '合成：温和')
-        self.processes[-1].terminate(); self.processes[-1].wait(timeout=15)
+        assert self.service_job is not None
+        self.stop_service(self.service_job)
         client = self.start()
         read = client.call(self.ordinary, 'cli', {'command': 'persona-read', 'input': {}})
         self.assertEqual(read['blocks']['tone']['text'], '合成：温和')
