@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import tempfile
+from typing import Any
 import unittest
 from unittest.mock import patch
 
 from evernook.embedding import LocalMiniLM, ServiceEmbedding, load_embedding
 from evernook.models import MemoryFailure
+from evernook.runtime import _load
 
 
 class EmbeddingProviderTests(unittest.TestCase):
@@ -44,7 +46,6 @@ class EmbeddingProviderTests(unittest.TestCase):
                 invalid_schema.current()
 
     def test_concurrent_config_change_cannot_swap_inflight_backend(self) -> None:
-        from evernook.embedding import _load
         with tempfile.TemporaryDirectory(prefix='evernook-binding-race-') as temporary:
             root = Path(temporary)
             path = root / 'embedding.json'
@@ -53,7 +54,7 @@ class EmbeddingProviderTests(unittest.TestCase):
             path.write_text(json.dumps(config), encoding='utf-8')
             binding = ServiceEmbedding(path)
             first = binding.current()
-            def change_during_validation(config_path: Path):  # type: ignore[no-untyped-def]
+            def change_during_validation(config_path: Path) -> dict[str, Any]:
                 result = _load(config_path)
                 config['model_dir'] = str(root / 'model-b')
                 path.write_text(json.dumps(config), encoding='utf-8')

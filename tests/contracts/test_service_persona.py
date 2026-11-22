@@ -14,6 +14,16 @@ from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pa
 from evernook.service import ServiceClient
 
 
+def _wire_object(value: object) -> dict[str, object]:
+    assert isinstance(value, dict) and all(isinstance(key, str) for key in value)
+    return value
+
+
+def _wire_rows(value: object) -> list[dict[str, object]]:
+    assert isinstance(value, list)
+    return [_wire_object(item) for item in value]
+
+
 class ServicePersonaTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix='evernook-service-persona-')
@@ -61,14 +71,15 @@ class ServicePersonaTests(unittest.TestCase):
 
     def test_activated_service_persona_cli_and_api_preserve_authority_and_versions(self) -> None:
         client = self.start(activate=True)
-        def call(command: str, value: dict[str, object]) -> object:
-            return client.call(self.owner, 'cli', {'command': command, 'input': value})
-        def cli(command: str, value: dict[str, object]) -> object:
+        def call(command: str, value: dict[str, object]) -> dict[str, object]:
+            return _wire_object(client.call(self.owner, 'cli', {'command': command, 'input': value}))
+        def cli(command: str, value: dict[str, object]) -> dict[str, object]:
             result = subprocess.run([sys.executable, '-m', 'evernook.cli', command, '--config', str(self.config),
                 '--access', str(self.owner_path), '--require-service'],
                 input=json.dumps(value, ensure_ascii=False).encode(), capture_output=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
-            return json.loads(result.stdout)['result']
+            envelope = _wire_object(json.loads(result.stdout))
+            return _wire_object(envelope['result'])
         first = {'request_id': 'persona-one', 'block': 'tone', 'text': '合成：温和',
                  'evidence_id': self.evidence, 'reason': '合成：已确认', 'expected_revision': 0}
         saved = call('persona-set', first)
@@ -98,16 +109,19 @@ class ServicePersonaTests(unittest.TestCase):
         fingerprint = client.call(self.owner, 'cli', {'command': 'manage', 'input': {'action': 'fingerprint', 'view': 'persona'}})
         self.assertNotEqual(projection['token'], fingerprint['token'])
         history = cli('persona-history', {'block': 'tone'})
-        self.assertEqual([record['revision'] for record in history['records']], [1, 2])
-        rollback = cli('persona-rollback', {'request_id': 'persona-rollback', 'target_seq': saved['seq'],
-            'expected_seq': updated['seq'], 'evidence_id': self.evidence, 'reason': '合成：回到原设定'})
-        self.assertEqual(rollback['restored'][0]['text'], '合成：温和')
+        self.assertEqual([record['revision'] for record in _wire_rows(history['records'])], [1, 2])
+        target_seq, expected_seq = saved['seq'], updated['seq']
+        assert type(target_seq) is int and type(expected_seq) is int
+        rollback = cli('persona-rollback', {'request_id': 'persona-rollback', 'target_seq': target_seq,
+            'expected_seq': expected_seq, 'evidence_id': self.evidence, 'reason': '合成：回到原设定'})
+        self.assertEqual(_wire_rows(rollback['restored'])[0]['text'], '合成：温和')
         tools = client.call(self.owner, 'mcp-list', {'profile': 'trusted-host'})['tools']
         self.assertFalse(any('persona' in tool['name'] for tool in tools))
         with self.assertRaises(MemoryFailure) as rejected:
             client.call(self.owner, 'mcp', {'profile': 'trusted-host', 'name': 'persona-set', 'arguments': first})
         self.assertIn(rejected.exception.code, {'operation_not_allowed', 'unknown_tool'})
-        self.assertEqual(cli('persona-read', {})['blocks']['tone']['text'], '合成：温和')
+        blocks = _wire_object(cli('persona-read', {})['blocks'])
+        self.assertEqual(_wire_object(blocks['tone'])['text'], '合成：温和')
         self.processes[-1].terminate(); self.processes[-1].wait(timeout=15)
         client = self.start()
         read = client.call(self.ordinary, 'cli', {'command': 'persona-read', 'input': {}})
@@ -177,19 +191,24 @@ class ServicePersonaTests(unittest.TestCase):
     def test_trusted_service_persona_preview_confirm_and_source_are_atomic(self) -> None:
         client = self.start(activate=True)
         operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成服务确认的人设'}
-        def manage(payload: dict[str, object]) -> object:
-            return client.call(self.owner, 'cli', {'command': 'manage', 'input': payload})
+        def manage(payload: dict[str, object]) -> dict[str, object]:
+            return _wire_object(client.call(self.owner, 'cli', {'command': 'manage', 'input': payload}))
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             client.call(self.ordinary, 'cli', {'command': 'manage', 'input': {'action': 'preview', 'operation': operation}})
         preview = manage({'action': 'preview', 'operation': operation})
-        outcome = manage({'action': 'confirm', 'proposal_id': preview['proposal_id'], 'operation': operation})
+        proposal_id = preview['proposal_id']
+        assert isinstance(proposal_id, str)
+        outcome = manage({'action': 'confirm', 'proposal_id': proposal_id, 'operation': operation})
         self.assertEqual(outcome['revision'], 1)
-        self.assertEqual(manage({'action': 'confirm', 'proposal_id': preview['proposal_id'], 'operation': operation}), outcome)
-        source = client.call(self.owner, 'read', {'message_id': outcome['confirmation_id']})
-        self.assertEqual(source['event']['role'], 'user')
-        self.assertEqual(source['event']['text'], operation['text'])
+        self.assertEqual(manage({'action': 'confirm', 'proposal_id': proposal_id, 'operation': operation}), outcome)
+        confirmation_id = outcome['confirmation_id']
+        assert isinstance(confirmation_id, str)
+        source = _wire_object(client.call(self.owner, 'read', {'message_id': confirmation_id}))
+        event = _wire_object(source['event'])
+        self.assertEqual(event['role'], 'user')
+        self.assertEqual(event['text'], operation['text'])
         persona = manage({'action': 'read', 'view': 'persona'})
-        self.assertEqual(persona['items'][0]['text'], operation['text'])
+        self.assertEqual(_wire_rows(persona['items'])[0]['text'], operation['text'])
 
 
 if __name__ == '__main__':

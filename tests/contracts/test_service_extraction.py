@@ -11,6 +11,8 @@ import time
 import unittest
 
 from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook.candidates import ExtractionSource
+from evernook.extraction import ExtractionReport
 from evernook.service import ServiceClient, dispatch
 
 
@@ -116,27 +118,30 @@ class ServiceExtractionTests(unittest.TestCase):
     def test_service_gate_and_cancellation_preserve_candidate_boundary(self) -> None:
         class Selector:
             processor_version = 'synthetic-service-selector-v1'
-            def select(self, sources: object, *, timeout: float, cancel: threading.Event | None) -> object:
+            def select(self, sources: tuple[ExtractionSource, ...], *, timeout: float, cancel: threading.Event | None) -> object:
                 raise AssertionError('canceled request must not run a model')
         gate = threading.BoundedSemaphore(1)
+        payload = {'source_ids': [self.source]}
         request = {'version': 1, 'access': asdict(self.owner), 'operation': 'cli',
-                   'arguments': {'command': 'extract', 'input': {'source_ids': [self.source]}}}
+                   'arguments': {'command': 'extract', 'input': payload}}
         gate.acquire()
         try:
             with self.assertRaisesRegex(MemoryFailure, 'extraction_service_busy'):
-                dispatch(self.runtime, request, extractor=Selector(), extraction_gate=gate)  # type: ignore[arg-type]
+                dispatch(self.runtime, request, extractor=Selector(), extraction_gate=gate)
         finally:
             gate.release()
         cancel = threading.Event(); cancel.set()
-        result = dispatch(self.runtime, request, cancel=cancel, extractor=Selector(), extraction_gate=gate)  # type: ignore[arg-type]
-        self.assertEqual(result.error_code, 'extraction_canceled')  # type: ignore[union-attr]
+        result = dispatch(self.runtime, request, cancel=cancel, extractor=Selector(), extraction_gate=gate)
+        assert isinstance(result, ExtractionReport)
+        self.assertEqual(result.error_code, 'extraction_canceled')
         self.assertTrue(gate.acquire(blocking=False))
         gate.release()
         protected = self.runtime.submit(self.owner, Event(Source('owner', 'synthetic', 'main', '2'),
             'user', 2, None, 'complete', '合成私密材料', sensitive=True)).message_id
-        request['arguments']['input']['source_ids'] = [protected]  # type: ignore[index]
-        result = dispatch(self.runtime, request, extractor=Selector(), extraction_gate=gate)  # type: ignore[arg-type]
-        self.assertEqual(result.error_code, 'extraction_input_not_admitted')  # type: ignore[union-attr]
+        payload['source_ids'] = [protected]
+        result = dispatch(self.runtime, request, extractor=Selector(), extraction_gate=gate)
+        assert isinstance(result, ExtractionReport)
+        self.assertEqual(result.error_code, 'extraction_input_not_admitted')
 
     def test_real_disconnect_cancels_worker_and_releases_service_gate(self) -> None:
         marker = self.root / 'worker-state'

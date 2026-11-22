@@ -315,7 +315,9 @@ class ProtectedServiceTests(unittest.TestCase):
         public = client.submit_transcription(self.owner, ordinary)
         self.assertEqual(public['storage'], 'ordinary')
         message_id = public['receipt']['message']['message_id']
-        self.assertEqual(client.read_transcription(self.owner, message_id)['transcription']['confirmation'], 'unverified')
+        provenance = client.read_transcription(self.owner, message_id)
+        assert provenance is not None
+        self.assertEqual(provenance['transcription']['confirmation'], 'unverified')
         with self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
             client.submit_transcription(self.reader, ordinary)
         with self.assertRaisesRegex(MemoryFailure, 'unauthorized_source'):
@@ -412,13 +414,15 @@ class ProtectedServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, 'invalid_protected_id'):
             client.protected_links(self.owner, after='not-a-cursor')
         import evernook.service as service_module
-        sent: list[object] = []
-        received: list[object] = []
+        sent: list[dict[str, object]] = []
+        received: list[dict[str, object]] = []
         def capture_send(connection: socket.socket, value: object, deadline: float, *, cancel: threading.Event | None = None) -> None:
+            assert isinstance(value, dict)
             sent.append(value)
             send_json(connection, value, deadline, cancel=cancel)
-        def capture_receive(connection: socket.socket, deadline: float, cancel: object = None) -> object:
-            value = receive_json(connection, deadline, cancel)  # type: ignore[arg-type]
+        def capture_receive(connection: socket.socket, deadline: float,
+                            cancel: threading.Event | None = None) -> dict[str, object]:
+            value = receive_json(connection, deadline, cancel)
             received.append(value); return value
         with patch.object(service_module, 'send_json', side_effect=capture_send), \
                 patch.object(service_module, 'receive_json', side_effect=capture_receive):

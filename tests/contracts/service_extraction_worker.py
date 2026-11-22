@@ -1,8 +1,10 @@
 """Synthetic blocking backend in an isolated service subprocess, never a production provider."""
 from pathlib import Path
 import sys
+import threading
 from unittest.mock import patch
 
+from evernook.candidates import ExtractionSource
 from evernook.models import MemoryFailure
 from evernook.service import serve
 
@@ -10,7 +12,7 @@ from evernook.service import serve
 class BlockingSelector:
     processor_version = 'synthetic-blocking-extraction-v1'
 
-    def select(self, sources: object, *, timeout: float, cancel: object) -> object:
+    def select(self, sources: tuple[ExtractionSource, ...], *, timeout: float, cancel: threading.Event | None) -> object:
         marker = Path(sys.argv[3])
         marker.write_text('started', encoding='utf-8')
         assert cancel is not None

@@ -11,8 +11,9 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize
-from evernook.persona import PERSONA_BLOCKS, PersonaRegistry, PersonaRollback, PersonaSet
+from evernook import Access, Event, MemoryFailure, MemoryRuntime, Source, initialize
+from evernook.persona import PERSONA_BLOCKS, PersonaBlockRecord, PersonaRegistry, PersonaRollback, PersonaSet
+from evernook.runtime import _Identity
 
 
 class PersonaTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class PersonaTests(unittest.TestCase):
         return receipt.message_id
 
     def set_block(self, block: str, text: str, *, request_id: str | None = None, expected: int = 0,
-                  evidence: str | None = None) -> Any:
+                  evidence: str | None = None) -> PersonaBlockRecord:
         return self.personas.set(self.access, PersonaSet(request_id or f"set-{block}-{expected}-{hash(text) & 0xffff}",
             block, text, evidence or self.evidence(f"合成：请把{block}设为{text}"), "合成：用户确认", expected))
 
@@ -106,7 +107,7 @@ class PersonaTests(unittest.TestCase):
         editor = pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path,
                              scopes=('recall', 'accept'))
         original = self.runtime._require_scope
-        def revoke_after_authorize(access: object, scope: str, action: str, target: str = '') -> object:
+        def revoke_after_authorize(access: Access, scope: str, action: str, target: str = '') -> _Identity:
             identity = original(access, scope, action, target)
             pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
             return identity
@@ -122,7 +123,9 @@ class PersonaTests(unittest.TestCase):
                         scopes=('recall', 'accept'))
         current = self.personas.view(self.access)
         self.assertEqual(current.head_seq, initial.seq)
-        self.assertEqual(current.blocks['tone'].text, '合成初始语气')
+        tone = current.blocks['tone']
+        assert tone is not None
+        self.assertEqual(tone.text, '合成初始语气')
 
     def test_evidence_and_content_validation_reject_nonuser_and_sensitive_input(self) -> None:
         with self.assertRaisesRegex(MemoryFailure, "persona_user_confirmation_required"):

@@ -3,16 +3,19 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+from typing import cast
 import unittest
 from unittest.mock import patch
 
-from evernook import Change, Event, EvidenceSpan, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook import Access, Change, Event, EvidenceSpan, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.management import MemoryManagement
 from evernook.profile import ProfileDecision, ProfileDraft, ProfileRegistry
+from evernook.runtime import _Identity
 
 
 class ManagementTests(unittest.TestCase):
@@ -83,8 +86,11 @@ class ManagementTests(unittest.TestCase):
         outcome = self.ui.confirm(self.access, preview['proposal_id'], operation)
         self.assertEqual(outcome['revision'], 1)
         self.assertEqual(self.ui.confirm(self.access, preview['proposal_id'], operation), outcome)
-        self.assertEqual(PersonaRegistry(self.runtime).view(self.access).blocks['tone'].text, operation['text'])
+        tone = PersonaRegistry(self.runtime).view(self.access).blocks['tone']
+        assert tone is not None
+        self.assertEqual(tone.text, operation['text'])
         original = self.runtime.read(self.access, outcome['confirmation_id'])
+        assert original is not None
         self.assertEqual(original.event.text, operation['text'])
         self.assertEqual(original.event.role, 'user')
         with self.assertRaisesRegex(MemoryFailure, 'management_preview_stale'):
@@ -106,16 +112,20 @@ class ManagementTests(unittest.TestCase):
         clear_preview = self.ui.preview(self.access, clearing)
         cleared = self.ui.confirm(self.access, clear_preview['proposal_id'], clearing)
         self.assertEqual(cleared['revision'], 2)
-        self.assertEqual(PersonaRegistry(self.runtime).view(self.access).blocks['tone'].text, '')
-        self.assertTrue(self.runtime.read(self.access, cleared['confirmation_id']).event.text)
+        tone = PersonaRegistry(self.runtime).view(self.access).blocks['tone']
+        assert tone is not None
+        self.assertEqual(tone.text, '')
+        confirmation = self.runtime.read(self.access, cleared['confirmation_id'])
+        assert confirmation is not None
+        self.assertTrue(confirmation.event.text)
 
     def test_persona_confirmation_rolls_back_evidence_and_revision_on_failure(self) -> None:
-        from evernook.persona import PersonaRegistry
+        from evernook.persona import PersonaRegistry, PersonaSet
         operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成：原子提交'}
         preview = self.ui.preview(self.access, operation)
         before = self.runtime.status(self.access).messages
         real_set = PersonaRegistry._set
-        def fail_after_write(registry: object, db: object, request: object) -> object:
+        def fail_after_write(registry: PersonaRegistry, db: sqlite3.Connection, request: PersonaSet) -> None:
             real_set(registry, db, request)
             raise RuntimeError('synthetic interrupted commit')
         with patch.object(PersonaRegistry, '_set', autospec=True, side_effect=fail_after_write):
@@ -150,8 +160,8 @@ class ManagementTests(unittest.TestCase):
         operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成撤权测试'}
         preview = self.ui.preview(editor, operation)
         original_authorize = self.ui._authorize
-        def revoke_after_authorize(access: object) -> object:
-            identity = original_authorize(access)
+        def revoke_after_authorize(access: Access) -> _Identity:
+            identity: _Identity = original_authorize(access)
             pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
             return identity
         with patch.object(self.ui, '_authorize', side_effect=revoke_after_authorize):
@@ -169,8 +179,8 @@ class ManagementTests(unittest.TestCase):
         operation = {'kind': 'persona_set', 'block': 'tone', 'text': '合成撤权测试'}
         existing = self.ui.preview(editor, operation)
         original_authorize = self.ui._authorize
-        def revoke_after_authorize(access: object) -> object:
-            identity = original_authorize(access)
+        def revoke_after_authorize(access: Access) -> _Identity:
+            identity: _Identity = original_authorize(access)
             pair_client(self.config, client_id='persona-editor', entry='persona-editor', access_path=path, scopes=('recall',))
             return identity
         for action in ('preview', 'cancel'):
@@ -300,8 +310,8 @@ class ManagementTests(unittest.TestCase):
         source_id = self.draft()
         self.apply({'kind': 'profile_confirm', 'tag_id': 'birding'})
         original_read = self.ui.read
-        def racing_read(*args: object, **kwargs: object) -> dict[str, object]:
-            value = original_read(*args, **kwargs)
+        def racing_read(access: Access, *, view: str) -> dict[str, object]:
+            value = original_read(access, view=view)
             self.apply({'kind': 'source_suppress', 'message_id': source_id})
             return value
         with patch.object(self.ui, 'read', side_effect=racing_read):
@@ -311,10 +321,13 @@ class ManagementTests(unittest.TestCase):
 
     def test_batch_fingerprints_are_ordered_bounded_and_fail_closed(self) -> None:
         span = self.source()
-        requests = [{'view': 'timeline', 'limit': 24}, {'view': 'source', 'message_id': span.message_id}]
+        requests: list[dict[str, object]] = [{'view': 'timeline', 'limit': 24}, {'view': 'source', 'message_id': span.message_id}]
         expected = [self.ui.fingerprint(self.access, **request)['token'] for request in requests]
         self.assertEqual(self.ui.fingerprints(self.access, requests), {'tokens': expected})
-        for invalid in ([], requests * 2, [{'view': 'source', 'message_id': span.message_id, 'action': 'confirm'}], ['bad']):
+        malformed = cast(list[dict[str, object]], ['bad'])
+        invalid_requests: tuple[list[dict[str, object]], ...] = ([], requests * 2,
+            [{'view': 'source', 'message_id': span.message_id, 'action': 'confirm'}], malformed)
+        for invalid in invalid_requests:
             with self.assertRaisesRegex(MemoryFailure, 'invalid_arguments'):
                 self.ui.fingerprints(self.access, invalid)
         self.apply({'kind': 'source_suppress', 'message_id': span.message_id})
@@ -380,8 +393,10 @@ class ManagementTests(unittest.TestCase):
         first = submit("session-a", "one", "2022-01-01T00:00:00Z")
         submit("session-b", "two", "2023-01-01T00:00:00Z")
         unknown = submit("session-a", "three", None)
-        def ids(**kwargs: object) -> set[str]:
-            return {item["message_id"] for item in self.ui.read(self.access, view="timeline", **kwargs)["items"]}
+        def ids(*, entry: str | None = None, session_id: str | None = None,
+                since: str | None = None, until: str | None = None) -> set[str]:
+            page = self.ui.read(self.access, view="timeline", entry=entry, session_id=session_id, since=since, until=until)
+            return {item["message_id"] for item in page["items"]}
         self.assertEqual(ids(entry="owner", session_id="session-a"), {first, unknown})
         self.assertEqual(ids(entry="other"), set())
         self.assertEqual(ids(since="2022-01-01T08:00:00+08:00", until="2023-01-01T00:00:00Z"), {first})
@@ -412,14 +427,13 @@ class ManagementTests(unittest.TestCase):
             self.profiles.decide(self.access, ProfileDecision('propose-' + name, 'tag-' + name, 0, 'propose',
                 ProfileDraft('interest', text, 0.8, (span,))))
             self.apply({'kind': 'profile_confirm', 'tag_id': 'tag-' + name})
-        filters = {'entry': 'owner', 'session_id': 'boundary-session',
-                   'since': '2024-01-01T00:00:00+08:00', 'until': '2024-01-02T00:00:00+08:00'}
-        timeline = self.ui.read(self.access, view='timeline', **filters)
+        since, until = '2024-01-01T00:00:00+08:00', '2024-01-02T00:00:00+08:00'
+        timeline = self.ui.read(self.access, view='timeline', entry='owner', session_id='boundary-session', since=since, until=until)
         self.assertEqual({item['message_id'] for item in timeline['items']}, {ids['start'], ids['inside']})
-        graph = self.ui.read(self.access, view='network_graph', **filters)
+        graph = self.ui.read(self.access, view='network_graph', entry='owner', session_id='boundary-session', since=since, until=until)
         self.assertEqual({node['label'] for node in graph['nodes']}, {'合成边界：start', '合成边界：inside'})
-        self.assertEqual(self.ui.read(self.access, view='timeline', **{**filters, 'session_id': 'other'})['items'], [])
-        self.assertEqual(self.ui.read(self.access, view='network_graph', **{**filters, 'entry': 'other'})['nodes'], [])
+        self.assertEqual(self.ui.read(self.access, view='timeline', entry='owner', session_id='other', since=since, until=until)['items'], [])
+        self.assertEqual(self.ui.read(self.access, view='network_graph', entry='other', session_id='boundary-session', since=since, until=until)['nodes'], [])
         self.assertIn(ids['unknown'], {item['message_id'] for item in self.ui.read(self.access, view='timeline')['items']})
 
     def test_graph_links_shared_source_and_withholds_all_dependents_when_suppressed(self) -> None:

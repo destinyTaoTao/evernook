@@ -21,7 +21,7 @@ class E5CandidateTests(unittest.TestCase):
             backend = e5_candidate.Candidate(root, root / 'deps', root / 'node')
             files = {'asset': hashlib.sha256(b'synthetic asset').hexdigest()}
             response = subprocess.CompletedProcess([], 0, stdout=b'{"vectors":[[1,0]],"network_attempts":0}')
-            with patch.dict(e5_candidate.FILES, files, clear=True), patch.object(e5_candidate.subprocess, 'run', return_value=response) as run:
+            with patch.dict(e5_candidate.FILES, files, clear=True), patch('probes.admission.e5_candidate.subprocess.run', return_value=response) as run:
                 for role in ('query', 'passage'):
                     backend.role = role
                     self.assertEqual(backend.embed(('合成文本',), timeout=5), ((1, 0),))

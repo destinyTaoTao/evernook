@@ -149,7 +149,9 @@ class TranscriptionTests(unittest.TestCase):
         self.runtime.export_archive(self.access, self.root / 'archive')
         archive = restore_archive(self.root / 'archive', self.root / 'review')
         self.assertEqual(archive.review_message(message_id).message.event.text, self.material.text)
-        metadata = json.loads(archive.review_attachment(message_id, ATTACHMENT))
+        attachment = archive.review_attachment(message_id, ATTACHMENT)
+        assert attachment is not None
+        metadata = json.loads(attachment)
         self.assertEqual((metadata['confirmation'], metadata['model']), ('unverified', 'model-v1'))
         confirmation = self.runtime.submit(self.access, Event(Source('synthetic', 'session', 'main', 'archive-hide'),
             'user', 2, None, 'complete', '合成：停止召回转写。'))
@@ -157,7 +159,9 @@ class TranscriptionTests(unittest.TestCase):
         checkpoint = capture_control_checkpoint(self.runtime, self.access)
         replayed = replay_archive_controls(self.runtime, self.access, self.root / 'archive', self.root / 'replayed', checkpoint=checkpoint)
         self.assertEqual(replayed.review_message(message_id).state.status, 'suppressed')
-        self.assertEqual(json.loads(replayed.review_attachment(message_id, ATTACHMENT))['confirmation'], 'unverified')
+        replayed_attachment = replayed.review_attachment(message_id, ATTACHMENT)
+        assert replayed_attachment is not None
+        self.assertEqual(json.loads(replayed_attachment)['confirmation'], 'unverified')
 
     def test_confirmed_purge_removes_metadata_and_prevents_replay(self) -> None:
         from evernook.purge import PurgeDecision, PurgeWorkflow
@@ -217,7 +221,9 @@ class TranscriptionTests(unittest.TestCase):
         state = self.runtime.change(self.access, Change('correct-asr', message_id, 1, 'correct', correction.message_id, 'synthetic'))
         self.assertEqual(state.replacement_id, correction.message_id)
         self.assertIsNone(read(self.runtime, self.access, message_id))
-        self.assertEqual(self.runtime.read(self.access, correction.message_id).event.role, 'user')
+        corrected = self.runtime.read(self.access, correction.message_id)
+        assert corrected is not None
+        self.assertEqual(corrected.event.role, 'user')
 
 
 if __name__ == '__main__':

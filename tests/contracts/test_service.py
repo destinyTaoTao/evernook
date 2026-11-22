@@ -575,8 +575,10 @@ class ServiceTests(unittest.TestCase):
 
     def test_versioned_management_projection_across_paired_clients_and_restart(self) -> None:
         def manage(action: str) -> dict[str, Any]:
-            return self.client.call(self.access, 'cli', {'command': 'manage',
+            result: object = self.client.call(self.access, 'cli', {'command': 'manage',
                 'input': {'action': action, 'view': 'timeline'}})
+            assert isinstance(result, dict)
+            return result
         initial = manage('read-versioned')
         self.assertEqual(manage('fingerprint'), {'token': initial['token']})
         self.assertEqual(manage('fingerprint'), {'token': initial['token']})
@@ -617,7 +619,9 @@ class ServiceTests(unittest.TestCase):
             def ask(value: dict[str, Any]) -> dict[str, Any]:
                 assert worker.stdin and worker.stdout
                 worker.stdin.write(json.dumps(value) + '\n'); worker.stdin.flush()
-                return json.loads(worker.stdout.readline())
+                result: object = json.loads(worker.stdout.readline())
+                assert isinstance(result, dict)
+                return result
             first = ask(request)
             self.assertRegex(first['tokens'][0], r'^[a-f0-9]{64}$')
             self.client.call(self.access, 'remember', {'event': self.event()})

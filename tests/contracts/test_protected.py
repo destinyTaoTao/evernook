@@ -21,8 +21,9 @@ from nacl.public import PrivateKey, SealedBox
 from nacl.secret import SecretBox
 from nacl.signing import VerifyKey
 
-from evernook import Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook import Access, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
 from evernook.protected import ProtectedInbox, initialize_protected_inbox
+from evernook.runtime import _Identity
 
 
 class ProtectedTests(unittest.TestCase):
@@ -459,7 +460,7 @@ class ProtectedTests(unittest.TestCase):
         reached_ack, release = threading.Event(), threading.Event()
         original = self.inbox._verified
         calls = 0
-        def pause_after_ledger(row: object) -> object:
+        def pause_after_ledger(row: sqlite3.Row) -> tuple[dict[str, Any], Event]:
             nonlocal calls
             calls += 1
             if calls == 2:
@@ -484,8 +485,8 @@ class ProtectedTests(unittest.TestCase):
         pending = self.inbox.stage(self.access, self.event)
         authorized, release = threading.Event(), threading.Event()
         original = self.runtime._require_scope
-        def pause_after_authorization(*args: object, **kwargs: object) -> object:
-            result = original(*args, **kwargs)
+        def pause_after_authorization(access: Access, scope: str, action: str, target: str = "") -> _Identity:
+            result = original(access, scope, action, target)
             authorized.set()
             if not release.wait(10):
                 raise RuntimeError('synthetic gate test timeout')
@@ -585,8 +586,8 @@ class ProtectedTests(unittest.TestCase):
         pending = self.inbox.stage(self.access, self.event)
         authorized, release = threading.Event(), threading.Event()
         original = self.runtime._require_scope
-        def pause_after_authorization(*args: object, **kwargs: object) -> object:
-            result = original(*args, **kwargs)
+        def pause_after_authorization(access: Access, scope: str, action: str, target: str = "") -> _Identity:
+            result = original(access, scope, action, target)
             authorized.set()
             if not release.wait(10):
                 raise RuntimeError('synthetic cutover test timeout')
