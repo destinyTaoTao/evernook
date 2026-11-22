@@ -21,8 +21,10 @@ from . import recall_index
 
 
 _ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
+_JOINED_ELIGIBLE = f"(v.status IS NULL OR v.status='active') AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
 _KEYWORD_LIMIT = 100
 _KEYWORD_PREFIX_SIZE = 256
+_KEYWORD_WINDOW_SOURCES = 2048
 
 
 @dataclass(frozen=True)
@@ -125,7 +127,7 @@ class SemanticRecall:
     def _covered(*, eligible_only: bool = False, has_failure_table: bool = True,
                  sources: str = "messages") -> str:
         # A chunk is acknowledged when it has a current-version vector or an explicit failure record.
-        eligibility = f"AND {_ELIGIBLE}" if eligible_only else ""
+        eligibility = f"AND {_JOINED_ELIGIBLE}" if eligible_only else ""
         # Older index schemas have no failure table. SQLite resolves table names before evaluation.
         failures = """+ (SELECT count(*) FROM semantic_failures_v1 f
                       WHERE f.space_id=d.space_id AND f.message_id=d.message_id
@@ -151,14 +153,17 @@ class SemanticRecall:
             return SemanticStatus("not_built", space.key, total, 0, total, counts[1], stored_vectors=0)
         has_failure_table = db.execute("SELECT 1 FROM sqlite_master WHERE name='semantic_failures_v1'").fetchone() is not None
         # Check eligibility on the authoritative row already joined for the document version.
-        coverage_sql = self._covered(eligible_only=True, has_failure_table=has_failure_table, sources=sources)
+        # Probe the space once before issuing a failure lookup for every document.
+        has_failures = has_failure_table and db.execute(
+            "SELECT 1 FROM semantic_failures_v1 WHERE space_id=? LIMIT 1", (space.key,)).fetchone() is not None
+        coverage_sql = self._covered(eligible_only=True, has_failure_table=has_failures, sources=sources)
         covered = int(db.execute(f"SELECT count(DISTINCT message_id) FROM ({coverage_sql})", (space.key,)).fetchone()[0])
         failed = 0
-        if has_failure_table:
+        if has_failures:
             # Only failures that still describe a current recallable source version count as live.
             failed = int(db.execute(f"""SELECT count(*) FROM semantic_failures_v1 f
                 JOIN {sources} ON messages.id=f.message_id LEFT JOIN visibility v ON v.message_id=f.message_id
-                WHERE f.space_id=? AND {_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
+                WHERE f.space_id=? AND {_JOINED_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
                   AND f.content_version=json_extract(messages.receipt,'$.content_version')""", (space.key,)).fetchone()[0])
         vectors = int(db.execute("SELECT count(*) FROM semantic_chunks_v1 WHERE space_id=?", (space.key,)).fetchone()[0])
         return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
@@ -380,47 +385,8 @@ class SemanticRecall:
         expression = " OR ".join("(" + query_expression((word,)) + ")" for word in words)
         with self.runtime._connection(check=check) as db:
             db.execute("BEGIN")
-            sources = recall_index.source_table(db)
-            parameters: list[object] = [NORMALIZATION_IDENTITY, current_input_id, current_input_id]
-            condition = ""
-            for value, operator in ((since, ">="), (until, "<")):
-                if value is not None:
-                    condition += f" AND occurred{operator}?"
-                    parameters.append(_time(value))
-            eligibility = f"""d.normalization_version=? AND (? IS NULL OR messages.id<>?)
-                AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}"""
-            try:
-                prefix = db.execute(f"""WITH keyword_prefix AS MATERIALIZED (
-                    SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?
-                    ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?
-                ), qualified AS MATERIALIZED (
-                    SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best
-                    FROM keyword_prefix
-                    CROSS JOIN lexical_docs d ON d.message_id=keyword_prefix.message_id
-                    CROSS JOIN {sources} ON messages.id=d.message_id
-                    WHERE {eligibility} GROUP BY messages.id ORDER BY best,message_id LIMIT ?
-                )
-                SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)
-                LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id""",
-                    (expression, _KEYWORD_PREFIX_SIZE, *parameters, _KEYWORD_LIMIT)).fetchall()
-            except sqlite3.DatabaseError as error:
-                check()
-                if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_CORRUPT_VTAB or not db.in_transaction:
-                    raise
-                # The exact query can discard damaged orphan index rows before scoring.
-                prefix = []
-            candidates = [row["message_id"] for row in prefix if row["message_id"] is not None]
-            # Eligibility is per source, so its first row in BM25/ID order gives
-            # its best score. An exhausted prefix or 100 qualified IDs proves
-            # the result even when the boundary scores tie.
-            if not prefix or (prefix[0]["examined"] == _KEYWORD_PREFIX_SIZE and len(candidates) < _KEYWORD_LIMIT):
-                candidates = [row["message_id"] for row in db.execute(f"""WITH ranked AS MATERIALIZED (
-                    SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
-                    FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
-                    JOIN {sources} ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
-                    WHERE lexical MATCH ? AND {eligibility}
-                    ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
-                    ORDER BY best,message_id LIMIT ?""", (expression, *parameters, _KEYWORD_LIMIT))]
+            candidates = self._keyword_ids(db, expression, since=since, until=until, check=check,
+                                           current_input_id=current_input_id)
             hits = []
             for candidate in candidates:
                 check()
@@ -438,6 +404,71 @@ class SemanticRecall:
                     receipt.received_at, event.completion, receipt.representation, receipt.content_version,
                     int(row["state_version"]), (SearchSpan(start, end, event.text[start:end]),))))
             return tuple(hits)
+
+    @staticmethod
+    def _keyword_ids(db: sqlite3.Connection, expression: str, *, since: str | None, until: str | None,
+                     check: Callable[[], float], current_input_id: str | None) -> list[str]:
+        sources = recall_index.source_table(db)
+        parameters: list[object] = [NORMALIZATION_IDENTITY, current_input_id, current_input_id]
+        condition = ""
+        for value, operator in ((since, ">="), (until, "<")):
+            if value is not None:
+                condition += f" AND occurred{operator}?"
+                parameters.append(_time(value))
+        eligibility = f"""d.normalization_version=? AND (? IS NULL OR messages.id<>?)
+            AND d.content_version=json_extract(messages.receipt,'$.content_version') AND {_ELIGIBLE} {condition}"""
+
+        def exact(scope: list[str] | None = None) -> list[str]:
+            scope_filter = ""
+            arguments: tuple[object, ...] = (expression,)
+            if scope is not None:
+                # Keep ordinary FTS MATCH and global BM25 statistics. Limit the
+                # expensive source joins to matches from a complete time range.
+                scope_filter = "AND lexical.message_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))"
+                arguments += (_json(scope),)
+            return [row["message_id"] for row in db.execute(f"""WITH ranked AS MATERIALIZED (
+                SELECT messages.id AS message_id,bm25(lexical) AS keyword_rank
+                FROM lexical JOIN lexical_docs d ON d.message_id=lexical.message_id
+                JOIN {sources} ON messages.id=lexical.message_id LEFT JOIN visibility v ON v.message_id=messages.id
+                WHERE lexical MATCH ? {scope_filter} AND {eligibility}
+                ) SELECT message_id,min(keyword_rank) AS best FROM ranked GROUP BY message_id
+                ORDER BY best,message_id LIMIT ?""", (*arguments, *parameters, _KEYWORD_LIMIT))]
+
+        if since is not None and until is not None and sources != "messages":
+            chronological = recall_index.source_table(db, chronological=True)
+            scope = [row[0] for row in db.execute(f"""SELECT id FROM {chronological}
+                WHERE {recall_index.ORIGINAL} AND occurred>=? AND occurred<? LIMIT ?""",
+                (_time(since), _time(until), _KEYWORD_WINDOW_SOURCES + 1))]
+            if len(scope) <= _KEYWORD_WINDOW_SOURCES and all(isinstance(message_id, str) for message_id in scope):
+                return exact(scope) if scope else []
+
+        try:
+            prefix = db.execute(f"""WITH keyword_prefix AS MATERIALIZED (
+                SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?
+                ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?
+            ), qualified AS MATERIALIZED (
+                SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best
+                FROM keyword_prefix
+                CROSS JOIN lexical_docs d ON d.message_id=keyword_prefix.message_id
+                CROSS JOIN {sources} ON messages.id=d.message_id
+                WHERE {eligibility} GROUP BY messages.id ORDER BY best,message_id LIMIT ?
+            )
+            SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)
+            LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id""",
+                (expression, _KEYWORD_PREFIX_SIZE, *parameters, _KEYWORD_LIMIT)).fetchall()
+        except sqlite3.DatabaseError as error:
+            check()
+            if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_CORRUPT_VTAB or not db.in_transaction:
+                raise
+            # The exact query can discard damaged orphan index rows before scoring.
+            prefix = []
+        candidates = [row["message_id"] for row in prefix if row["message_id"] is not None]
+        # Eligibility is per source, so its first row in BM25/ID order gives
+        # its best score. An exhausted prefix or 100 qualified IDs proves
+        # the result even when the boundary scores tie.
+        if not prefix or (prefix[0]["examined"] == _KEYWORD_PREFIX_SIZE and len(candidates) < _KEYWORD_LIMIT):
+            return exact()
+        return candidates
 
     def _semantic(self, access: Access, vector: tuple[float, ...], *, since: str | None, until: str | None,
                   recent: tuple[str, str] | None = None, minimum: float, check: Callable[[], float] | None = None,
@@ -468,7 +499,7 @@ class SemanticRecall:
             sources = recall_index.source_table(db)
             base = f"""FROM semantic_chunks_v1 c
                 JOIN {sources} ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
+                WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_JOINED_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""
             # Occurrence time belongs to the source. All its eligible chunks share the
             # same recent-window membership, so both rankings can use the same best span.

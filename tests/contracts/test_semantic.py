@@ -346,6 +346,34 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual(healed.failed_chunks, 0)
         self.assertEqual(healed.state, "ready")
 
+    def test_empty_failure_space_skips_per_document_probes_and_other_spaces_still_count(self) -> None:
+        target = self.save("合成：辛辣")
+        active = self.workflow.refresh(self.access)
+        alternate = SyntheticEmbedding()
+        alternate.space = replace(alternate.space, revision="failure-test")
+        alternate.none_for = "辛辣"
+        other = SemanticRecall(self.runtime, alternate)
+        self.assertEqual(other.refresh(self.access).failed_chunks, 1)
+        statements: list[str] = []
+        connection = self.runtime._connection
+
+        @contextmanager
+        def traced(**kwargs: Any) -> Iterator[sqlite3.Connection]:
+            with connection(**kwargs) as db:
+                db.set_trace_callback(statements.append)
+                yield db
+
+        with patch.object(self.runtime, "_connection", side_effect=traced):
+            self.assertEqual(self.workflow.status(self.access), active)
+        coverage = [sql for sql in statements if sql.startswith("SELECT count(DISTINCT message_id)")]
+        self.assertEqual(len(coverage), 1)
+        self.assertNotIn("FROM semantic_failures_v1 f", coverage[0])
+        with self.runtime._connection() as db:
+            db.execute("INSERT INTO semantic_failures_v1 VALUES (?,?,?,?,?,?)",
+                       (self.backend.space.key, target, 0, 2, 1, "synthetic-stale"))
+        self.assertEqual(self.workflow.status(self.access), active)
+        self.assertEqual(other.status(self.access).failed_chunks, 1)
+
     def test_recent_window_returns_verified_rows_when_the_budget_fires_at_the_scan_limit(self) -> None:
         for index in range(257):
             self.save(f"合成：近期记录{index}", "2026-10-29T00:00:00Z")
@@ -770,8 +798,9 @@ class SemanticTests(unittest.TestCase):
         self.workflow.configure_candidate_index(self.access, enabled=True)
         all_ids = sorted(receipt.message_id for receipt in receipts)
 
-        def keyword(*, since: str | None = None, current: str | None = None) -> tuple[SearchHit, ...]:
-            return self.workflow._keyword(self.access, "风铃", since=since, until=None,
+        def keyword(*, since: str | None = None, until: str | None = None,
+                    current: str | None = None) -> tuple[SearchHit, ...]:
+            return self.workflow._keyword(self.access, "风铃", since=since, until=until,
                                           check=lambda: 10.0, current_input_id=current)
 
         statements: list[str] = []
@@ -808,6 +837,19 @@ class SemanticTests(unittest.TestCase):
             exact = keyword(since=recent_date, current=current)
         self.assertEqual(focused, exact)
         self.assertEqual([hit.message_id for hit in focused], [stronger, *recent_ids[3:-1]])
+        exclusive_end = "2025-01-02T00:00:00Z"
+        boundary_id = self.runtime.submit(self.access, Event(Source("test", "keyword-prefix", "main", "end"),
+            "user", 131, exclusive_end, "complete", "合成：风铃。")).message_id
+        self.runtime.refresh_lexical(self.access)
+        statements.clear()
+        with patch.object(self.runtime, "_connection", side_effect=traced):
+            scoped = keyword(since=recent_date, until=exclusive_end, current=current)
+        self.assertTrue(any("json_each" in sql for sql in statements))
+        self.assertFalse(any(sql.startswith("WITH keyword_prefix") for sql in statements))
+        with patch("evernook.semantic._KEYWORD_WINDOW_SOURCES", 4), patch("evernook.semantic._KEYWORD_PREFIX_SIZE", 1):
+            exact = keyword(since=recent_date, until=exclusive_end, current=current)
+        self.assertEqual(scoped, exact)
+        self.assertNotIn(boundary_id, [hit.message_id for hit in scoped])
 
     def test_keyword_falls_back_if_an_ineligible_fts_row_cannot_be_scored(self) -> None:
         from evernook.lexical import index_terms
