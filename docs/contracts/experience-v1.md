@@ -30,6 +30,10 @@ enable/reject/disable 都需真实、完整、原件可见的用户 confirmation
 
 `propose_navigation(...)` 读取当前有效导航，将有限原文与角色标签拼成“待用户审查与归纳”的 lesson 草案，携带精确来源和调用端给定的适用条件。它不声称已经总结出经验证的规则。来源在读取后变化时提交会拒绝过期草案；导航内容变化却复用旧请求ID会冲突，应显式提交新的请求/修订。
 
+`evernook.skill_drafts.SkillDraftProposer(runtime).propose(access, tool_result_id=...)` 为这条规则提供可信 Python 入口，同时要求 `recall` 和 `accept`。选择来源后，在写事务中重新核验权限、引用版本和精确跨度。每条符合条件的失败或取消工具结果生成一条确定性 `skill_draft`，重试复用该原始提议回执，当前审查状态按注册表读取。
+
+工具结果须是已保存的普通 `tool_result`，并关联同一入口、会话和分支中更早的完整用户输入。两条来源各引用最多 512 个原文字码点。失败或取消导致的 `incomplete_output` 是规则所处理的已知状态，其他采集缺口、受保护投影及派生反思结果会被跳过，返回 `None`。提议仍需用户确认才能启用。当前入口由可信 Python 调用显式触发，自动调度继续跟踪 [#56](https://github.com/destinyTaoTao/evernook/issues/56)。原生 dsh 源码提供失败结果映射，取消场景使用 Core Capture 合成回归。[规则测试](../../tests/contracts/test_skill_drafts.py)
+
 `ContextPolicy.experience_ids` 可显式选择至多64项；仅纳入当前 enabled 版本，位于置顶/事实之后、普通原文之前，计入完整 token 预算。最终 SQLite 快照重验审查修订号和来源；构造途中停用/修订不能留住旧规则。草案、争议、停用或无来源项显示省略原因。known_at 历史查询暂不混入当前经验，报告 `experience_history_unavailable`，不伪装已有历史时点查询。
 
 经验以 `reviewed_experience` 数据进入不可信上下文，`execution_authority=false`。原生 dsh/pi 的完整 context-builder/tokenizer 接线仍待完成，Python 回归不代表原生宿主已自动启用。

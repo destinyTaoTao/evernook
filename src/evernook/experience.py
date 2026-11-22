@@ -158,6 +158,14 @@ class ExperienceRegistry:
     def decide(self, access: Access, request: ExperienceDecision) -> ExperienceRecord:
         """Only a trusted local caller may establish actual user intent; never expose as an LLM tool."""
         self.runtime._require_scope(access, "accept", "experience_decide")
+        self._validate_decision(request)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            record = self._write_decision(db, request)
+            db.execute("COMMIT")
+            return record
+
+    def _validate_decision(self, request: ExperienceDecision) -> None:
         if (not isinstance(request, ExperienceDecision) or type(request.expected_revision) is not int or request.expected_revision < 0
                 or not isinstance(request.action, str) or request.action not in {"propose", "revise", "enable", "reject", "disable"}):
             raise MemoryFailure("invalid_experience_decision")
@@ -171,65 +179,65 @@ class ExperienceRegistry:
             if request.draft is not None or request.confirmation_id is None:
                 raise MemoryFailure("experience_user_confirmation_required")
             _identifier(request.confirmation_id)
+
+    def _write_decision(self, db: sqlite3.Connection, request: ExperienceDecision) -> ExperienceRecord:
+        """Record a validated decision in the caller's write transaction."""
         fingerprint = hmac.digest(self.runtime._fingerprint_key, _json(asdict(request)).encode(), hashlib.sha256)
-        with self.runtime._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._schema(db)
-            existing = db.execute("SELECT fingerprint,record FROM experience_events_v1 WHERE request_id=?", (request.request_id,)).fetchone()
-            if existing is not None:
-                if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
-                    raise MemoryFailure("experience_request_conflict")
-                repeated = self._record(existing["record"])
-                self._sources(db, repeated.draft)
-                if repeated.state == "enabled":
-                    assert repeated.confirmation_id is not None
-                    if self._confirmation(db, repeated.confirmation_id) != repeated.confirmation_version:
-                        raise MemoryFailure("experience_user_confirmation_required")
-                return repeated
-            previous = self._latest(db, request.experience_id)
-            revision = 0 if previous is None else previous.revision
-            if revision != request.expected_revision:
-                raise MemoryFailure("experience_revision_conflict")
-            if (request.action == "propose") != (previous is None):
-                raise MemoryFailure("invalid_experience_transition")
-            confirmation = None
-            if request.draft is not None:
-                draft = request.draft
+        self._schema(db)
+        existing = db.execute("SELECT fingerprint,record FROM experience_events_v1 WHERE request_id=?", (request.request_id,)).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["fingerprint"]), fingerprint):
+                raise MemoryFailure("experience_request_conflict")
+            repeated = self._record(existing["record"])
+            self._sources(db, repeated.draft)
+            if repeated.state == "enabled":
+                assert repeated.confirmation_id is not None
+                if self._confirmation(db, repeated.confirmation_id) != repeated.confirmation_version:
+                    raise MemoryFailure("experience_user_confirmation_required")
+            return repeated
+        previous = self._latest(db, request.experience_id)
+        revision = 0 if previous is None else previous.revision
+        if revision != request.expected_revision:
+            raise MemoryFailure("experience_revision_conflict")
+        if (request.action == "propose") != (previous is None):
+            raise MemoryFailure("invalid_experience_transition")
+        confirmation = None
+        if request.draft is not None:
+            draft = request.draft
+            self._sources(db, draft)
+            content_revision = 1 if previous is None else previous.content_revision + 1
+            state = "draft"
+        else:
+            assert previous is not None and request.confirmation_id is not None
+            draft, content_revision = previous.draft, previous.content_revision
+            confirmation = self._confirmation(db, request.confirmation_id)
+            approval = db.execute("SELECT experience_id,reviewed_revision,action FROM experience_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
+            binding = (request.experience_id, request.expected_revision, request.action)
+            if approval is not None and tuple(approval) != binding:
+                raise MemoryFailure("experience_confirmation_conflict")
+            received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
+            if _time(received) < _time(previous.recorded_at):
+                raise MemoryFailure("experience_confirmation_predates_review")
+            if request.action == "enable":
+                if previous.state not in {"draft", "disabled"}:
+                    raise MemoryFailure("invalid_experience_transition")
+                if draft.disputed:
+                    raise MemoryFailure("experience_disputed")
                 self._sources(db, draft)
-                content_revision = 1 if previous is None else previous.content_revision + 1
-                state = "draft"
+                state = "enabled"
+            elif request.action == "reject":
+                if previous.state != "draft":
+                    raise MemoryFailure("invalid_experience_transition")
+                state = "rejected"
             else:
-                assert previous is not None and request.confirmation_id is not None
-                draft, content_revision = previous.draft, previous.content_revision
-                confirmation = self._confirmation(db, request.confirmation_id)
-                approval = db.execute("SELECT experience_id,reviewed_revision,action FROM experience_approvals_v1 WHERE message_id=?", (request.confirmation_id,)).fetchone()
-                binding = (request.experience_id, request.expected_revision, request.action)
-                if approval is not None and tuple(approval) != binding:
-                    raise MemoryFailure("experience_confirmation_conflict")
-                received = db.execute("SELECT received FROM messages WHERE id=?", (request.confirmation_id,)).fetchone()[0]
-                if _time(received) < _time(previous.recorded_at):
-                    raise MemoryFailure("experience_confirmation_predates_review")
-                if request.action == "enable":
-                    if previous.state not in {"draft", "disabled"}:
-                        raise MemoryFailure("invalid_experience_transition")
-                    if draft.disputed:
-                        raise MemoryFailure("experience_disputed")
-                    self._sources(db, draft)
-                    state = "enabled"
-                elif request.action == "reject":
-                    if previous.state != "draft":
-                        raise MemoryFailure("invalid_experience_transition")
-                    state = "rejected"
-                else:
-                    if previous.state != "enabled":
-                        raise MemoryFailure("invalid_experience_transition")
-                    state = "disabled"
-                db.execute("INSERT OR IGNORE INTO experience_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
-            record = ExperienceRecord(request.experience_id, revision + 1, content_revision, state, draft,
-                datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
-            db.execute("INSERT INTO experience_events_v1 VALUES (?,?,?,?,?)", (request.request_id, request.experience_id, revision + 1, fingerprint, _json(asdict(record))))
-            db.execute("COMMIT")
-            return record
+                if previous.state != "enabled":
+                    raise MemoryFailure("invalid_experience_transition")
+                state = "disabled"
+            db.execute("INSERT OR IGNORE INTO experience_approvals_v1 VALUES (?,?,?,?)", (request.confirmation_id, *binding))
+        record = ExperienceRecord(request.experience_id, revision + 1, content_revision, state, draft,
+            datetime.now(timezone.utc).isoformat(), request.confirmation_id, confirmation, request.request_id)
+        db.execute("INSERT INTO experience_events_v1 VALUES (?,?,?,?,?)", (request.request_id, request.experience_id, revision + 1, fingerprint, _json(asdict(record))))
+        return record
 
     def read(self, access: Access, experience_id: str) -> ExperienceView:
         self.runtime._require_scope(access, "recall", "experience_read")
