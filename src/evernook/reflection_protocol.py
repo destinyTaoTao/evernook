@@ -8,7 +8,7 @@ from typing import Any
 
 from .automatic_preferences import PreferenceUpdates
 from .models import MemoryFailure
-from .preference_statements import assess_preferences
+from .preference_statements import PreferenceStatement
 from .runtime import _json
 from .safety import credential_signal
 
@@ -74,21 +74,31 @@ def support_spans(value: object, evidence: list[dict[str, Any]], *, required: bo
     return result
 
 
-def _finite_conflict(evidence: list[dict[str, Any]], selected: set[str]) -> dict[str, str]:
-    slots: dict[str, list[tuple[str, str, dict[str, Any]]]] = defaultdict(list)
+def finite_conflict(evidence: list[dict[str, Any]], support: list[dict[str, Any]],
+                    statements: dict[str, tuple[PreferenceStatement, ...]]) -> list[dict[str, Any]]:
+    cited = {row['evidence_id']: row for row in support}
+    slots: dict[str, list[tuple[str, PreferenceStatement, dict[str, Any]]]] = defaultdict(list)
     for item in evidence:
         if item['role'] != 'user':
             continue
-        for statement in assess_preferences(item['quote']).statements:
+        for statement in statements.get(item['evidence_id'], ()):
             if statement.scope not in {'long_term', 'withdrawal'}:
                 continue
             key, value = PreferenceUpdates._key_value(statement.text, statement.category)
-            slots[key].append((value, statement.category, item))
+            slots[key].append((value, statement, item))
     for values in slots.values():
-        if selected.intersection(item['evidence_id'] for _, _, item in values) and any(
-                PreferenceUpdates._conflicts(left[0], right[0], left[1]) for i, left in enumerate(values) for right in values[i + 1:]):
-            return {item['evidence_id']: item['quote'] for _, _, item in values}
-    return {}
+        for value, statement, item in values:
+            row = cited.get(item['evidence_id'])
+            if row is None or row['end'] <= statement.start or row['start'] >= statement.end:
+                continue
+            for other_value, other_statement, other_item in values:
+                if item['evidence_id'] != other_item['evidence_id'] and PreferenceUpdates._conflicts(value, other_value, statement.category):
+                    # The occurrence identified in the original can differ from the first occurrence of its text.
+                    return [{'evidence_id': source['evidence_id'], 'quote': clause.text, 'message_id': source['message_id'],
+                        'state_version': source['state_version'], 'content_version': source['content_version'],
+                        'start': clause.start, 'end': clause.end}
+                        for clause, source in ((statement, item), (other_statement, other_item))]
+    return []
 
 
 def translate(action: object, payload: dict[str, Any]) -> dict[str, Any]:
@@ -116,18 +126,13 @@ def translate(action: object, payload: dict[str, Any]) -> dict[str, Any]:
         value = action['value']
         if not isinstance(value, str) or not value.strip() or len(value) > 512 or credential_signal(value):
             raise MemoryFailure('reflection_invalid_action')
-        conflict = _finite_conflict(evidence, {item['evidence_id'] for item in spans})
-        if conflict:
-            name, origin = 'clarify', 'finite_preference_guard'
-            spans = support_spans(conflict, evidence, required=True)
-        else:
-            years = re.findall(r'(?<!\d)(\d{4})(?:年|(?=-\d{2}-\d{2}))', value)
-            if re.fullmatch(r'\d{4}', value.strip()):
-                years.append(value.strip())
-            if any(not any(year in span['quote'] for span in spans) for year in years):
-                # Do not promote statement timestamps to event years. Relative-calendar
-                # inference is conservatively unavailable in this small-model protocol.
-                name, origin = 'abstain', 'explicit_year_guard'
+        years = re.findall(r'(?<!\d)(\d{4})(?:年|(?=-\d{2}-\d{2}))', value)
+        if re.fullmatch(r'\d{4}', value.strip()):
+            years.append(value.strip())
+        if any(not any(year in span['quote'] for span in spans) for year in years):
+            # Do not promote statement timestamps to event years. Relative-calendar
+            # inference is conservatively unavailable in this small-model protocol.
+            name, origin = 'abstain', 'explicit_year_guard'
     if name == 'clarify' and len(spans) < 2:
         raise MemoryFailure('reflection_invalid_support')
     ids = [item['evidence_id'] for item in spans]

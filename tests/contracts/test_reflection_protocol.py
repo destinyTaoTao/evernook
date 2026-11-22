@@ -5,7 +5,8 @@ import unittest
 from typing import Any
 
 from evernook.models import MemoryFailure
-from evernook.reflection_protocol import build_messages, translate
+from evernook.preference_statements import assess_preferences
+from evernook.reflection_protocol import build_messages, finite_conflict, translate
 
 
 class ReflectionProtocolTests(unittest.TestCase):
@@ -62,16 +63,20 @@ class ReflectionProtocolTests(unittest.TestCase):
             self.assertEqual(action['assessment']['support'][0]['evidence_id'], 'e7')
         self.assertEqual(translate({'action': 'abstain', 'support': {}}, {'evidence': []})['conclusions'], [])
 
-    def test_finite_user_preference_conflict_blocks_one_sided_answer_but_not_quotes_or_temporary_scope(self) -> None:
-        payload = {'evidence': [{'evidence_id': 'e1', 'role': 'user', 'quote': '我偏好简短回答。'},
-            {'evidence_id': 'e2', 'role': 'user', 'quote': '我偏好详细回答。'}]}
-        result = translate({'action': 'answer', 'value': '详细回答', 'support': {'e2': '我偏好详细回答。'}}, payload)
-        self.assertEqual(result['conclusions'], [])
-        self.assertEqual(set(result['conflicts'][0]), {'e1', 'e2'})
-        self.assertEqual(result['assessment']['origin'], 'finite_preference_guard')
-        payload['evidence'][0]['quote'] = '这次我偏好简短回答。'
-        result = translate({'action': 'answer', 'value': '详细回答', 'support': {'e2': '我偏好详细回答。'}}, payload)
-        self.assertEqual(result['conclusions'][0]['text'], '详细回答')
+    def test_finite_conflict_requires_eligible_clauses_from_users(self) -> None:
+        for role, quote, expected in (
+            ('user', '我偏好简短回答。', {'e1', 'e2'}),
+            ('user', '这次我偏好简短回答。', set()),
+            ('user', '同事说：“我偏好简短回答。”', set()),
+            ('assistant', '我偏好简短回答。', set()),
+        ):
+            with self.subTest(role=role, quote=quote):
+                evidence: list[dict[str, Any]] = [{'evidence_id': f'e{index}', 'message_id': f'm{index}', 'role': entry_role, 'quote': text,
+                    'state_version': 1, 'content_version': 1, 'start': 0, 'end': len(text)}
+                    for index, (entry_role, text) in enumerate(((role, quote), ('user', '我偏好详细回答。')), 1)]
+                statements = {item['evidence_id']: assess_preferences(item['quote']).statements for item in evidence}
+                conflict = finite_conflict(evidence, [evidence[1]], statements)
+                self.assertEqual({row['evidence_id'] for row in conflict}, expected)
 
     def test_search_read_and_view_remain_strictly_bounded_actions(self) -> None:
         self.assertEqual(translate({'action': 'search', 'query': '盒子'}, self.payload()), {'action': 'search', 'query': '盒子'})
@@ -85,14 +90,6 @@ class ReflectionProtocolTests(unittest.TestCase):
         action = translate({'action': 'answer', 'value': '另一个地点', 'support': {'e7': '钥匙放在银色盒子里。'}}, self.payload())
         self.assertTrue(action['conclusions'][0]['inference'])
         self.assertNotIn('verified', action['conclusions'][0])
-
-    def test_assistant_and_quoted_preferences_are_not_independent_conflict_evidence(self) -> None:
-        payload = {'evidence': [{'evidence_id': 'e1', 'role': 'assistant', 'quote': '我偏好简短回答。'},
-            {'evidence_id': 'e2', 'role': 'user', 'quote': '我偏好详细回答。'}]}
-        action = {'action': 'answer', 'value': '详细回答', 'support': {'e2': '我偏好详细回答。'}}
-        self.assertEqual(translate(action, payload)['assessment']['origin'], 'model')
-        payload['evidence'][0].update(role='user', quote='同事说：“我偏好简短回答。”')
-        self.assertEqual(translate(action, payload)['assessment']['origin'], 'model')
 
 
 class ReflectionAdapterTests(unittest.TestCase):

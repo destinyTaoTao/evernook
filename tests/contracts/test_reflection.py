@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 import tempfile
 import threading
@@ -115,6 +116,107 @@ class ReflectionTests(unittest.TestCase):
             'unknown': ['偏好有冲突'], 'clarification_required': False}])).reflect(self.access, '摄影', timeout=10)
         self.assertEqual(result['conflicts'], [['e1', 'e2']])
         self.assertTrue(result['clarification_required'])
+
+    def _reflect_with_clipped_preference(self, original: str) -> tuple[str, str, dict[str, Any]]:
+        from evernook.reflection_protocol import translate
+
+        positive = '我偏好简短回答。'
+        negative = '我不偏好简短回答。'
+        supporting = self.save(positive)
+        conflicting = self.save(original, 'second')
+
+        class ReadExcerpt(ScriptModel):
+            def turn(self, payload: dict[str, Any], **kwargs: Any) -> ModelTurn:
+                if self.actions:
+                    return super().turn(payload, **kwargs)
+                self.calls.append(payload)
+                ref = next(item['evidence_id'] for item in payload['evidence'] if item['message_id'] == supporting)
+                answer = translate({'action': 'answer', 'value': '简短回答', 'support': {ref: positive}}, payload)
+                return ModelTurn(answer, 10, 10)
+
+        model = ReadExcerpt([{'action': 'read', 'message_id': conflicting,
+            'start': original.index(negative), 'chars': len(negative)}])
+        result = self.engine(model).reflect(self.access, '简短回答', timeout=10)
+        self.assertEqual(set(model.calls[-1]), {'question', 'query_plan', 'evidence', 'coverage', 'round', 'allowed_view_ids'})
+        self.assertIsInstance(json.dumps(model.calls[-1]), str)
+        self.assertEqual(result['state'], 'complete')
+        self.assertIn((conflicting, negative), {(item['message_id'], item['quote']) for item in result['evidence']})
+        return supporting, conflicting, result
+
+    def test_clipped_quotation_does_not_become_a_user_preference_conflict(self) -> None:
+        supporting, _, result = self._reflect_with_clipped_preference('助手原话：“我不偏好简短回答。”')
+        self.assertEqual(result['conflicts'], [])
+        self.assertEqual(result['assessment']['origin'], 'model')
+        self.assertEqual(result['assessment']['decision'], 'answer')
+        self.assertEqual(result['conclusions'][0]['text'], '简短回答')
+        self.assertEqual(result['assessment']['support'][0]['message_id'], supporting)
+
+    def test_clipped_temporary_preference_does_not_conflict_with_a_long_term_preference(self) -> None:
+        _, _, result = self._reflect_with_clipped_preference('这次我不偏好简短回答。')
+        self.assertEqual(result['assessment']['decision'], 'answer')
+        self.assertEqual(result['conflicts'], [])
+
+    def test_clipped_historical_preference_does_not_conflict_with_a_long_term_preference(self) -> None:
+        _, _, result = self._reflect_with_clipped_preference('以前我不偏好简短回答。')
+        self.assertEqual(result['assessment']['decision'], 'answer')
+        self.assertEqual(result['conflicts'], [])
+
+    def test_clipped_direct_negative_preference_retains_exact_support_for_conflict(self) -> None:
+        negative = '我不偏好简短回答。'
+        prefix = '合成背景。' * 110
+        supporting, conflicting, result = self._reflect_with_clipped_preference(prefix + negative)
+        self.assertEqual(result['conclusions'], [])
+        self.assertEqual(result['assessment']['origin'], 'finite_preference_guard')
+        self.assertEqual(result['assessment']['decision'], 'clarify')
+        self.assertEqual({item['message_id'] for item in result['assessment']['support']}, {supporting, conflicting})
+        self.assertIn((conflicting, 1, 1, len(prefix), len(prefix) + len(negative), negative),
+            {(item['message_id'], item['state_version'], item['content_version'], item['start'], item['end'], item['quote'])
+             for item in result['assessment']['support']})
+        self.assertTrue(all(prefix + negative != item['quote'] for item in result['evidence']))
+
+    def _reflect_citing(self, source: str, quote: str, value: str, query: str, *, search: str | None = None) -> dict[str, Any]:
+        from evernook.reflection_protocol import translate
+
+        class CiteExcerpt(ScriptModel):
+            def turn(self, payload: dict[str, Any], **kwargs: Any) -> ModelTurn:
+                if self.actions:
+                    return super().turn(payload, **kwargs)
+                self.calls.append(payload)
+                ref = next(item['evidence_id'] for item in payload['evidence'] if item['message_id'] == source)
+                return ModelTurn(translate({'action': 'answer', 'value': value, 'support': {ref: quote}}, payload), 10, 10)
+
+        actions = [] if search is None else [{'action': 'search', 'query': search}]
+        return self.engine(CiteExcerpt(actions)).reflect(self.access, query, timeout=10)
+
+    def test_uncited_preference_in_the_same_excerpt_does_not_override_an_answer(self) -> None:
+        location = '钥匙放在盒子里。'
+        supporting = self.save(location + '我偏好简短回答。')
+        conflicting = self.save('我不偏好简短回答。', 'other')
+        result = self._reflect_citing(supporting, location, '盒子', '钥匙', search='简短回答')
+        self.assertIn(conflicting, {item['message_id'] for item in result['evidence']})
+        self.assertEqual(result['state'], 'complete')
+        self.assertEqual(result['conflicts'], [])
+        self.assertEqual(result['assessment']['decision'], 'answer')
+        self.assertEqual(result['conclusions'][0]['text'], '盒子')
+
+    def test_preference_guard_cites_only_the_conflicting_pair_at_eligible_offsets(self) -> None:
+        positive = '我偏好简短回答。'
+        negative = '我不偏好简短回答。'
+        supporting = self.save('合成背景。' + positive)
+        history = '以前' + negative + '合成背景。现在'
+        conflicting = self.save(history + negative, 'other')
+        duplicate = self.save(positive, 'third')
+        result = self._reflect_citing(supporting, '简短回答', '简短回答', '简短回答')
+        self.assertIn(duplicate, {item['message_id'] for item in result['evidence']})
+        self.assertEqual(result['state'], 'complete')
+        self.assertEqual(result['assessment']['origin'], 'finite_preference_guard')
+        self.assertEqual(result['assessment']['decision'], 'clarify')
+        proofs = result['assessment']['support']
+        self.assertEqual(len(proofs), 2)
+        self.assertEqual(result['conflicts'], [[row['evidence_id'] for row in proofs]])
+        self.assertEqual({(row['message_id'], row['state_version'], row['content_version'], row['start'], row['end'], row['quote'])
+            for row in proofs}, {(supporting, 1, 1, len('合成背景。'), len('合成背景。' + positive), positive),
+                (conflicting, 1, 1, len(history), len(history + negative), negative)})
 
     def test_cache_is_identity_policy_and_clock_bound_and_never_revives_suppressed_body(self) -> None:
         source = self.save('合成：旧相册里见过苍鹭。')

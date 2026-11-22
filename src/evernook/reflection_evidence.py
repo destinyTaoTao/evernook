@@ -10,6 +10,7 @@ from typing import Any
 from .candidates import EvidenceSpan
 from .models import Access, MemoryFailure
 from .observations import source_contexts
+from .preference_statements import PreferenceStatement, assess_preferences
 from .runtime import MemoryRuntime, _MEMORY_EVIDENCE
 from .semantic import SemanticRecall
 from .topic_views import TopicViews
@@ -23,6 +24,7 @@ class EvidenceTools:
         self.maximum, self.chars, self.candidates, self.check = maximum, chars, candidates, check
         self.current_input_id = current_input_id
         self.evidence: list[dict[str, Any]] = []
+        self.preference_statements: dict[str, tuple[PreferenceStatement, ...]] = {}
         self.discovered: set[str] = set()
         self.views: dict[str, dict[str, Any]] = {}
         self.returned_chars = 0
@@ -85,7 +87,13 @@ class EvidenceTools:
             return
         if len(self.evidence) >= self.maximum or self.returned_chars + len(span.expected_text) > self.chars:
             raise MemoryFailure('reflection_source_budget')
-        context['evidence_id'] = 'e' + str(len(self.evidence) + 1)
+        evidence_id = 'e' + str(len(self.evidence) + 1)
+        context['evidence_id'] = evidence_id
+        if stored.event.role == 'user':
+            # A clipped quote can omit attribution, time scope or a correction.
+            self.preference_statements[evidence_id] = tuple(
+                statement for statement in assess_preferences(stored.event.text).statements
+                if span.start <= statement.start and statement.end <= span.end)
         self.evidence.append(context)
         self.returned_chars += len(span.expected_text)
 
@@ -159,7 +167,7 @@ class EvidenceTools:
                 span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'], item['start'], item['end'], item['quote'])
                 try:
                     current = source_contexts(db, (span,), 'reflection_original')[0]
-                    if current.get('transcription') != item.get('transcription'):
+                    if current['role'] != item['role'] or current.get('transcription') != item.get('transcription'):
                         raise MemoryFailure('reflection_source_unavailable')
                     valid.append(item)
                 except MemoryFailure:

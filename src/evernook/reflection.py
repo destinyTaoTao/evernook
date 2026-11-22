@@ -179,12 +179,13 @@ class ReflectionEngine:
 
     @staticmethod
     def _done(action: dict[str, Any], tools: EvidenceTools) -> dict[str, Any]:
+        from .reflection_protocol import finite_conflict, support_spans
+
         fields = {'action', 'conclusions', 'conflicts', 'unknown', 'clarification_required'}
         if set(action) not in (fields, fields | {'assessment'}) or type(action['clarification_required']) is not bool:
             raise MemoryFailure('reflection_invalid_action')
         ids = {item['evidence_id'] for item in tools.evidence}
         def bind_support(rows: object) -> list[dict[str, Any]]:
-            from .reflection_protocol import support_spans
             if (not isinstance(rows, list) or len(rows) > 16 or any(not isinstance(row, dict)
                     or set(row) != {'evidence_id', 'quote'} or not isinstance(row['evidence_id'], str) for row in rows)):
                 raise MemoryFailure('reflection_invalid_support')
@@ -244,6 +245,12 @@ class ReflectionEngine:
             if selected != expected or decision in {'answer', 'clarify', 'refuse'} and not selected:
                 raise MemoryFailure('reflection_invalid_support')
             assessment = {**assessment, 'support': bound}
+            if decision == 'answer' or (decision == 'abstain' and assessment['origin'] == 'explicit_year_guard'):
+                sources = finite_conflict(tools.evidence, bound, tools.preference_statements)
+                if sources:
+                    return {'conclusions': [], 'conflicts': [[row['evidence_id'] for row in sources]], 'unknown': [],
+                        'clarification_required': True, 'assessment': {'decision': 'clarify', 'support': sources,
+                            'origin': 'finite_preference_guard'}}
         return {'conclusions': conclusions, 'conflicts': action['conflicts'], 'unknown': action['unknown'],
             'clarification_required': action['clarification_required'] or bool(action['conflicts']), 'assessment': assessment}
 
