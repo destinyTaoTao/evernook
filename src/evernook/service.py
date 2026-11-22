@@ -34,6 +34,7 @@ ENDPOINT = "memory-service.json"
 PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inboxes', 'protected-inventory', 'protected-links', 'protected-show-local', 'protected-backup', 'transcription-submit', 'transcription-read'})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
+    "experience-queue", "experience-read", "experience-decide",
     "persona-read", "persona-history", "persona-set", "persona-rollback",
     "fact-decide", "scheduler-trigger", "scheduler-status", "scheduler-session-end",
     "scheduler-pause", "scheduler-configure", "remember", "search", "recall", "read", "state",
@@ -465,6 +466,14 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
         result = _execute(namespace, input_value=arguments["input"],
             service_runtime=runtime, service_access=access, service_cancel=cancel,
             service_embedding=embedding_binding.current if embedding_binding is not None else None)
+        if command == "experience-decide":
+            from .experience import ExperienceRecord
+
+            assert isinstance(result, ExperienceRecord)
+            return {"experience_id": result.experience_id, "revision": result.revision,
+                "content_revision": result.content_revision, "state": result.state, "recorded_at": result.recorded_at,
+                "confirmation_id": result.confirmation_id, "confirmation_version": result.confirmation_version,
+                "request_id": result.request_id}
         if (command == 'manage' and arguments['input'] == {'action': 'read', 'view': 'status'}
                 and isinstance(result, dict)):
             from .reflection import RemoteModel

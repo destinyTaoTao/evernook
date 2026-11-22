@@ -58,6 +58,21 @@ class ExperienceView:
     execution_authority: bool = False
 
 
+@dataclass(frozen=True)
+class ExperienceQueueItem:
+    experience_id: str
+    revision: int
+    content_revision: int
+    state: str
+    error_code: str | None
+
+
+@dataclass(frozen=True)
+class ExperienceQueuePage:
+    items: tuple[ExperienceQueueItem, ...]
+    next_after: str | None
+
+
 class ExperienceRegistry:
     def __init__(self, runtime: MemoryRuntime):
         self.runtime = runtime
@@ -222,6 +237,28 @@ class ExperienceRegistry:
         with self.runtime._connection() as db:
             db.execute("BEGIN")
             return self._view(db, experience_id)
+
+    def queue(self, access: Access, *, after: str | None = None, limit: int = 16) -> ExperienceQueuePage:
+        """Discover current draft revisions for review; read-by-ID still requires recall."""
+        self.runtime._require_scope(access, "accept", "experience_queue")
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise MemoryFailure("invalid_page")
+        if after is not None:
+            _identifier(after)
+        with self.runtime._connection() as db:
+            db.execute("BEGIN")
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='experience_events_v1'").fetchone():
+                return ExperienceQueuePage((), None)
+            rows = db.execute("""SELECT e.experience_id FROM experience_events_v1 e
+                WHERE e.experience_id>? AND json_extract(e.record,'$.state')='draft'
+                AND NOT EXISTS (SELECT 1 FROM experience_events_v1 newer
+                    WHERE newer.experience_id=e.experience_id AND newer.revision>e.revision)
+                ORDER BY e.experience_id LIMIT ?""", (after or "", limit + 1)).fetchall()
+            items = []
+            for row in rows[:limit]:
+                view = self._view(db, row["experience_id"])
+                items.append(ExperienceQueueItem(view.experience_id, view.revision, view.content_revision, view.state, view.error_code))
+            return ExperienceQueuePage(tuple(items), items[-1].experience_id if len(rows) > limit else None)
 
     @staticmethod
     def _view(db: sqlite3.Connection, experience_id: str) -> ExperienceView:

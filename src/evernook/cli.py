@@ -239,6 +239,7 @@ def _parser() -> Parser:
         ("navigation-read", "Read a current source-validated navigation bucket"),
         ("experience-decide", "Trusted version-bound experience review; never a model tool"),
         ("experience-read", "Read the current source-validated experience draft/state"),
+        ("experience-queue", "List current experience draft metadata for trusted review"),
         ("experience-from-navigation", "Create an extractive experience candidate from existing navigation"),
         ("purge-preview", "Preview an exact ordinary-source purge scope; does not delete evidence"),
         ("purge", "Trusted confirmed purge of the exact previewed scope; never a model tool"),
@@ -600,6 +601,8 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         value = read_input()
         if args.command == "experience-read":
             return experiences.read(access, **value)
+        if args.command == "experience-queue":
+            return experiences.queue(access, **value)
         if args.command == "experience-from-navigation":
             return experiences.propose_navigation(access, **value)
         draft = value.get("draft")

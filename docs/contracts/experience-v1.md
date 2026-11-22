@@ -18,7 +18,13 @@ revision 包含状态决定；content_revision 只在提议/修订时增加。�
 
 enable/reject/disable 都需真实、完整、原件可见的用户 confirmation_id；确认的**接收时间**不得早于被展示修订的记录时间。确认首次使用时原子绑定 experience_id、被审查 revision 和 action，不能挪用到另一版本、草案或操作；不得用助手文本或 `approved=true` 绕过。
 
-可信本地调用端仍负责先展示准确版本、建立实际用户意图。角色、时间和引用绑定不能从自然语言证明用户同意。这些写接口只供本地维护/可信 UI 使用，不能作为模型工具；本增量没有执行器或跨进程授权服务。
+可信本地调用端仍负责先展示准确版本、建立实际用户意图。角色、时间和引用绑定不能从自然语言证明用户同意。这些写接口供本地维护和可信 UI 使用。独立服务逐次认证调用端并复用同一套确认与版本检查。
+
+## 待审队列
+
+`ExperienceRegistry.queue(access, after=None, limit=16)` 要求 `accept`。每页最多 32 条，按 `experience_id` 升序，以 `next_after` 作为下一页的 `after`。每个 ID 只检查最新版本，当前仍为草案的版本才会列出。分页请求各自读取当前快照。若要查找排在已有游标之前的新草案，从首页重新读取。
+
+条目只返回 ID、审查修订号、内容修订号、状态和错误码。队列在同一 SQLite 快照核验每条来源。争议显示为 `disputed`，来源失效显示为 `source_unavailable`。查看正文与引用时调用 `experience-read`，该入口要求 `recall`，并再次核验来源。可信端应展示读回的准确版本，再发起版本绑定的审查决定。
 
 ## 摘录提议与上下文
 
@@ -34,10 +40,13 @@ enable/reject/disable 都需真实、完整、原件可见的用户 confirmation
 
 | 命令 | 输入 |
 |---|---|
+| `experience-queue` | 可选的 `after` 和 `limit`，默认 `{}` |
 | `experience-decide` | ExperienceDecision；draft.sources 为精确来源数组 |
 | `experience-read` | `{"experience_id":"..."}` |
 | `experience-from-navigation` | request_id、experience_id、expected_revision、policy_id、bucket、conditions |
 
-默认与可信 MCP 仅新增 `evernook_v1_experience(experience_id)` 读取，不注册提议、确认、启用或调度工具。返回 draft 不表示规则已启用。
+已激活的独立服务通过认证 CLI 提供 `experience-queue`、`experience-read` 和 `experience-decide`。默认与可信 MCP 仍只提供 `evernook_v1_experience(experience_id)` 读取经验。
+
+服务上的 `experience-decide` 回执只含 `experience_id`、`request_id`、`revision`、`content_revision`、`state`、`recorded_at`、`confirmation_id` 和 `confirmation_version`。正文与引用仍通过要求 `recall` 的 `experience-read` 查看。离线 CLI 和 Python 的 `decide` 返回原有完整 `ExperienceRecord`。
 
 尚无自动经验生成模型准入、后台提议调度、独立审查 UI、事实争议自动传播、经验历史时点查询或原生规则加载，完整票据保持开放。验证见[报告](../reports/r3-experience-2026-10-31.md)。

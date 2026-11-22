@@ -15,7 +15,8 @@ import threading
 from unittest.mock import patch
 from typing import Any
 
-from evernook import Event, MemoryRuntime, Source, initialize, pair_client
+from evernook import Change, Event, EvidenceSpan, MemoryRuntime, Source, initialize, pair_client
+from evernook.experience import ExperienceDecision, ExperienceDraft
 from evernook.models import MemoryFailure
 from evernook.service import ServiceClient
 
@@ -128,6 +129,75 @@ class ServiceCutoverTests(unittest.TestCase):
         self.stop()
         self.start(activate=False)
         self.assertEqual(client.call(self.access, "read", {"message_id": saved["message_id"]})["event"], newer)
+
+    def test_trusted_experience_review_cli_uses_the_activated_service(self) -> None:
+        reader_path = self.config.parent / "mcp-access-reader.json"
+        pair_client(self.config, client_id="reader", entry="reader", access_path=reader_path, scopes=("recall",))
+        reviewer_path = self.config.parent / "mcp-access-reviewer.json"
+        pair_client(self.config, client_id="reviewer", entry="reviewer", access_path=reviewer_path, scopes=("accept",))
+        self.start()
+        client = ServiceClient(self.config)
+        self.assertTrue(client.call(self.access, "status", {})["service"]["single_writer"])
+
+        def cli(command: str, value: dict[str, Any], *, access_path: Path = self.access_path,
+                error: str | None = None) -> dict[str, Any]:
+            process = subprocess.run([sys.executable, "-B", "-m", "evernook.cli", command,
+                "--config", str(self.config), "--access", str(access_path), "--require-service"],
+                input=json.dumps(value).encode(), capture_output=True, timeout=15)
+            envelope: dict[str, Any] = json.loads(process.stdout)
+            self.assertEqual(process.returncode, 0 if error is None else 1, envelope)
+            if error is not None:
+                self.assertEqual(envelope["error"]["code"], error)
+                return {}
+            result: dict[str, Any] = envelope["result"]
+            return result
+
+        source = EvidenceSpan(self.receipt.message_id, 1, "original", 1, 0, len(self.event.text), self.event.text)
+        draft = ExperienceDraft("skill_draft", "合成经验：已记录的工具结果需核对。", "合成技能审查", (source,))
+        decision = ExperienceDecision("submit-one", "synthetic-skill", 0, "propose", draft)
+        created = cli("experience-decide", asdict(decision))
+        self.assertEqual((created["state"], created["revision"]), ("draft", 1))
+        self.assertEqual(cli("experience-queue", {})["items"], [{"experience_id": "synthetic-skill", "revision": 1,
+            "content_revision": 1, "state": "draft", "error_code": None}])
+        cli("experience-queue", {}, access_path=reader_path, error="permission_denied")
+        cli("experience-decide", asdict(decision), access_path=reader_path, error="permission_denied")
+        viewed = cli("experience-read", {"experience_id": "synthetic-skill"}, access_path=reader_path)
+        self.assertEqual(viewed["record"]["draft"]["lesson"], draft.lesson)
+        self.assertFalse(viewed["execution_authority"])
+
+        confirmation = Event(Source("test", "cutover", "main", "2"), "user", 2, None, "complete", "合成用户确认启用指定版本")
+        saved = client.call(self.access, "remember", {"event": asdict(confirmation)})
+        approval = ExperienceDecision("approve-one", "synthetic-skill", 1, "enable", confirmation_id=saved["message_id"])
+        enabled = cli("experience-decide", asdict(approval))
+        self.assertEqual((enabled["state"], enabled["revision"]), ("enabled", 2))
+        self.assertEqual(cli("experience-decide", asdict(approval)), enabled)
+        cli("experience-decide", {**asdict(approval), "request_id": "stale-approval"}, error="experience_revision_conflict")
+        self.assertEqual(cli("experience-queue", {}), {"items": [], "next_after": None})
+
+        second = ExperienceDecision("submit-two", "synthetic-stale", 0, "propose", draft)
+        cli("experience-decide", asdict(second))
+        instruction = Event(Source("test", "cutover", "main", "3"), "user", 3, None, "complete", "合成用户抑制原始来源")
+        changed = client.call(self.access, "remember", {"event": asdict(instruction)})
+        cli("change", asdict(Change("suppress-source", self.receipt.message_id, 1, "suppress", changed["message_id"], "synthetic")))
+        self.assertEqual(cli("experience-queue", {})["items"], [{"experience_id": "synthetic-stale", "revision": 1,
+            "content_revision": 1, "state": "source_unavailable", "error_code": "stale_experience_source"}])
+        self.assertIsNone(cli("experience-read", {"experience_id": "synthetic-stale"})["record"])
+        cli("experience-read", {"experience_id": "synthetic-stale"}, access_path=reviewer_path, error="permission_denied")
+        decline = Event(Source("test", "cutover", "main", "4"), "user", 4, None, "complete", "合成用户拒绝已展示的草案版本")
+        decline_id = client.call(self.access, "remember", {"event": asdict(decline)})["message_id"]
+        rejection = ExperienceDecision("reject-stale", "synthetic-stale", 1, "reject", confirmation_id=decline_id)
+        rejected = cli("experience-decide", asdict(rejection), access_path=reviewer_path)
+        self.assertEqual((rejected["state"], rejected["revision"], rejected["request_id"], rejected["confirmation_id"]),
+            ("rejected", 2, "reject-stale", decline_id))
+        receipt_fields = {"experience_id", "revision", "content_revision", "state", "recorded_at",
+            "confirmation_id", "confirmation_version", "request_id"}
+        for receipt in (rejected, created, enabled):
+            self.assertEqual(set(receipt), receipt_fields)
+        cli("experience-decide", asdict(rejection), access_path=reviewer_path, error="stale_experience_source")
+        self.assertEqual(cli("experience-queue", {}, access_path=reviewer_path), {"items": [], "next_after": None})
+        for profile in ("recall", "trusted-host"):
+            listing = client.call(self.access, "mcp-list", {"profile": profile})["tools"]
+            self.assertEqual({tool["name"] for tool in listing if "experience" in tool["name"]}, {"evernook_v1_experience"})
 
     def test_lost_discovery_does_not_reenable_ordinary_cli_writes(self) -> None:
         self.start()
