@@ -143,6 +143,9 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         .catch(error => { bootstrap = undefined; throw error; });
       const session = await bootstrap;
       if (payload.action === 'bootstrap') return session;
+      if ((payload.action === 'read-versioned' || payload.action === 'fingerprints') && (signal?.aborted || documentHidden())) {
+        throw new Error('view_changed');
+      }
       const response = await send(payload, session.csrf, signal ?? AbortSignal.timeout(35000));
       const body = await response.json();
       if (!response.ok) { if (response.status === 403) bootstrap = undefined; throw new Error(body.error ?? 'management_unavailable'); }
@@ -154,6 +157,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
       : code === 'invalid_time_range' ? 'invalidTimeRange' : code === 'preference_clarification_required' ? 'clarification' : 'unavailable');
     const time = value => value ? new Date(value).toLocaleString() : t('unknown');
     const button = (label, action, props = {}) => h('button', { type: 'button', onClick: action, ...props }, label);
+    const documentHidden = () => window.document?.visibilityState === 'hidden';
     function Modal({ title, children, close, busy = false, error }) {
       const ref = useRef(null);
       useEffect(() => { const dialog = ref.current; dialog.showModal(); return () => dialog.close(); }, []);
@@ -211,7 +215,12 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         leaseTimer.current = null; leaseAbort.current?.abort(); leaseAbort.current = null;
         setSource(null); setHistory(null);
       };
-      const refresh = (resetStreak = true) => { if (resetStreak) changeStreak.current = 0; invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1); setReview(null); setEditing(null); setTopicEdit(null); setTopicControl(null); };
+      const refresh = (resetStreak = true) => {
+        if (documentHidden()) return;
+        if (resetStreak) changeStreak.current = 0;
+        invalidateReads(); setData({ items: [] }); setLoading(true); setRevision(value => value + 1);
+        setReview(null); setEditing(null); setTopicEdit(null); setTopicControl(null);
+      };
       const expire = () => {
         invalidateReads(); setData({ items: [] }); setReview(null); setEditing(null); setTopicEdit(null); setTopicControl(null); setLoading(false); setError(t('unavailable'));
       };
@@ -235,6 +244,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         leaseTimer.current = setTimeout(async () => {
           leaseTimer.current = null;
           if (!alive.current || epoch !== readEpoch.current || !leases.current.size) return;
+          if (documentHidden()) { expire(); return; }
           const snapshot = [...leases.current.entries()];
           const remaining = Math.min(...snapshot.map(([, lease]) => remainingLease(lease)));
           if (remaining <= 0) { expire(); return; }
@@ -251,7 +261,7 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
               });
             const results = await Promise.race([checks, deadline]);
             if (!alive.current || epoch !== readEpoch.current) return;
-            if (snapshot.some(([, lease]) => remainingLease(lease) <= 0)) { expire(); return; }
+            if (documentHidden() || snapshot.some(([, lease]) => remainingLease(lease) <= 0)) { expire(); return; }
             for (const { slot, lease, result } of results) {
               if (leases.current.get(slot) !== lease) continue;
               if (!result || result.token !== lease.token) {
@@ -274,9 +284,10 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         }, delay);
       }
       async function versionedRead(parameters, signal, slot) {
+        if (documentHidden()) throw new Error('view_changed');
         const epoch = readEpoch.current, started = now();
         const response = await call({ ...parameters, action: 'read-versioned' }, signal);
-        if (signal.aborted || epoch !== readEpoch.current) throw new Error('view_changed');
+        if (signal.aborted || epoch !== readEpoch.current || documentHidden()) throw new Error('view_changed');
         if (!response || !/^[a-f0-9]{64}$/.test(response.token) || !response.value || Date.now() - started.wall >= 12000 || performance.now() - started.mono >= 12000) throw new Error('management_unavailable');
         if (slot) { dropLease(slot); const lease = { parameters, token: response.token, wall: started.wall + 12000, mono: started.mono + 12000 }; leases.current.set(slot, lease); armLease(slot, lease); scheduleLease(); }
         return response.value;
@@ -289,20 +300,20 @@ window.__ModuleLoader__.load({ id: 'dsh-evernook', factory: (require) => {
         updates.addEventListener('changed', listener);
         updates.addEventListener('disposed', dispose);
         window.addEventListener('focus', listener);
-        const visibility = () => { if (window.document?.visibilityState === 'hidden') expire(); else refresh(); };
+        const visibility = () => { if (documentHidden()) expire(); else refresh(); };
         window.document?.addEventListener('visibilitychange', visibility);
         return () => { alive.current = false; readEpoch.current += 1; for (const lease of leases.current.values()) clearTimeout(lease.watchdog); leases.current.clear(); if (leaseTimer.current !== null) clearTimeout(leaseTimer.current); leaseAbort.current?.abort();
           updates.removeEventListener('changed', listener); updates.removeEventListener('disposed', dispose); window.removeEventListener('focus', listener); window.document?.removeEventListener('visibilitychange', visibility);
           for (const controller of controllers.current) controller.abort(); };
       }, []);
       useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || documentHidden()) return;
         const controller = new AbortController();
         const epoch = readEpoch.current;
         setLoading(true); setError(''); setData({ items: [] }); setSessionStatus(null); setContextMode(null); setDiagnostic(null);
         (async () => {
           const boot = await call({ action: 'bootstrap' }, controller.signal);
-          if (controller.signal.aborted || epoch !== readEpoch.current) return;
+          if (controller.signal.aborted || epoch !== readEpoch.current || documentHidden()) return;
           setConfigured(boot.configured);
           setContextMode(boot.context_mode);
           setStreamMode(boot.stream_mode);
