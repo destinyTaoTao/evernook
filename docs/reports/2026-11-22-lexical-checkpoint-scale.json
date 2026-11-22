@@ -1,0 +1,5002 @@
+{
+  "cases": {
+    "historical": {
+      "arms": {
+        "off": {
+          "end_to_end": {
+            "median_seconds": 16.801501200010534,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 17.9337481999828
+          },
+          "final_read": {
+            "calls": 40,
+            "median_seconds": 0.16560485005902592,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.2168859999801498
+          },
+          "final_state": {
+            "calls": 40,
+            "median_seconds": 0.16667144997336436,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.22664410001016222
+          },
+          "lexical_keyword": {
+            "calls": 4,
+            "median_seconds": 2.4665737500035902,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.7768925000273157
+          },
+          "lexical_keyword_prefix_sql": {
+            "calls": 4,
+            "median_seconds": 2.4432134499948006,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.7468790999846533
+          },
+          "lexical_shared_coverage": {
+            "calls": 4,
+            "median_seconds": 4.420831850002287,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.454403299983824
+          },
+          "lexical_shared_coverage_checkpoint_status": {
+            "calls": 4,
+            "median_seconds": 3.57000099029392e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.71999922208488e-05
+          },
+          "lexical_shared_coverage_coverage": {
+            "calls": 4,
+            "median_seconds": 4.420777399995131,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.454345300007844
+          },
+          "lexical_shared_coverage_coverage_docs_copy_sql": {
+            "calls": 4,
+            "median_seconds": 1.0080964999797288,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 1.0648089000023901
+          },
+          "lexical_shared_coverage_coverage_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.04251184999884572,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.0506386999913957
+          },
+          "lexical_shared_coverage_coverage_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.18611465000140015,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.21560779999708757
+          },
+          "lexical_shared_coverage_coverage_temp_ddl_sql": {
+            "calls": 8,
+            "median_seconds": 0.00015329998859670013,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.0003462999884504825
+          },
+          "lexical_shared_coverage_coverage_valid_join_sql": {
+            "calls": 4,
+            "median_seconds": 3.154521050004405,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.1807093000097666
+          },
+          "lexical_shared_lookup": {
+            "calls": 12,
+            "median_seconds": 0.12072125000122469,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.17054319998715073
+          },
+          "lexical_shared_lookup_candidate_hits": {
+            "calls": 12,
+            "median_seconds": 0.09799524999107234,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.14230720000341535
+          },
+          "query_embedding": {
+            "calls": 4,
+            "median_seconds": 2.724998921621591e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.600001218728721e-05
+          },
+          "recent_window": {
+            "calls": 4,
+            "median_seconds": 0.004739200012409128,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.008371199975954369
+          },
+          "semantic_shared": {
+            "calls": 4,
+            "median_seconds": 4.4546878000110155,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.050271799991606
+          },
+          "semantic_shared_sql": {
+            "calls": 4,
+            "median_seconds": 4.443110299995169,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.03793880000012
+          },
+          "semantic_status": {
+            "calls": 4,
+            "median_seconds": 4.803766099998029,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.359733399993274
+          },
+          "semantic_status_coverage_sql": {
+            "calls": 4,
+            "median_seconds": 4.301370050001424,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.868079400010174
+          },
+          "semantic_status_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 8.380001236218959e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 8.999998681247234e-05
+          },
+          "semantic_status_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.2929548999964027,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.3535212999850046
+          },
+          "semantic_status_vector_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.16235089999099728,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.1744499999913387
+          }
+        },
+        "on": {
+          "end_to_end": {
+            "median_seconds": 12.11477284997818,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 13.722056599974167
+          },
+          "final_read": {
+            "calls": 40,
+            "median_seconds": 0.18241359997773543,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.23976169995148666
+          },
+          "final_state": {
+            "calls": 40,
+            "median_seconds": 0.18126749999646563,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.22259200000553392
+          },
+          "lexical_keyword": {
+            "calls": 4,
+            "median_seconds": 2.4722515500034206,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.5143564000027254
+          },
+          "lexical_keyword_prefix_sql": {
+            "calls": 4,
+            "median_seconds": 2.4439294999901904,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.4853822000150103
+          },
+          "lexical_shared_coverage": {
+            "calls": 4,
+            "median_seconds": 0.24943545000860468,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.25736099999630824
+          },
+          "lexical_shared_coverage_checkpoint_status": {
+            "calls": 4,
+            "median_seconds": 0.24942260001262184,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.2573479000129737
+          },
+          "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+            "calls": 4,
+            "median_seconds": 0.24889819999225438,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.2567447999899741
+          },
+          "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+            "calls": 8,
+            "median_seconds": 9.584998770151287e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.00025079998886212707
+          },
+          "lexical_shared_lookup": {
+            "calls": 12,
+            "median_seconds": 0.12006490002386272,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.14129130003857426
+          },
+          "lexical_shared_lookup_candidate_hits": {
+            "calls": 12,
+            "median_seconds": 0.09815920000255574,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.11295640000025742
+          },
+          "query_embedding": {
+            "calls": 4,
+            "median_seconds": 2.509998739697039e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.5699991965666413e-05
+          },
+          "recent_window": {
+            "calls": 4,
+            "median_seconds": 0.004418249984155409,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.004685200023232028
+          },
+          "semantic_shared": {
+            "calls": 4,
+            "median_seconds": 4.077780300009181,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.551647599990247
+          },
+          "semantic_shared_sql": {
+            "calls": 4,
+            "median_seconds": 4.06508469999244,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.538645699998597
+          },
+          "semantic_status": {
+            "calls": 4,
+            "median_seconds": 4.779315699997824,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.928657400014345
+          },
+          "semantic_status_coverage_sql": {
+            "calls": 4,
+            "median_seconds": 4.301250750009785,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.386064300022554
+          },
+          "semantic_status_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 9.404998854734004e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.0001016999885905534
+          },
+          "semantic_status_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.2862300000124378,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.3241656000027433
+          },
+          "semantic_status_vector_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.17382214998360723,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.19388160001835786
+          }
+        }
+      },
+      "canonical_full_recall_page": {
+        "degraded": [],
+        "evidence_state": "candidates",
+        "hits": [
+          {
+            "channels": [
+              "exact",
+              "lexical",
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+              "occurred_at": "2021-01-02T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630780+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 1,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000001",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000001：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.045773898232914625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              "occurred_at": "2023-10-03T00:00:00+00:00",
+              "received_at": "2026-11-15T09:59:34.929856+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 505050,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0505050",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0505050：天文摄影曝光记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.01639344262295082,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              "occurred_at": "2021-01-06T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630949+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 5,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000005",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000005：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.016129032258064516,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              "occurred_at": "2021-01-04T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630875+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 3,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000003",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000003：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015873015873015872,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              "occurred_at": "2021-01-08T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.631035+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 7,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000007",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000007：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+              "occurred_at": "2024-11-08T00:00:00+00:00",
+              "received_at": "2026-11-15T10:01:56.349799+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 707070,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0707070",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0707070：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015384615384615385,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "998bdde3-7668-4067-abad-0e456cd5e474",
+              "occurred_at": "2022-01-11T00:00:00+00:00",
+              "received_at": "2026-11-15T10:00:10.502464+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 555555,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0555555",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0555555：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015151515151515152,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:02:39.481853+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 777777,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0777777",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0777777：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014925373134328358,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+              "occurred_at": "2022-08-27T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:10.288755+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 303030,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0303030",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0303030：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014705882352941176,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+              "occurred_at": "2021-08-14T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:28.591396+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 333333,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0333333",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0333333：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014492753623188406,
+            "similarity": null
+          }
+        ],
+        "lexical": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "state": "ready"
+        },
+        "query_plan": {
+          "kind": "original",
+          "limited": false,
+          "original_chars": 11,
+          "query": "合成条目0000001",
+          "represented_end": 11,
+          "represented_start": 0,
+          "since": null,
+          "until": null
+        },
+        "recent_content_chars": 8214,
+        "recent_expanded": false,
+        "recent_since": "2026-10-28T00:00:00+00:00",
+        "recent_window_limited": false,
+        "semantic": {
+          "error_code": null,
+          "failed_chunks": 0,
+          "indexed_messages": 1000000,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "space_id": "339d9250bf610015b5895b2ccefc8721143e844c860763cc8a01f0cae1b76b1a",
+          "state": "ready",
+          "stored_vectors": 1000000
+        },
+        "semantic_scan_limited": false,
+        "semantic_scanned_chunks": 1000000,
+        "semantic_search_backend": "sqlite-vec-0.1.9-exact"
+      },
+      "canonical_keyword_candidate_order": [
+        "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+        "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+        "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+        "71281625-4c61-470c-afd3-ba3e8695b3d5",
+        "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+        "998bdde3-7668-4067-abad-0e456cd5e474",
+        "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+        "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+        "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+        "0a0e5cb4-636d-4991-bc85-6193fc49ec3d",
+        "148b9fef-bf9d-43e9-a8fa-70bd04a2678e",
+        "15dd2fea-fe42-4821-aadb-f3fcb266937e",
+        "2a52c44b-e4b1-4431-95b6-3ea3c6bdd7f1",
+        "2faa8101-d928-4dc9-b3a8-825223884797",
+        "34560072-1857-427b-a086-e471685e8f69",
+        "6305ec76-2d74-4f7b-9ea2-3039eb9bf8a9",
+        "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+        "680161ba-e490-4ec3-a34e-06317d41b49c",
+        "6c37e14f-e0f7-4b27-8b1e-1bb61a195eae",
+        "8080f64b-888d-4b11-8d7a-dfc9cb2bb42f",
+        "9e775985-f588-4bf0-a93e-dd74898c5058",
+        "9f23297e-e2d1-41fb-928e-0a19a01139cd",
+        "a14ea55d-31b2-49ce-914a-d3172d039d8b",
+        "a6b8f2ba-cae0-486e-a849-27a76554cb58",
+        "adda710b-40a3-4873-94fb-b66772f7d625",
+        "b6981a6a-876b-4465-958e-fef0e47092e7",
+        "bbceb46a-2377-442e-b5a5-9e3260549bc1",
+        "c3ca087a-e2b9-41ed-9db7-3987d72be962",
+        "c6a5cfc7-38bf-4d49-87f8-138d1b514774",
+        "c7f666ab-c17e-4d6c-b3ef-c24b79a7d9cb",
+        "cac9658c-82e8-4667-9109-68beaf31a6df",
+        "d1843bf9-e026-4247-b224-797630ac5842",
+        "d2edb476-f76b-49a3-862e-fd62d955885a",
+        "d43a8177-8cae-4182-9dcd-1a9a0b7f0e2b",
+        "d53ec44b-7971-4f03-a779-59cc975677b0",
+        "df1c90eb-a8d7-4119-ac23-75ff48754278",
+        "e09d0503-4f1b-4440-860e-d9713792e471",
+        "e1ee2e59-c76a-4917-9738-7fa900ca0ca6",
+        "ed095402-517e-449a-8fe8-c9a20fea8d64",
+        "f1aab4bd-413a-4d28-a8c4-0b6654557dc5",
+        "f8461430-4136-43f3-b333-0388bd9b4d47",
+        "046ab2f6-690f-4ee9-916c-995c54305d64",
+        "071200c8-9d86-4201-a730-e46709f8341c",
+        "0bf5835b-f129-4d7d-a316-82bdf47eb596",
+        "1730ed27-ec94-44a3-b322-dbdc4967afed",
+        "1ac4f91f-5c0e-4fd4-afbf-bcb99ca4bfb8",
+        "1d41cc84-4749-4175-a2eb-e70241aba85c",
+        "1eba91e3-a29d-458f-a4f4-0a1a208f25f2",
+        "1fbd4d0a-7abf-41f9-b130-17b2a557c736",
+        "219c0da1-6069-48db-abd8-9eb86201ab40",
+        "23d6bd16-de09-4444-8111-711cf09d8d9c",
+        "265626d3-5b5d-4dd0-b981-1482825d2a37",
+        "2cf7d2ef-c5f7-44b2-9b78-e6611514b130",
+        "3360a1ac-70b6-4b83-b66b-231e20119937",
+        "3d6a2c45-9db7-4e9b-9d66-549c6817526e",
+        "3ed768dc-5232-48b5-a431-444f70f7d39e",
+        "41657be0-c423-4a22-83fd-bf40aedf94c3",
+        "43b20f11-f211-4776-a870-ca511e75e924",
+        "49657ad1-912c-48d9-a4ad-d26dcd64a245",
+        "49c6b4b8-1011-4636-bae2-eb619421b742",
+        "4e8d84db-aee2-425e-aac6-c30df60cbb98",
+        "554b7cd4-689a-4f3f-9421-cb946d859faf",
+        "562a8c07-a28f-4be3-8c05-804aa3b13e78",
+        "56c20f69-80ea-4b88-a67c-63111491090d",
+        "591943b7-a257-497f-98c6-8691acb176aa",
+        "5ab651c9-5bc8-45b5-9459-3efd0ddc722f",
+        "5b041284-0231-414c-af60-8010de791ae2",
+        "5d609964-07fa-4964-9a7e-02f7f8a02095",
+        "6469b17d-3130-48fc-9bf9-196104f35cd9",
+        "6901782f-38d5-44ca-8987-189262c94237",
+        "6f1c31cc-e350-4e15-af56-75e682f5a8b5",
+        "6f308133-a5ad-4af9-938a-cda6e64292f8",
+        "6fa63de6-809e-43c4-939d-62dfb5e45e59",
+        "7d213094-9eae-4896-acdb-259ae4ee87c9",
+        "7fda330a-3b68-44cf-ac5c-b80d09b29574",
+        "811d1a99-b24c-4943-94c8-8c6829c37730",
+        "818c10e0-ee3d-4840-b63c-6d8666fcc0fd",
+        "825b0034-c966-48af-bc80-5fe410146c02",
+        "85b190b5-a46a-4b24-91f7-a3ce769d9e9d",
+        "8927efa7-03f1-4aff-9972-ac11fc255d15",
+        "8b2a9405-afed-4a4e-b48f-6803c02572f5",
+        "8c18c755-b1f6-4c3b-af2d-79588bc97f98",
+        "905a5cf3-63f1-4bba-a706-045b9bfc3329",
+        "90e484df-910f-40a2-a245-08b6a6cd9a6d",
+        "94a21ed1-057d-4fac-934f-3d36c562aa2c",
+        "96221d1e-7356-43c9-bd98-f47ca0eb735d",
+        "9955b14e-a0a7-4b28-82a4-e9b9f2aa69ef",
+        "a2f0bc47-0d7e-4703-b5da-b7c5acacb0cb",
+        "a582f20e-8877-48c6-aa66-7e47189b7674",
+        "a91c445e-da61-4308-856c-ab37e9e6d441",
+        "acefb1ac-2904-442f-b0f2-e678dc075858",
+        "aed6b3e0-a4f7-4ee1-8f74-3d011e93546a",
+        "b0fbd003-4fd1-48a0-bc8d-5f8f0005fc83",
+        "b9470217-0aea-419b-b81d-6f4b758e615a",
+        "baa6ee82-526e-4ea3-bf27-409bee047a61",
+        "bac79d21-15be-469c-ae35-98d40f8dc2a3",
+        "c029278a-4476-420d-9772-c94bd50399c1",
+        "c19008db-572f-421f-8dc2-12fc7893c32e",
+        "c5cf41a1-b5b4-49b0-be28-3671b09c64d1",
+        "cdb12904-bcc4-4c8a-9c26-01997ba1a89e"
+      ],
+      "canonical_literal_channel_pages": {
+        "lexical_exact": {
+          "fallback_reason": null,
+          "hits": [
+            {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+              "occurred_at": "2021-01-02T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630780+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 1,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000001",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 11,
+                  "start": 0,
+                  "text": "合成条目0000001"
+                }
+              ],
+              "state_version": 1
+            }
+          ],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        },
+        "lexical_global": {
+          "fallback_reason": null,
+          "hits": [
+            {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+              "occurred_at": "2021-01-02T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630780+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 1,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000001",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 11,
+                  "start": 0,
+                  "text": "合成条目0000001"
+                }
+              ],
+              "state_version": 1
+            }
+          ],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        },
+        "lexical_recent": {
+          "fallback_reason": null,
+          "hits": [],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        }
+      },
+      "exact_pairs": 4,
+      "request": {
+        "expected_first": "m0000001",
+        "query": "合成条目0000001"
+      }
+    },
+    "recent": {
+      "arms": {
+        "off": {
+          "end_to_end": {
+            "median_seconds": 15.757416799999191,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 18.256148299988126
+          },
+          "final_read": {
+            "calls": 40,
+            "median_seconds": 0.17555764997086953,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.18864730006316677
+          },
+          "final_state": {
+            "calls": 40,
+            "median_seconds": 0.16782460000831634,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.196346699987771
+          },
+          "lexical_keyword": {
+            "calls": 4,
+            "median_seconds": 2.451558650005609,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.8097024000016972
+          },
+          "lexical_keyword_prefix_sql": {
+            "calls": 4,
+            "median_seconds": 2.4262785499886377,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.7812531999952625
+          },
+          "lexical_shared_coverage": {
+            "calls": 4,
+            "median_seconds": 4.435444399990956,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.4935395999928005
+          },
+          "lexical_shared_coverage_checkpoint_status": {
+            "calls": 4,
+            "median_seconds": 3.735000791493803e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.679999594576657e-05
+          },
+          "lexical_shared_coverage_coverage": {
+            "calls": 4,
+            "median_seconds": 4.435375350003596,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 5.49348249999457
+          },
+          "lexical_shared_coverage_coverage_docs_copy_sql": {
+            "calls": 4,
+            "median_seconds": 1.0702725000010105,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 1.091359599988209
+          },
+          "lexical_shared_coverage_coverage_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.035895599983632565,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.04208919999655336
+          },
+          "lexical_shared_coverage_coverage_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.1870739000150934,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.2385970999894198
+          },
+          "lexical_shared_coverage_coverage_temp_ddl_sql": {
+            "calls": 8,
+            "median_seconds": 0.0001362000039080158,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.0001910000282805413
+          },
+          "lexical_shared_coverage_coverage_valid_join_sql": {
+            "calls": 4,
+            "median_seconds": 3.1410150000156136,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.126085999974748
+          },
+          "lexical_shared_lookup": {
+            "calls": 12,
+            "median_seconds": 0.13314944999001455,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.1818611000198871
+          },
+          "lexical_shared_lookup_candidate_hits": {
+            "calls": 12,
+            "median_seconds": 0.11168274999363348,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.15373199997702613
+          },
+          "query_embedding": {
+            "calls": 4,
+            "median_seconds": 2.610000956337899e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.2499985536560416e-05
+          },
+          "recent_window": {
+            "calls": 4,
+            "median_seconds": 0.005297950003296137,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.006564600014826283
+          },
+          "semantic_shared": {
+            "calls": 4,
+            "median_seconds": 4.022434049998992,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.585726000019349
+          },
+          "semantic_shared_sql": {
+            "calls": 4,
+            "median_seconds": 4.011255700010224,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.573113899998134
+          },
+          "semantic_status": {
+            "calls": 4,
+            "median_seconds": 4.3858907999965595,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.7261363999859896
+          },
+          "semantic_status_coverage_sql": {
+            "calls": 4,
+            "median_seconds": 3.9245254999987083,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.230375699989963
+          },
+          "semantic_status_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 8.944999717641622e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.000145500001963228
+          },
+          "semantic_status_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.2836920999980066,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.3104909999819938
+          },
+          "semantic_status_vector_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.1602744999981951,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.16651120001915842
+          }
+        },
+        "on": {
+          "end_to_end": {
+            "median_seconds": 11.996994000000996,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 12.919768100022338
+          },
+          "final_read": {
+            "calls": 40,
+            "median_seconds": 0.17245099996216595,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.1776978000125382
+          },
+          "final_state": {
+            "calls": 40,
+            "median_seconds": 0.16892180001013912,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.1793092000298202
+          },
+          "lexical_keyword": {
+            "calls": 4,
+            "median_seconds": 2.6714991999906488,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.351226900005713
+          },
+          "lexical_keyword_prefix_sql": {
+            "calls": 4,
+            "median_seconds": 2.6436952999938512,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.3161595000128727
+          },
+          "lexical_shared_coverage": {
+            "calls": 4,
+            "median_seconds": 0.2712901999911992,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.32352229999378324
+          },
+          "lexical_shared_coverage_checkpoint_status": {
+            "calls": 4,
+            "median_seconds": 0.2712751999933971,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.3235015999816824
+          },
+          "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+            "calls": 4,
+            "median_seconds": 0.2707017999928212,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.322681299992837
+          },
+          "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+            "calls": 8,
+            "median_seconds": 0.00011250001261942089,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.0001537999778520316
+          },
+          "lexical_shared_lookup": {
+            "calls": 12,
+            "median_seconds": 0.15560875000664964,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.19822180000483058
+          },
+          "lexical_shared_lookup_candidate_hits": {
+            "calls": 12,
+            "median_seconds": 0.1317328000004636,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.16763179999543354
+          },
+          "query_embedding": {
+            "calls": 4,
+            "median_seconds": 2.4250010028481483e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 2.6200024876743555e-05
+          },
+          "recent_window": {
+            "calls": 4,
+            "median_seconds": 0.0046525999932782724,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.005645600002026185
+          },
+          "semantic_shared": {
+            "calls": 4,
+            "median_seconds": 3.9652532499894733,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.617759999993723
+          },
+          "semantic_shared_sql": {
+            "calls": 4,
+            "median_seconds": 3.953103599982569,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.607007300015539
+          },
+          "semantic_status": {
+            "calls": 4,
+            "median_seconds": 4.376431400000001,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 4.451130200002808
+          },
+          "semantic_status_coverage_sql": {
+            "calls": 4,
+            "median_seconds": 3.9224688499962213,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 3.9734808999928646
+          },
+          "semantic_status_other_counts_sql": {
+            "calls": 4,
+            "median_seconds": 8.550001075491309e-05,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.00011940000695176423
+          },
+          "semantic_status_source_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.2806610000116052,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.30179989998578094
+          },
+          "semantic_status_vector_counts_sql": {
+            "calls": 4,
+            "median_seconds": 0.15568034998432267,
+            "n": 4,
+            "nearest_rank": 4,
+            "p95_seconds": 0.16193259999272414
+          }
+        }
+      },
+      "canonical_full_recall_page": {
+        "degraded": [],
+        "evidence_state": "candidates",
+        "hits": [
+          {
+            "channels": [
+              "exact",
+              "lexical",
+              "recent_lexical",
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "ed095402-517e-449a-8fe8-c9a20fea8d64",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:05:20.439952+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 999999,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0999999",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0999999：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.05928133796986256,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+              "occurred_at": "2023-10-03T00:00:00+00:00",
+              "received_at": "2026-11-15T09:59:34.929856+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 505050,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0505050",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0505050：天文摄影曝光记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.01639344262295082,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+              "occurred_at": "2021-01-06T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630949+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 5,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000005",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000005：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.016129032258064516,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+              "occurred_at": "2021-01-04T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.630875+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 3,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000003",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000003：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015873015873015872,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "71281625-4c61-470c-afd3-ba3e8695b3d5",
+              "occurred_at": "2021-01-08T00:00:00+00:00",
+              "received_at": "2026-11-15T09:53:31.631035+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 7,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0000007",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0000007：散步路线观察笔记；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015625,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+              "occurred_at": "2024-11-08T00:00:00+00:00",
+              "received_at": "2026-11-15T10:01:56.349799+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 707070,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0707070",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0707070：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015384615384615385,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "998bdde3-7668-4067-abad-0e456cd5e474",
+              "occurred_at": "2022-01-11T00:00:00+00:00",
+              "received_at": "2026-11-15T10:00:10.502464+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 555555,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0555555",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0555555：编辑器快捷键练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.015151515151515152,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:02:39.481853+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 777777,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0777777",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0777777：厨房食材库存记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014925373134328358,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+              "occurred_at": "2022-08-27T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:10.288755+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 303030,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0303030",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0303030：花园植物浇水记录；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014705882352941176,
+            "similarity": null
+          },
+          {
+            "channels": [
+              "keyword"
+            ],
+            "evidence": {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+              "occurred_at": "2021-08-14T00:00:00+00:00",
+              "received_at": "2026-11-15T09:57:28.591396+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 333333,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0333333",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 33,
+                  "start": 0,
+                  "text": "合成条目0333333：公交时刻抄录练习；保留数字37.50与🙂。"
+                }
+              ],
+              "state_version": 1
+            },
+            "score": 0.014492753623188406,
+            "similarity": null
+          }
+        ],
+        "lexical": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "state": "ready"
+        },
+        "query_plan": {
+          "kind": "original",
+          "limited": false,
+          "original_chars": 11,
+          "query": "合成条目0999999",
+          "represented_end": 11,
+          "represented_start": 0,
+          "since": null,
+          "until": null
+        },
+        "recent_content_chars": 8214,
+        "recent_expanded": false,
+        "recent_since": "2026-10-28T00:00:00+00:00",
+        "recent_window_limited": false,
+        "semantic": {
+          "error_code": null,
+          "failed_chunks": 0,
+          "indexed_messages": 1000000,
+          "pending_messages": 0,
+          "source_messages": 1000000,
+          "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "space_id": "339d9250bf610015b5895b2ccefc8721143e844c860763cc8a01f0cae1b76b1a",
+          "state": "ready",
+          "stored_vectors": 1000000
+        },
+        "semantic_scan_limited": false,
+        "semantic_scanned_chunks": 1000000,
+        "semantic_search_backend": "sqlite-vec-0.1.9-exact"
+      },
+      "canonical_keyword_candidate_order": [
+        "6b8785a6-7552-4ce7-a50f-4ced4ae6be16",
+        "3b0e2aab-da2d-4c0a-80c1-670e281f9ecc",
+        "59b7a894-f185-45b5-ba3d-35a3ef3e2597",
+        "71281625-4c61-470c-afd3-ba3e8695b3d5",
+        "8ad2fffd-ad7c-49a6-82fe-5a1fbb198173",
+        "998bdde3-7668-4067-abad-0e456cd5e474",
+        "bd3a3c6d-9ebe-4675-b958-8640b74212ed",
+        "c47c18bc-b98e-4e39-86df-adc9e7ff7160",
+        "fb445650-aedc-4bef-94d1-6fafdb6fe154",
+        "0a0e5cb4-636d-4991-bc85-6193fc49ec3d",
+        "148b9fef-bf9d-43e9-a8fa-70bd04a2678e",
+        "15dd2fea-fe42-4821-aadb-f3fcb266937e",
+        "2a52c44b-e4b1-4431-95b6-3ea3c6bdd7f1",
+        "2faa8101-d928-4dc9-b3a8-825223884797",
+        "34560072-1857-427b-a086-e471685e8f69",
+        "6305ec76-2d74-4f7b-9ea2-3039eb9bf8a9",
+        "64431dcf-9cb7-4752-a6f3-499e6a0fca07",
+        "680161ba-e490-4ec3-a34e-06317d41b49c",
+        "6c37e14f-e0f7-4b27-8b1e-1bb61a195eae",
+        "8080f64b-888d-4b11-8d7a-dfc9cb2bb42f",
+        "9e775985-f588-4bf0-a93e-dd74898c5058",
+        "9f23297e-e2d1-41fb-928e-0a19a01139cd",
+        "a14ea55d-31b2-49ce-914a-d3172d039d8b",
+        "a6b8f2ba-cae0-486e-a849-27a76554cb58",
+        "adda710b-40a3-4873-94fb-b66772f7d625",
+        "b6981a6a-876b-4465-958e-fef0e47092e7",
+        "bbceb46a-2377-442e-b5a5-9e3260549bc1",
+        "c3ca087a-e2b9-41ed-9db7-3987d72be962",
+        "c6a5cfc7-38bf-4d49-87f8-138d1b514774",
+        "c7f666ab-c17e-4d6c-b3ef-c24b79a7d9cb",
+        "cac9658c-82e8-4667-9109-68beaf31a6df",
+        "d1843bf9-e026-4247-b224-797630ac5842",
+        "d2edb476-f76b-49a3-862e-fd62d955885a",
+        "d43a8177-8cae-4182-9dcd-1a9a0b7f0e2b",
+        "d53ec44b-7971-4f03-a779-59cc975677b0",
+        "df1c90eb-a8d7-4119-ac23-75ff48754278",
+        "e09d0503-4f1b-4440-860e-d9713792e471",
+        "e1ee2e59-c76a-4917-9738-7fa900ca0ca6",
+        "ed095402-517e-449a-8fe8-c9a20fea8d64",
+        "f1aab4bd-413a-4d28-a8c4-0b6654557dc5",
+        "f8461430-4136-43f3-b333-0388bd9b4d47",
+        "046ab2f6-690f-4ee9-916c-995c54305d64",
+        "071200c8-9d86-4201-a730-e46709f8341c",
+        "0bf5835b-f129-4d7d-a316-82bdf47eb596",
+        "1730ed27-ec94-44a3-b322-dbdc4967afed",
+        "1ac4f91f-5c0e-4fd4-afbf-bcb99ca4bfb8",
+        "1d41cc84-4749-4175-a2eb-e70241aba85c",
+        "1eba91e3-a29d-458f-a4f4-0a1a208f25f2",
+        "1fbd4d0a-7abf-41f9-b130-17b2a557c736",
+        "219c0da1-6069-48db-abd8-9eb86201ab40",
+        "23d6bd16-de09-4444-8111-711cf09d8d9c",
+        "265626d3-5b5d-4dd0-b981-1482825d2a37",
+        "2cf7d2ef-c5f7-44b2-9b78-e6611514b130",
+        "3360a1ac-70b6-4b83-b66b-231e20119937",
+        "3d6a2c45-9db7-4e9b-9d66-549c6817526e",
+        "3ed768dc-5232-48b5-a431-444f70f7d39e",
+        "41657be0-c423-4a22-83fd-bf40aedf94c3",
+        "43b20f11-f211-4776-a870-ca511e75e924",
+        "49657ad1-912c-48d9-a4ad-d26dcd64a245",
+        "49c6b4b8-1011-4636-bae2-eb619421b742",
+        "4e8d84db-aee2-425e-aac6-c30df60cbb98",
+        "554b7cd4-689a-4f3f-9421-cb946d859faf",
+        "562a8c07-a28f-4be3-8c05-804aa3b13e78",
+        "56c20f69-80ea-4b88-a67c-63111491090d",
+        "591943b7-a257-497f-98c6-8691acb176aa",
+        "5ab651c9-5bc8-45b5-9459-3efd0ddc722f",
+        "5b041284-0231-414c-af60-8010de791ae2",
+        "5d609964-07fa-4964-9a7e-02f7f8a02095",
+        "6469b17d-3130-48fc-9bf9-196104f35cd9",
+        "6901782f-38d5-44ca-8987-189262c94237",
+        "6f1c31cc-e350-4e15-af56-75e682f5a8b5",
+        "6f308133-a5ad-4af9-938a-cda6e64292f8",
+        "6fa63de6-809e-43c4-939d-62dfb5e45e59",
+        "7d213094-9eae-4896-acdb-259ae4ee87c9",
+        "7fda330a-3b68-44cf-ac5c-b80d09b29574",
+        "811d1a99-b24c-4943-94c8-8c6829c37730",
+        "818c10e0-ee3d-4840-b63c-6d8666fcc0fd",
+        "825b0034-c966-48af-bc80-5fe410146c02",
+        "85b190b5-a46a-4b24-91f7-a3ce769d9e9d",
+        "8927efa7-03f1-4aff-9972-ac11fc255d15",
+        "8b2a9405-afed-4a4e-b48f-6803c02572f5",
+        "8c18c755-b1f6-4c3b-af2d-79588bc97f98",
+        "905a5cf3-63f1-4bba-a706-045b9bfc3329",
+        "90e484df-910f-40a2-a245-08b6a6cd9a6d",
+        "94a21ed1-057d-4fac-934f-3d36c562aa2c",
+        "96221d1e-7356-43c9-bd98-f47ca0eb735d",
+        "9955b14e-a0a7-4b28-82a4-e9b9f2aa69ef",
+        "a2f0bc47-0d7e-4703-b5da-b7c5acacb0cb",
+        "a582f20e-8877-48c6-aa66-7e47189b7674",
+        "a91c445e-da61-4308-856c-ab37e9e6d441",
+        "acefb1ac-2904-442f-b0f2-e678dc075858",
+        "aed6b3e0-a4f7-4ee1-8f74-3d011e93546a",
+        "b0fbd003-4fd1-48a0-bc8d-5f8f0005fc83",
+        "b9470217-0aea-419b-b81d-6f4b758e615a",
+        "baa6ee82-526e-4ea3-bf27-409bee047a61",
+        "bac79d21-15be-469c-ae35-98d40f8dc2a3",
+        "c029278a-4476-420d-9772-c94bd50399c1",
+        "c19008db-572f-421f-8dc2-12fc7893c32e",
+        "c5cf41a1-b5b4-49b0-be28-3671b09c64d1",
+        "cdb12904-bcc4-4c8a-9c26-01997ba1a89e"
+      ],
+      "canonical_literal_channel_pages": {
+        "lexical_exact": {
+          "fallback_reason": null,
+          "hits": [
+            {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "ed095402-517e-449a-8fe8-c9a20fea8d64",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:05:20.439952+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 999999,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0999999",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 11,
+                  "start": 0,
+                  "text": "合成条目0999999"
+                }
+              ],
+              "state_version": 1
+            }
+          ],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        },
+        "lexical_global": {
+          "fallback_reason": null,
+          "hits": [
+            {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "ed095402-517e-449a-8fe8-c9a20fea8d64",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:05:20.439952+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 999999,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0999999",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 11,
+                  "start": 0,
+                  "text": "合成条目0999999"
+                }
+              ],
+              "state_version": 1
+            }
+          ],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        },
+        "lexical_recent": {
+          "fallback_reason": null,
+          "hits": [
+            {
+              "completion": "complete",
+              "content_version": 1,
+              "message_id": "ed095402-517e-449a-8fe8-c9a20fea8d64",
+              "occurred_at": "2026-11-03T00:00:00+00:00",
+              "received_at": "2026-11-15T10:05:20.439952+00:00",
+              "representation": "original",
+              "role": "user",
+              "sequence": 999999,
+              "source": {
+                "branch": "main",
+                "entry": "synthetic-scale",
+                "event": "m0999999",
+                "session": "zh-scale-v1"
+              },
+              "spans": [
+                {
+                  "end": 11,
+                  "start": 0,
+                  "text": "合成条目0999999"
+                }
+              ],
+              "state_version": 1
+            }
+          ],
+          "index": {
+            "indexed_messages": 1000000,
+            "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "normalization_version": 1,
+            "pending_messages": 0,
+            "source_messages": 1000000,
+            "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+            "state": "ready"
+          },
+          "next_offset": null,
+          "used_index": true
+        }
+      },
+      "exact_pairs": 4,
+      "request": {
+        "expected_first": "m0999999",
+        "query": "合成条目0999999"
+      }
+    }
+  },
+  "fixture_verification": {
+    "previous_off_seed_sha256_unchanged": "02a0b8fce3e7544c8b918527375177cdacf93fd581f1ca5edf022e80789e2610",
+    "reference_sha256_unchanged": "c1b8e34242dac2ae733500c08065746a59f38e29bbd24a3b4d06b5955280d6c0",
+    "scope": [
+      "Shared B-trees except audit_events_v1 / sqlite_sequence and checkpoint objects",
+      "SQLite schema pages, header, checkpoint and freelist pages can differ"
+    ],
+    "shared_groups": {
+      "lexical": {
+        "pages": 484984,
+        "sha256": "bf349b9b7c3f0612583fa91f94afd0cd654efc4923a48b589af277f0c57d6d99"
+      },
+      "other_shared": {
+        "pages": 25251,
+        "sha256": "6665c73479296ac2cfa812f8120f21aec01ecfc0d38b0144a3ca6ad87fe190f6"
+      },
+      "semantic": {
+        "pages": 597655,
+        "sha256": "24aa5c8723fe3b6f36b20687a8822105b1a0d91cc488e0848702f441d287bc89"
+      },
+      "source": {
+        "pages": 306518,
+        "sha256": "a778270a7fa29fbcd145f5132de3c1e71f817e3e1e3b954f7f9e488bf988af8c"
+      }
+    },
+    "shared_page_sha256": "a002a0a464b8b131268fe1e4f2c6d3d9229a5df9be5b4671e6461d364de250dd",
+    "shared_page_size": 4096,
+    "shared_pages": 1414408,
+    "shared_pages_byte_identical": true,
+    "shared_schema_and_page_placement_equal": true,
+    "states": {
+      "off": {
+        "audit_count": 1029763,
+        "audit_last_seq": 1029763,
+        "audit_rows_added_vs_original": 433,
+        "checkpoint_objects": [],
+        "checkpoint_pages": 0,
+        "freelist_count": 41626,
+        "ignored_names": [
+          "audit_at",
+          "audit_events_v1",
+          "sqlite_schema",
+          "sqlite_sequence"
+        ],
+        "modified_excluded_pages": 74,
+        "new_excluded_pages": 0,
+        "page_count": 1514011
+      },
+      "on": {
+        "audit_count": 1029764,
+        "audit_last_seq": 1029764,
+        "audit_rows_added_vs_original": 434,
+        "checkpoint_objects": [
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "evernook_checkpoint_v1_track_lexical_content_delete",
+          "evernook_checkpoint_v1_track_lexical_content_insert",
+          "evernook_checkpoint_v1_track_lexical_content_update",
+          "evernook_checkpoint_v1_track_lexical_docs_delete",
+          "evernook_checkpoint_v1_track_lexical_docs_insert",
+          "evernook_checkpoint_v1_track_lexical_docs_update",
+          "evernook_checkpoint_v1_track_messages_delete",
+          "evernook_checkpoint_v1_track_messages_insert",
+          "evernook_checkpoint_v1_track_messages_update",
+          "evernook_checkpoint_v1_track_rows_delete",
+          "evernook_checkpoint_v1_track_rows_insert",
+          "evernook_checkpoint_v1_track_rows_update",
+          "evernook_checkpoint_v1_track_visibility_delete",
+          "evernook_checkpoint_v1_track_visibility_insert",
+          "evernook_checkpoint_v1_track_visibility_update"
+        ],
+        "checkpoint_pages": 41675,
+        "freelist_count": 0,
+        "ignored_names": [
+          "audit_at",
+          "audit_events_v1",
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "sqlite_schema",
+          "sqlite_sequence"
+        ],
+        "modified_excluded_pages": 41656,
+        "new_excluded_pages": 50,
+        "page_count": 1514061
+      },
+      "original": {
+        "audit_count": 1029330,
+        "audit_last_seq": 1029330,
+        "audit_rows_added_vs_original": 0,
+        "checkpoint_objects": [
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "evernook_checkpoint_v1_track_lexical_content_delete",
+          "evernook_checkpoint_v1_track_lexical_content_insert",
+          "evernook_checkpoint_v1_track_lexical_content_update",
+          "evernook_checkpoint_v1_track_lexical_docs_delete",
+          "evernook_checkpoint_v1_track_lexical_docs_insert",
+          "evernook_checkpoint_v1_track_lexical_docs_update",
+          "evernook_checkpoint_v1_track_messages_delete",
+          "evernook_checkpoint_v1_track_messages_insert",
+          "evernook_checkpoint_v1_track_messages_update",
+          "evernook_checkpoint_v1_track_visibility_delete",
+          "evernook_checkpoint_v1_track_visibility_insert",
+          "evernook_checkpoint_v1_track_visibility_update"
+        ],
+        "checkpoint_pages": 41639,
+        "freelist_count": 0,
+        "ignored_names": [
+          "audit_at",
+          "audit_events_v1",
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "sqlite_schema",
+          "sqlite_sequence"
+        ],
+        "page_count": 1514011
+      }
+    },
+    "wall_seconds": 98.45080429999507
+  },
+  "lifecycle": {
+    "equal_full_search_page_pairs": 11,
+    "lexical_checkpoint_sha256": "8f48fcee366b34b57a272cfcaf5fbde9a3ee99d489bec3d7be063106b1f8fb83",
+    "log_sha256": "ccdd2c60af9ebe51e844d8b72d6ba1e5e9cc758e70ba29a03f9873332d6d62b2",
+    "probe_sha256": "9b16d765e3be37547c6a27264166f2e8db580e2fcece508af24f6fddf0a38249",
+    "stages": [
+      {
+        "seconds": 72.68444840001757,
+        "stage": "prepare"
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 1,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:35:40.758396+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "5346949ebdee65ab07db0c84608b3996acd1fb27e311a172f1736ce6edad4887",
+        "hits": 1,
+        "stage": "new_original_pending",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:35:40.758396+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:35:40.758396+00:00",
+          "state": "ready"
+        },
+        "full_page_sha256": "081721e1e10ef7f0a024d499a3af083a0f49c03261512122bd05c354a86ab8fc",
+        "hits": 1,
+        "stage": "new_original_indexed",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 1,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:36:04.523695+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "76f3a54942200ae97152c02d3942816ed74c310d4f990fb1afe237bd0c150604",
+        "hits": 0,
+        "stage": "correction_excludes_old",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 1,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:36:04.523695+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "95cad91b001c103ef6d188e8d079fb64b99513410d6c970589852622758293e3",
+        "hits": 1,
+        "stage": "correction_includes_pending_replacement",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "state": "ready"
+        },
+        "full_page_sha256": "25bdb30cb8a80a21c5a5bc80246829da3834056f0e0a89eedc20fc61dd5dd1e5",
+        "hits": 0,
+        "stage": "suppressed_after_indexing",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000000,
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1,
+          "pending_messages": 1,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "fff6f137f658068743f8175a23ab06afa2cc826190a1dc6600ab6bbabd3193ee",
+        "hits": 1,
+        "stage": "missing_fts_row",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 0,
+          "source_messages": 1000001,
+          "source_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "state": "ready"
+        },
+        "full_page_sha256": "c4909ba39e4540212aaae3559003a76370c63c046e3b14ff2e5c7b4714a77c37",
+        "hits": 1,
+        "stage": "after_fts_repair",
+        "used_checkpoint": true
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 101,
+          "source_messages": 1000102,
+          "source_watermark": "2026-11-22T06:36:55.009395+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "1316a319209905fe6cd267bb6ee67bfa43817c6e637d29b7b35c20c033a2029f",
+        "hits": 1,
+        "stage": "dirty_queue_over_read_limit",
+        "used_checkpoint": false
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 102,
+          "source_messages": 1000103,
+          "source_watermark": "2026-11-22T06:37:06.270558+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "b21baca62035fef34998185fe930179c164d4d8e37a0771f9d29cdac69f2296d",
+        "hits": 1,
+        "stage": "dirty_overflow_preserves_late_original",
+        "used_checkpoint": false
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 102,
+          "source_messages": 1000103,
+          "source_watermark": "2026-11-22T06:37:06.270558+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "b21baca62035fef34998185fe930179c164d4d8e37a0771f9d29cdac69f2296d",
+        "hits": 1,
+        "stage": "invalid_schema_fallback",
+        "used_checkpoint": false
+      },
+      {
+        "seconds": 76.77859590001754,
+        "stage": "rebuild_after_schema_change"
+      },
+      {
+        "coverage": {
+          "indexed_messages": 1000001,
+          "indexed_watermark": "2026-11-22T06:36:16.045706+00:00",
+          "normalization_version": 1,
+          "pending_messages": 102,
+          "source_messages": 1000103,
+          "source_watermark": "2026-11-22T06:37:06.270558+00:00",
+          "state": "behind"
+        },
+        "full_page_sha256": "b21baca62035fef34998185fe930179c164d4d8e37a0771f9d29cdac69f2296d",
+        "hits": 1,
+        "stage": "rebuilt_with_pending_sources",
+        "used_checkpoint": true
+      },
+      {
+        "messages": 1000105,
+        "quick_check": "ok",
+        "stage": "physical_integrity"
+      }
+    ]
+  },
+  "method": {
+    "as_of": "2026-11-04T00:00:00Z",
+    "base_revision": "246d1887500c0624d7bc58bd04f4139f4e5a702b",
+    "embedding_space": {
+      "artifact_digest": "9fcc227461e400fbc2e5dd5af4d884ee47193ab7ce73492b3dbc1823da28e23a",
+      "chunk_size": 192,
+      "dimensions": 384,
+      "encoding": "mean-l2-f32-v1",
+      "model": "synthetic-text-fingerprint-384",
+      "overlap": 32,
+      "revision": "v1"
+    },
+    "frozen_checkpoint_code_sha256": "8f48fcee366b34b57a272cfcaf5fbde9a3ee99d489bec3d7be063106b1f8fb83",
+    "limit": 10,
+    "literal_channel_order": [
+      "lexical_global",
+      "lexical_exact",
+      "lexical_recent"
+    ],
+    "p95_method": "nearest rank ceil(.95*n)",
+    "path_identities_equal": true,
+    "probe_sha256": "a0b4ed746d75bd6f5cfe24eaa690ed039f38449da8a5905b91cff998a164f73b",
+    "python": "3.14.4",
+    "rounds": 4,
+    "size": 1000000,
+    "sqlite": "3.50.4",
+    "timeout_seconds": 120,
+    "timings_jsonl_sha256": "27f0ac8877185e666df21565ea5fac05154bf7863daff7018e0defdfef388d6c",
+    "warmup_seconds": {
+      "off": 16.139395299978787,
+      "on": 11.369184800016228
+    }
+  },
+  "pairs": [
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 15.21875,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.046875,
+              "seconds": 0.16947959995013662
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.1684446000144817
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.375,
+              "seconds": 2.377266299998155
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.34375,
+              "seconds": 2.3545722999842837
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.359375,
+              "seconds": 4.459581099974457
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.700001980178058e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.359375,
+              "seconds": 4.4595246000099
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.0625,
+              "seconds": 1.091359599988209
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.03125,
+              "seconds": 0.035922299983212724
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.1831036000221502
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001910000282805413
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.078125,
+              "seconds": 3.148641800013138
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.13142510002944618
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.11005329998442903
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.780000795610249e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00433520000660792
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.953125,
+              "seconds": 4.01927250000881
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.009231800009729
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.265625,
+              "seconds": 4.311974099982763
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.8601244000019506
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.319999324157834e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.265625,
+              "seconds": 0.2781269999977667
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15589799999725074
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "949fa62ab920d9ebd507a5b4e8d9a5d90fba206f3642bdfab15b932a82f6c155",
+          "wall_seconds": 15.696586800011573
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 11.15625,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1776978000125382
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.17021070001646876
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.328125,
+              "seconds": 2.375383899983717
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.28125,
+              "seconds": 2.3519768999831285
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.23942040000110865
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.23940489999949932
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.23874410000280477
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001537999778520316
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.12928729999111965
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.10883179999655113
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.6200024876743555e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.0042505000019446015
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.0,
+              "seconds": 4.01684060000116
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.984375,
+              "seconds": 4.005088799982332
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.234375,
+              "seconds": 4.286822099995334
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.78125,
+              "seconds": 3.8348829000024125
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00011940000695176423
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.2800545000063721
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15330459998222068
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "4f142982eaf1a07b1370f6dea3264f4298c8c9361347a9dc6923ac29fb8dd416",
+          "wall_seconds": 11.431866800005082
+        }
+      },
+      "case": "recent",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "off",
+        "on"
+      ],
+      "round": 1
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 15.09375,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.16599370000767522
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.16206279999460094
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.40625,
+              "seconds": 2.480815100017935
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.390625,
+              "seconds": 2.457759300014004
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.389096400002018
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.540000761859119e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.3890449999889825
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.0,
+              "seconds": 1.009385299985297
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.03125,
+              "seconds": 0.03614330000709742
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.18244010000489652
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0003462999884504825
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.125,
+              "seconds": 3.16042220001691
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11474639998050407
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.09272299997974187
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.479998511262238e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004638100013835356
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.78125,
+              "seconds": 3.9340969000186305
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.765625,
+              "seconds": 3.9223624000151176
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.21875,
+              "seconds": 4.286109400010901
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.765625,
+              "seconds": 3.8152753000031225
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.060000254772604e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.29514889998245053
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.1574800999951549
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "5dea8d2f47f4ef1ca425a543ba8fc501f926b7f2c47fcf7950e6d0f4258c3c23",
+          "wall_seconds": 15.591082200000528
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 11.234375,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.16635370001313277
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1662786999659147
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.421875,
+              "seconds": 2.4762948999996297
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.40625,
+              "seconds": 2.4487278999877162
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.25282890000380576
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.2528152000159025
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.2523198999988381
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 9.129999671131372e-05
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.14129130003857426
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11295640000025742
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.3599975975230336e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004685200023232028
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.78125,
+              "seconds": 3.8429453000135254
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.78125,
+              "seconds": 3.8316342000034638
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.449216599983629
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.90625,
+              "seconds": 3.9656966000038665
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00010159998782910407
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.29028380001545884
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.17472499998984858
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "0b5491f008c4afb8c146b623ffb08b54e12be3760c9938bba9a91b4f5760ee0c",
+          "wall_seconds": 11.532152399973711
+        }
+      },
+      "case": "historical",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "on",
+        "off"
+      ],
+      "round": 1
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 16.390625,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.16379130000132136
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.17113249996327795
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.296875,
+              "seconds": 2.4027348999807145
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.28125,
+              "seconds": 2.3787471000105143
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.452567300002556
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.71999922208488e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.45250980000128
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.0,
+              "seconds": 1.0068076999741606
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.048880399990594015
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.203125,
+              "seconds": 0.21560779999708757
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001818999880924821
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.0625,
+              "seconds": 3.1807093000097666
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1266961000219453
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.10326750000240281
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.600001218728721e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0043990999984089285
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.296875,
+              "seconds": 4.406870500009973
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.28125,
+              "seconds": 4.394338999991305
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 5.171875,
+              "seconds": 5.359733399993274
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.671875,
+              "seconds": 4.868079400010174
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 7.959999493323267e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.2907609000103548
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.1744499999913387
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "5afb80397c0aa9be94b21374a4cdd12628cc1d161744773b714019251ffdf3ad",
+          "wall_seconds": 17.146524100011447
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 13.21875,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.18716940001468174
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.18475080002099276
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.46875,
+              "seconds": 2.4682082000072114
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.453125,
+              "seconds": 2.4391310999926645
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.2460420000134036
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.24603000000934117
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.24547649998567067
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00010039997869171202
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.12047590003930964
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.0980998000013642
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.4999986635521054e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004166099999565631
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.453125,
+              "seconds": 4.551647599990247
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.538645699998597
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 5.734375,
+              "seconds": 5.928657400014345
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 5.21875,
+              "seconds": 5.386064300022554
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001016999885905534
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.328125,
+              "seconds": 0.3241656000027433
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.19388160001835786
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "15c34ccd13e0406b6c16f8eee44240a3523c205035fd11e628042b5f9abe11c1",
+          "wall_seconds": 13.722056599974167
+        }
+      },
+      "case": "historical",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "off",
+        "on"
+      ],
+      "round": 2
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 15.03125,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1606572000309825
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.16255749997799285
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.453125,
+              "seconds": 2.5161294999998063
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.4375,
+              "seconds": 2.488279099983629
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.15625,
+              "seconds": 4.335747099976288
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.7699996028095484e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.15625,
+              "seconds": 4.335688600025605
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.984375,
+              "seconds": 1.0065146000124514
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.03125,
+              "seconds": 0.034588799986522645
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.18691260000923648
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00012159999459981918
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.96875,
+              "seconds": 3.107257200026652
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.13167709999834187
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.11053600002196617
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.379997749812901e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004416899988427758
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.84375,
+              "seconds": 3.911263800022425
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.828125,
+              "seconds": 3.899661399977049
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.15625,
+              "seconds": 4.319554899993818
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.75,
+              "seconds": 3.856134200002998
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 9.289997979067266e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.265625,
+              "seconds": 0.2841580999956932
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.15813679998973384
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "2fa944cda09fa70158905911284cf01586087075e96d0110a567f2548b28b932",
+          "wall_seconds": 15.5981424000056
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 12.140625,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.1677456999605056
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.16763290000380948
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 3.1875,
+              "seconds": 3.351226900005713
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.15625,
+              "seconds": 3.3161595000128727
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.30315999998128973
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.3031454999872949
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.3025236999965273
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 9.059999138116837e-05
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.17966969998087734
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.15290979997371323
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.2899999748915434e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.005054699984611943
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.875,
+              "seconds": 3.9025699000048917
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.859375,
+              "seconds": 3.890828900010092
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.451130200002808
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.90625,
+              "seconds": 3.9734808999928646
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.319999324157834e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.30179989998578094
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15805609998642467
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "36b32681a3ec0b1fec1213d849919f795354ffb1939aefbce528ead4fa1e896d",
+          "wall_seconds": 12.56212119999691
+        }
+      },
+      "case": "recent",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "on",
+        "off"
+      ],
+      "round": 2
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 15.109375,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.18163569999160245
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.16720460000215098
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.296875,
+              "seconds": 2.3869878000114113
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.28125,
+              "seconds": 2.3642779999936465
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.411307700007455
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 5.679999594576657e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.375,
+              "seconds": 4.411226099997293
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.046875,
+              "seconds": 1.0542771999898832
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.046875,
+              "seconds": 0.035868899984052405
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.1872352000209503
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.000145500001963228
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.09375,
+              "seconds": 3.1333882000180893
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.13462179998168722
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11282949996530078
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.2499985536560416e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.0061790000181645155
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.84375,
+              "seconds": 4.025595599989174
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.828125,
+              "seconds": 4.013279600010719
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.25,
+              "seconds": 4.452226699999301
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.988926599995466
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.600001456215978e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.265625,
+              "seconds": 0.28322610000032
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.16241220000665635
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "979099ba46aa88c0887f6aa7b7177ea83e5432d50f74f9b9f0ce82ee9076776d",
+          "wall_seconds": 15.81824679998681
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 10.984375,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.16293149994453415
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.1657054999959655
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.3125,
+              "seconds": 2.3442038999928627
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.3125,
+              "seconds": 2.3212409999978263
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.23939600001904182
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.2393830000073649
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.21875,
+              "seconds": 0.23887989998911507
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 8.749999688006938e-05
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.13154780003242195
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.11055580002721399
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.340000355616212e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004198500013444573
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.875,
+              "seconds": 3.9136658999777865
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.84375,
+              "seconds": 3.9011183999828063
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.265625,
+              "seconds": 4.346138499997323
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.828125,
+              "seconds": 3.8949235000181943
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.540000999346375e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.2812675000168383
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15279520000331104
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "574526bfa897773688abbb470456838f32c7cfe0bd60854668cde19ffa5b888f",
+          "wall_seconds": 11.340021700016223
+        }
+      },
+      "case": "recent",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "off",
+        "on"
+      ],
+      "round": 3
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 17.40625,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.0625,
+              "seconds": 0.16521600011037663
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.078125,
+              "seconds": 0.16221039998345077
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.703125,
+              "seconds": 2.7768925000273157
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.6875,
+              "seconds": 2.7468790999846533
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.40625,
+              "seconds": 4.454403299983824
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.600001218728721e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.40625,
+              "seconds": 4.454345300007844
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.046875,
+              "seconds": 1.0648089000023901
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.046875,
+              "seconds": 0.0506386999913957
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.18978919999790378
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00012469998910091817
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.125,
+              "seconds": 3.1486198999918997
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.17054319998715073
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.14230720000341535
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.579999272711575e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.008371199975954369
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.90625,
+              "seconds": 5.050271799991606
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.90625,
+              "seconds": 5.03793880000012
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 5.015625,
+              "seconds": 5.084377499995753
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.515625,
+              "seconds": 4.545158099994296
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.700002217665315e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.328125,
+              "seconds": 0.3535212999850046
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.16722169998683967
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "147779e4214d8f6913ea41aa0254fae3bdb8e865aea259f57db0c5ed05d4ad1e",
+          "wall_seconds": 17.9337481999828
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 11.1875,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.17765779994078912
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1777841999719385
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.328125,
+              "seconds": 2.3799881000013556
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.296875,
+              "seconds": 2.3577554000075907
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.2353350000048522
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.23531329998513684
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.234375,
+              "seconds": 0.23456959999748506
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00025079998886212707
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.11422649995074607
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.09348749995115213
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.5199988158419728e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004625099973054603
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 3.9697035000135656
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 3.9564103999873623
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.34375,
+              "seconds": 4.37760109998635
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.90625,
+              "seconds": 3.917234799999278
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.6499989265576e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.27671119998558424
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.16499290001229383
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "cb9b85417ff394b5379743a87598ea640bdb63816c740959aac2759a6dc6933d",
+          "wall_seconds": 11.467500099999597
+        }
+      },
+      "case": "historical",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "on",
+        "off"
+      ],
+      "round": 3
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 15.78125,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.2168859999801498
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.22664410001016222
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.34375,
+              "seconds": 2.4523323999892455
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.328125,
+              "seconds": 2.428667599975597
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.265625,
+              "seconds": 4.365090999985114
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.470000228844583e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 4.265625,
+              "seconds": 4.365039199998137
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.0,
+              "seconds": 1.000319299986586
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.03125,
+              "seconds": 0.035104200011119246
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.181604299985338
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.00011850002920255065
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.0625,
+              "seconds": 3.1475971000036225
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.11064620001707226
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.0903402999683749
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.8699985705316067e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.004840300010982901
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.502505100012058
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.328125,
+              "seconds": 4.491881599999033
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.421875,
+              "seconds": 4.523154700000305
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.96875,
+              "seconds": 4.057582000008551
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.999998681247234e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.265625,
+              "seconds": 0.2884102999814786
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.15478270000312477
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "4758d5a97ffd8e17bcf9a5736e131ad3876e029ba8c4cbd746b4b49cfdcaf702",
+          "wall_seconds": 16.45647830000962
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 11.9375,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "baf0769d675d24966163c35768b994bd0767d9f39bf2cc4825ae6d35ff21c4de",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            0
+          ],
+          "normalized_sha256": "66f5c60b16a75101e3898feb6a3fb2c88a36c6b1ee565628b2c162c7ac51bc8e",
+          "ordered_source_events": [
+            "m0000001",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "2ceeb5ed19d080cb7144b0d543b754dfa2e198b1719d54c9e94aa2623ded984b",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.23976169995148666
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.125,
+              "seconds": 0.22259200000553392
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.421875,
+              "seconds": 2.5143564000027254
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.40625,
+              "seconds": 2.4853822000150103
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.25736099999630824
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.2573479000129737
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.2567447999899741
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 9.08000220078975e-05
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.125,
+              "seconds": 0.1196539000084158
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.09821860000374727
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.5699991965666413e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.004211399995256215
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 3.96875,
+              "seconds": 4.185857100004796
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.953125,
+              "seconds": 4.173758999997517
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.9375,
+              "seconds": 5.1094148000120185
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.484375,
+              "seconds": 4.636804900015704
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 6.700001540593803e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.2821762000094168
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.17291929997736588
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "cd130bf617cbcb0f53213b24abbfb072a1315f158fa96a8f1f1b3a6906b576a8",
+          "wall_seconds": 12.69739329998265
+        }
+      },
+      "case": "historical",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "off",
+        "on"
+      ],
+      "round": 4
+    },
+    {
+      "arms": {
+        "off": {
+          "checkpoint_selected": [
+            false
+          ],
+          "cpu_seconds": 17.703125,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.18864730006316677
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.196346699987771
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.78125,
+              "seconds": 2.8097024000016972
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.78125,
+              "seconds": 2.7812531999952625
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.296875,
+              "seconds": 5.4935395999928005
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 3.640001523308456e-05
+            },
+            "lexical_shared_coverage_coverage": {
+              "calls": 1,
+              "cpu_seconds": 5.296875,
+              "seconds": 5.49348249999457
+            },
+            "lexical_shared_coverage_coverage_docs_copy_sql": {
+              "calls": 1,
+              "cpu_seconds": 1.078125,
+              "seconds": 1.0862678000121377
+            },
+            "lexical_shared_coverage_coverage_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.03125,
+              "seconds": 0.04208919999655336
+            },
+            "lexical_shared_coverage_coverage_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.25,
+              "seconds": 0.2385970999894198
+            },
+            "lexical_shared_coverage_coverage_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001269000058528036
+            },
+            "lexical_shared_coverage_coverage_valid_join_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.9375,
+              "seconds": 4.126085999974748
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.1818611000198871
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.140625,
+              "seconds": 0.15373199997702613
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.440001117065549e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.006564600014826283
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.5,
+              "seconds": 4.585726000019349
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.5,
+              "seconds": 4.573113899998134
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.6875,
+              "seconds": 4.7261363999859896
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.1875,
+              "seconds": 4.230375699989963
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 0.000145500001963228
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.296875,
+              "seconds": 0.3104909999819938
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.171875,
+              "seconds": 0.16651120001915842
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc",
+            "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75",
+            "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874",
+            "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6"
+          ],
+          "raw_artifact_sha256": "b2ca4fd9fb680e3c07fc267e111ade87b67099bb93eb2da66e1464cc50329369",
+          "wall_seconds": 18.256148299988126
+        },
+        "on": {
+          "checkpoint_selected": [
+            true
+          ],
+          "cpu_seconds": 12.390625,
+          "exact_vector_scan_count": 1000000,
+          "keyword_candidate_count": 100,
+          "keyword_candidate_sha256": "ec7ffb836f15e1b494e54ec8ef6892ef02bc39b09ae86c755f05fd6b6bd640ed",
+          "keyword_hit_sha256": "071261c932cbe86b6984df377176efc04b7d89a494ff825653b0430dfc2171f4",
+          "keyword_rank_query_stages": [
+            "lexical_keyword_prefix_sql"
+          ],
+          "literal_channel_sha256": "157998538d27e018fae06ad23c449a5adb3b819d7dd971b824f9962656441308",
+          "literal_hits_per_channel": [
+            1,
+            1,
+            1
+          ],
+          "normalized_sha256": "c7500505d8ec3e05358b1eb897a4572219c133c5a00bd30196c7e535c124b9dc",
+          "ordered_source_events": [
+            "m0999999",
+            "m0505050",
+            "m0000005",
+            "m0000003",
+            "m0000007",
+            "m0707070",
+            "m0555555",
+            "m0777777",
+            "m0303030",
+            "m0333333"
+          ],
+          "page_sha256": "b881db36bcd35ac30944544f4011996cd46deb19f8bae692ba2e8e68b7d10f81",
+          "phases": {
+            "final_read": {
+              "calls": 10,
+              "cpu_seconds": 0.09375,
+              "seconds": 0.1771562999638263
+            },
+            "final_state": {
+              "calls": 10,
+              "cpu_seconds": 0.109375,
+              "seconds": 0.1793092000298202
+            },
+            "lexical_keyword": {
+              "calls": 1,
+              "cpu_seconds": 2.90625,
+              "seconds": 2.9676144999975804
+            },
+            "lexical_keyword_prefix_sql": {
+              "calls": 1,
+              "cpu_seconds": 2.875,
+              "seconds": 2.935413700004574
+            },
+            "lexical_shared_coverage": {
+              "calls": 1,
+              "cpu_seconds": 0.3125,
+              "seconds": 0.32352229999378324
+            },
+            "lexical_shared_coverage_checkpoint_status": {
+              "calls": 1,
+              "cpu_seconds": 0.3125,
+              "seconds": 0.3235015999816824
+            },
+            "lexical_shared_coverage_checkpoint_status_guard_scan_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.3125,
+              "seconds": 0.322681299992837
+            },
+            "lexical_shared_coverage_checkpoint_status_temp_ddl_sql": {
+              "calls": 2,
+              "cpu_seconds": 0.0,
+              "seconds": 0.0001344000338576734
+            },
+            "lexical_shared_lookup": {
+              "calls": 3,
+              "cpu_seconds": 0.1875,
+              "seconds": 0.19822180000483058
+            },
+            "lexical_shared_lookup_candidate_hits": {
+              "calls": 3,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.16763179999543354
+            },
+            "query_embedding": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 2.5100016500800848e-05
+            },
+            "recent_window": {
+              "calls": 1,
+              "cpu_seconds": 0.015625,
+              "seconds": 0.005645600002026185
+            },
+            "semantic_shared": {
+              "calls": 1,
+              "cpu_seconds": 4.515625,
+              "seconds": 4.617759999993723
+            },
+            "semantic_shared_sql": {
+              "calls": 1,
+              "cpu_seconds": 4.5,
+              "seconds": 4.607007300015539
+            },
+            "semantic_status": {
+              "calls": 1,
+              "cpu_seconds": 4.25,
+              "seconds": 4.406724300002679
+            },
+            "semantic_status_coverage_sql": {
+              "calls": 1,
+              "cpu_seconds": 3.8125,
+              "seconds": 3.950014199974248
+            },
+            "semantic_status_other_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.0,
+              "seconds": 8.560001151636243e-05
+            },
+            "semantic_status_source_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.28125,
+              "seconds": 0.2767949000117369
+            },
+            "semantic_status_vector_counts_sql": {
+              "calls": 1,
+              "cpu_seconds": 0.15625,
+              "seconds": 0.16193259999272414
+            }
+          },
+          "query_plan_refs": [
+            "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280",
+            "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be",
+            "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31",
+            "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76",
+            "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1",
+            "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288",
+            "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc"
+          ],
+          "raw_artifact_sha256": "b5d7cbb567f02aa46b7d4f9064d90b17e33af5b1914cab31b455220544bae093",
+          "wall_seconds": 12.919768100022338
+        }
+      },
+      "case": "recent",
+      "changed_paths": {
+        "keyword_candidate_order": [],
+        "keyword_hits": [],
+        "literal_channel_pages": [],
+        "page": []
+      },
+      "order": [
+        "on",
+        "off"
+      ],
+      "round": 4
+    }
+  ],
+  "prep": {
+    "copy_and_explicit_removal": {
+      "before_removal": {
+        "checkpoint_counts": [
+          1000000,
+          1000000
+        ],
+        "checkpoint_effective": false,
+        "checkpoint_objects": [
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "evernook_checkpoint_v1_track_lexical_content_delete",
+          "evernook_checkpoint_v1_track_lexical_content_insert",
+          "evernook_checkpoint_v1_track_lexical_content_update",
+          "evernook_checkpoint_v1_track_lexical_docs_delete",
+          "evernook_checkpoint_v1_track_lexical_docs_insert",
+          "evernook_checkpoint_v1_track_lexical_docs_update",
+          "evernook_checkpoint_v1_track_messages_delete",
+          "evernook_checkpoint_v1_track_messages_insert",
+          "evernook_checkpoint_v1_track_messages_update",
+          "evernook_checkpoint_v1_track_visibility_delete",
+          "evernook_checkpoint_v1_track_visibility_insert",
+          "evernook_checkpoint_v1_track_visibility_update"
+        ],
+        "checkpoint_schema_version": 84,
+        "coverage_index": true,
+        "dirty_count": 0,
+        "file_bytes": 6201389056,
+        "freelist_count": 0,
+        "fts_ddl": "CREATE VIRTUAL TABLE \"lexical\" USING fts5(message_id,terms)",
+        "id_acceleration": true,
+        "page_count": 1514011,
+        "recall_candidates": true,
+        "schema_version": 1
+      },
+      "cloned_from_off": {
+        "mtime_ns": 1795329287184829300,
+        "sha256": "02a0b8fce3e7544c8b918527375177cdacf93fd581f1ca5edf022e80789e2610",
+        "size": 6201389056
+      },
+      "off": {
+        "checkpoint_counts": null,
+        "checkpoint_effective": false,
+        "checkpoint_objects": [],
+        "checkpoint_schema_version": null,
+        "coverage_index": true,
+        "dirty_count": null,
+        "file_bytes": 6201389056,
+        "freelist_count": 41633,
+        "fts_ddl": "CREATE VIRTUAL TABLE \"lexical\" USING fts5(message_id,terms)",
+        "id_acceleration": true,
+        "page_count": 1514011,
+        "recall_candidates": true,
+        "schema_version": 17
+      },
+      "original": {
+        "mtime_ns": 1795327677009775000,
+        "sha256": "c1b8e34242dac2ae733500c08065746a59f38e29bbd24a3b4d06b5955280d6c0",
+        "size": 6201389056
+      },
+      "previous_off_seed": {
+        "mtime_ns": 1795328692061918500,
+        "sha256": "02a0b8fce3e7544c8b918527375177cdacf93fd581f1ca5edf022e80789e2610",
+        "size": 6201389056
+      },
+      "stale_removal": {
+        "cpu_seconds": 0.359375,
+        "enabled": false,
+        "wall_seconds": 0.45127550000324845
+      }
+    },
+    "explicit_build": {
+      "before_build": {
+        "checkpoint_counts": null,
+        "checkpoint_effective": false,
+        "checkpoint_objects": [],
+        "checkpoint_schema_version": null,
+        "coverage_index": true,
+        "dirty_count": null,
+        "file_bytes": 6201389056,
+        "freelist_count": 41633,
+        "fts_ddl": "CREATE VIRTUAL TABLE \"lexical\" USING fts5(message_id,terms)",
+        "id_acceleration": true,
+        "page_count": 1514011,
+        "recall_candidates": true,
+        "schema_version": 17
+      },
+      "build": {
+        "cpu_seconds": 68.84375,
+        "enabled": true,
+        "wall_seconds": 71.57039909999003
+      },
+      "on": {
+        "checkpoint_counts": [
+          1000000,
+          1000000
+        ],
+        "checkpoint_effective": true,
+        "checkpoint_objects": [
+          "evernook_checkpoint_v1_dirty",
+          "evernook_checkpoint_v1_head",
+          "evernook_checkpoint_v1_received",
+          "evernook_checkpoint_v1_rows",
+          "evernook_checkpoint_v1_track_lexical_content_delete",
+          "evernook_checkpoint_v1_track_lexical_content_insert",
+          "evernook_checkpoint_v1_track_lexical_content_update",
+          "evernook_checkpoint_v1_track_lexical_docs_delete",
+          "evernook_checkpoint_v1_track_lexical_docs_insert",
+          "evernook_checkpoint_v1_track_lexical_docs_update",
+          "evernook_checkpoint_v1_track_messages_delete",
+          "evernook_checkpoint_v1_track_messages_insert",
+          "evernook_checkpoint_v1_track_messages_update",
+          "evernook_checkpoint_v1_track_rows_delete",
+          "evernook_checkpoint_v1_track_rows_insert",
+          "evernook_checkpoint_v1_track_rows_update",
+          "evernook_checkpoint_v1_track_visibility_delete",
+          "evernook_checkpoint_v1_track_visibility_insert",
+          "evernook_checkpoint_v1_track_visibility_update"
+        ],
+        "checkpoint_schema_version": 36,
+        "coverage_index": true,
+        "dirty_count": 0,
+        "file_bytes": 6201565184,
+        "freelist_count": 0,
+        "fts_ddl": "CREATE VIRTUAL TABLE \"lexical\" USING fts5(message_id,terms)",
+        "id_acceleration": true,
+        "page_count": 1514054,
+        "recall_candidates": true,
+        "schema_version": 36
+      }
+    }
+  },
+  "query_plans": {
+    "00499ae0e903966d300e9761cdf88192ee91fd41a3673b7f263b08abe9d86280": {
+      "phase": "semantic_status_coverage_sql",
+      "plan": [
+        "SEARCH d USING INDEX sqlite_autoindex_semantic_documents_v1_1 (space_id=?)",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH c USING INDEX sqlite_autoindex_semantic_chunks_v1_1 (space_id=? AND message_id=?)",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?) LEFT-JOIN",
+        "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)"
+      ],
+      "sql": "SELECT count(DISTINCT message_id) FROM (SELECT d.message_id FROM semantic_documents_v1 d\n            LEFT JOIN visibility v ON v.message_id=d.message_id\n            JOIN messages INDEXED BY evernook_recall_source_v1 ON messages.id=d.message_id\n            WHERE d.space_id=? AND d.state_version=COALESCE(v.version,1)\n              AND d.content_version=json_extract(messages.receipt,'$.content_version')\n              AND d.chunk_count=(SELECT count(*) FROM semantic_chunks_v1 c\n                  WHERE c.space_id=d.space_id AND c.message_id=d.message_id\n                    AND c.state_version=d.state_version AND c.content_version=d.content_version)\n               AND (v.status IS NULL OR v.status='active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>'')"
+    },
+    "4e85ae106972307eb0ca896ad90cd60de2e4c0516a63007c8578cbb8dbf60bcc": {
+      "phase": "lexical_shared_coverage_coverage_docs_copy_sql",
+      "plan": [
+        "SCAN lexical_docs"
+      ],
+      "sql": "INSERT INTO temp.evernook_search_docs_v1 SELECT message_id,content_version,normalization_version FROM lexical_docs NOT INDEXED WHERE message_id IS NOT NULL"
+    },
+    "57e8fdeed80d057d2c20de5d280d9896ccc0fcadc7e41d87e7dcafdec13321be": {
+      "phase": "semantic_status_other_counts_sql",
+      "plan": [
+        "SCAN sqlite_master"
+      ],
+      "sql": "SELECT count(*) FROM sqlite_master WHERE name IN ('semantic_spaces_v1','semantic_documents_v1','semantic_chunks_v1')"
+    },
+    "57f5a7c0e259b1c3c99a78d8e184402070af8930a7995c66d2e4631132044d31": {
+      "phase": "lexical_shared_coverage_checkpoint_status_guard_scan_sql",
+      "plan": [
+        "SCAN evernook_checkpoint_v1_rows USING COVERING INDEX evernook_checkpoint_v1_received"
+      ],
+      "sql": "SELECT count(*),coalesce(sum(indexed),0),coalesce(sum(CASE WHEN\n        typeof(message_id)='text' AND typeof(received)='text' AND typeof(indexed)='integer'\n        AND indexed IN (0,1) THEN 0 ELSE 1 END),0) FROM evernook_checkpoint_v1_rows"
+    },
+    "66fba27883f51dfe1b483cfe52053b04d475324c5c9c2118a10a48cd5966aa76": {
+      "phase": "semantic_shared_sql",
+      "plan": [
+        "MERGE (UNION ALL)",
+        "LEFT",
+        "CO-ROUTINE global_top",
+        "MATERIALIZE ranked",
+        "SEARCH c USING INDEX sqlite_autoindex_semantic_chunks_v1_1 (space_id=?)",
+        "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?) LEFT-JOIN",
+        "SCAN ranked",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "MATERIALIZE scan_stats",
+        "SCAN ranked",
+        "SCAN global_top",
+        "SCAN scan_stats",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "RIGHT",
+        "CO-ROUTINE recent_top",
+        "SCAN ranked",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN recent_top",
+        "SCAN scan_stats",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "sql": "WITH ranked AS MATERIALIZED (\n                SELECT c.message_id,c.start,c.end,c.state_version,occurred,\n                    min(COALESCE(vec_distance_cosine(c.vector,?),-2.0)) AS distance,count(*) AS chunk_count\n                FROM semantic_chunks_v1 c\n                JOIN messages INDEXED BY evernook_recall_source_v1 ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id\n                WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND (v.status IS NULL OR v.status='active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>'' AND c.state_version=COALESCE(v.version,1)\n                  AND c.content_version=json_extract(messages.receipt,'$.content_version')  GROUP BY c.message_id\n            ), scan_stats AS MATERIALIZED (\n                SELECT sum(chunk_count) AS scanned FROM ranked\n            ), candidates AS (\n                SELECT 0 AS is_recent, global_top.* FROM (\n                    SELECT * FROM ranked ORDER BY distance,message_id LIMIT 100\n                ) AS global_top\n                \n            UNION ALL SELECT 1 AS is_recent, recent_top.* FROM (\n                SELECT * FROM ranked WHERE occurred>=? AND occurred<?\n                ORDER BY distance,message_id LIMIT 100\n            ) AS recent_top\n            )\n            SELECT is_recent,message_id,start,end,state_version,distance,scanned\n            FROM candidates CROSS JOIN scan_stats\n            ORDER BY is_recent,distance,message_id"
+    },
+    "877ac89543f1ce1ae9fcebd5a64b8abe7632646ae262b8749448b24000ec5dd1": {
+      "phase": "semantic_status_source_counts_sql",
+      "plan": [
+        "SCAN messages USING INDEX evernook_recall_source_v1",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)"
+      ],
+      "sql": "SELECT count(*),max(received) FROM messages INDEXED BY evernook_recall_source_v1 WHERE NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''"
+    },
+    "9d22db96a64f7d1aa63f30f2eaed5248d7469b1160f6e46ac8d608ffcad66288": {
+      "phase": "semantic_status_vector_counts_sql",
+      "plan": [
+        "SEARCH semantic_chunks_v1 USING COVERING INDEX sqlite_autoindex_semantic_chunks_v1_1 (space_id=?)"
+      ],
+      "sql": "SELECT count(*) FROM semantic_chunks_v1 WHERE space_id=?"
+    },
+    "b0ba2be32a6f560058d35b5da623fa12d68990eb9ab1a14aa9cd6f99087c24cc": {
+      "phase": "lexical_keyword_prefix_sql",
+      "plan": [
+        "CO-ROUTINE (subquery-5)",
+        "MATERIALIZE keyword_prefix",
+        "SCAN lexical VIRTUAL TABLE INDEX 0:M2",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN keyword_prefix",
+        "MATERIALIZE qualified",
+        "SCAN keyword_prefix",
+        "SEARCH d USING INDEX sqlite_autoindex_lexical_docs_1 (message_id=?)",
+        "SEARCH messages USING INDEX evernook_recall_source_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH generated USING INDEX sqlite_autoindex_captures_1 (message_id=?)",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN (subquery-5)",
+        "SCAN qualified LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "sql": "WITH keyword_prefix AS MATERIALIZED (\n                SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?\n                ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?\n            ), qualified AS MATERIALIZED (\n                SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best\n                FROM keyword_prefix\n                CROSS JOIN lexical_docs d ON d.message_id=keyword_prefix.message_id\n                CROSS JOIN messages INDEXED BY evernook_recall_source_v1 ON messages.id=d.message_id\n                WHERE d.normalization_version=? AND (? IS NULL OR messages.id<>?)\n            AND d.content_version=json_extract(messages.receipt,'$.content_version') AND NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active') AND NOT EXISTS (SELECT 1 FROM captures generated WHERE generated.message_id=messages.id\n    AND json_extract(generated.manifest,'$.tool_name')='evernook_memory_reflect'\n    AND json_extract(generated.manifest,'$.kind')='tool_result') AND json_extract(messages.receipt,'$.original_saved')=1 AND json_extract(messages.event,'$.text')<>''  GROUP BY messages.id ORDER BY best,message_id LIMIT ?\n            )\n            SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)\n            LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id"
+    },
+    "cc25596e716930fbb3cb27f295a8bfeed4f4afd41b3fbc502512244564d7fe75": {
+      "phase": "lexical_shared_coverage_coverage_valid_join_sql",
+      "plan": [
+        "CO-ROUTINE tokens",
+        "SCAN lexical VIRTUAL TABLE INDEX 0:",
+        "USE TEMP B-TREE FOR GROUP BY",
+        "SCAN tokens",
+        "SEARCH d USING PRIMARY KEY (message_id=?)",
+        "SEARCH messages USING COVERING INDEX evernook_message_cover_v1 (id=?)",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)"
+      ],
+      "sql": "INSERT INTO temp.evernook_search_valid_v1 SELECT d.message_id,messages.received FROM temp.evernook_search_docs_v1 d\n    JOIN messages INDEXED BY evernook_message_cover_v1 ON messages.id=d.message_id\n    JOIN (SELECT message_id FROM lexical GROUP BY message_id) tokens ON tokens.message_id=d.message_id\n    WHERE d.normalization_version=1001600\n      AND d.content_version=json_extract(messages.receipt,'$.content_version') AND NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
+    },
+    "e4958bc21c8c5b032db567c0067774aa739bbf6b4d51b2bdea1abc10819ba874": {
+      "phase": "lexical_shared_coverage_coverage_source_counts_sql",
+      "plan": [
+        "SCAN messages USING COVERING INDEX evernook_message_cover_v1",
+        "CORRELATED SCALAR SUBQUERY 1",
+        "SEARCH v USING INDEX sqlite_autoindex_visibility_1 (message_id=?)"
+      ],
+      "sql": "SELECT count(*),max(received) FROM messages WHERE NOT EXISTS (SELECT 1 FROM visibility v WHERE v.message_id=messages.id AND v.status<>'active')"
+    },
+    "f7c4b7e1b443e9356ca72277ba2f70fb47522e0b27ad93f88f97c9b664c421c6": {
+      "phase": "lexical_shared_coverage_coverage_other_counts_sql",
+      "plan": [
+        "SCAN temp.evernook_search_valid_v1"
+      ],
+      "sql": "SELECT count(*),max(received) FROM temp.evernook_search_valid_v1"
+    }
+  },
+  "snapshots": {
+    "snapshot_at_end_of_timing": {
+      "off": {
+        "sha256": "b6e0447f66f9334c46a36719705b9bf2085f83cc00f91539ceb10374b7b58dc2",
+        "st_mtime_ns": 1795329873531615100,
+        "st_size": 6201389056
+      },
+      "on": {
+        "sha256": "fd29c20b1d6fe150f4246e05adca6132b698196cb714b231c74267a1ecc52d0e",
+        "st_mtime_ns": 1795329855272586600,
+        "st_size": 6201593856
+      }
+    },
+    "snapshot_at_start_of_timing": {
+      "off": {
+        "sha256": "43e2170b4076a8c8e21f5d6246b6438d13e066b483241207c962a7e5c4c72277",
+        "st_mtime_ns": 1795329624527346900,
+        "st_size": 6201389056
+      },
+      "on": {
+        "sha256": "14f47991ace20edc1abb8e629d0297e4dc15df78fe6042f9b7e771adc1b7fc69",
+        "st_mtime_ns": 1795329635900641100,
+        "st_size": 6201565184
+      }
+    },
+    "snapshot_before_bootstrap": {
+      "off": {
+        "sha256": "02a0b8fce3e7544c8b918527375177cdacf93fd581f1ca5edf022e80789e2610",
+        "st_mtime_ns": 1795329287184829300,
+        "st_size": 6201389056
+      },
+      "on": {
+        "sha256": "040dd58513b31136b6fac84196019b04e91524e10fe597119c69b8996754d1f6",
+        "st_mtime_ns": 1795329369066499800,
+        "st_size": 6201565184
+      }
+    }
+  }
+}

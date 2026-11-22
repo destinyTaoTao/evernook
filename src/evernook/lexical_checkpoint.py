@@ -29,10 +29,17 @@ def _definitions() -> dict[str, tuple[str, str, str]]:
         _HEAD: ("table", _HEAD, f"CREATE TABLE {_HEAD}(singleton INTEGER PRIMARY KEY CHECK(singleton=1),format_version INTEGER NOT NULL CHECK(format_version=1),normalization_version INTEGER NOT NULL,policy_identity TEXT NOT NULL,source_identity TEXT NOT NULL,schema_version INTEGER NOT NULL,source_count INTEGER NOT NULL CHECK(source_count>=0),indexed_count INTEGER NOT NULL CHECK(indexed_count>=0 AND indexed_count<=source_count))"),
         _RECEIVED: ("index", _ROWS, f"CREATE INDEX {_RECEIVED} ON {_ROWS}(indexed,received)"),
     }
-    for table, column in (("messages", "id"), ("visibility", "message_id"), ("lexical_docs", "message_id"), ("lexical_content", "c0")):
+    # Track direct edits to derived membership as well. Aggregate counts alone
+    # cannot detect an exchange between an indexed and a pending row.
+    for table, column in (("messages", "id"), ("visibility", "message_id"),
+                          ("lexical_docs", "message_id"), ("lexical_content", "c0"), (_ROWS, "message_id")):
         for action, references in (("insert", ("NEW",)), ("delete", ("OLD",)), ("update", ("OLD", "NEW"))):
-            name = _PREFIX + "track_" + table + "_" + action
+            name = _PREFIX + "track_" + table.removeprefix(_PREFIX) + "_" + action
             body = "".join(f"INSERT OR IGNORE INTO {_DIRTY} SELECT {ref}.{column} WHERE {ref}.{column} IS NOT NULL;" for ref in references)
+            if table == _ROWS and action == "update":
+                # Trusted reconciliation replaces whole rows. In-place edits to
+                # cached receive times invalidate the checkpoint instead.
+                body += f"UPDATE {_HEAD} SET schema_version=-1 WHERE OLD.received IS NOT NEW.received;"
             result[name] = ("trigger", table, f"CREATE TRIGGER {name} AFTER {action.upper()} ON {table} BEGIN {body} END")
     return result
 

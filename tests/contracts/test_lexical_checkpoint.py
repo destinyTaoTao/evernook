@@ -102,7 +102,7 @@ class LexicalCheckpointTests(unittest.TestCase):
     def test_lifecycle_preserves_originals_and_index_and_reopens(self) -> None:
         self.prepare()
         expected = self.snapshot()
-        self.assertEqual(len(self.objects()), 16)
+        self.assertEqual(len(self.objects()), 19)
         self.assertTrue(self.runtime.configure_lexical_checkpoint(self.actor, enabled=True))
         reopened = MemoryRuntime(self.config)
         self.assertTrue(reopened.lexical_checkpoint_enabled(self.actor))
@@ -161,6 +161,22 @@ class LexicalCheckpointTests(unittest.TestCase):
         self.check_state()
         self.assertEqual(self.runtime.refresh_lexical_checkpoint(self.actor), dirty - 1)
         self.check_state()
+
+    def test_count_neutral_membership_edits_are_rechecked_before_search(self) -> None:
+        self.runtime.configure_lexical_id_acceleration(self.actor, enabled=True)
+        pending = self.runtime.submit(self.actor, replace(self.event,
+            source=replace(self.event.source, event="pending"), sequence=2, text="合成：青芦灯阵。"))
+        expected = self.runtime.search(self.actor, "青芦灯阵")
+        self.assertEqual([hit.message_id for hit in expected.hits], [pending.message_id])
+        self.assertEqual(expected.index.state, "behind")
+        self.assertTrue(self.runtime.configure_lexical_checkpoint(self.actor, enabled=True))
+        with closing(sqlite3.connect(self.database, isolation_level=None)) as db:
+            db.execute(f"UPDATE {checkpoint._ROWS} SET indexed=1-indexed WHERE message_id IN (?,?)",
+                       (self.receipt.message_id, pending.message_id))
+        self.assertEqual(self.runtime.search(self.actor, "青芦灯阵"), expected)
+        self.check_state()
+        self.assertEqual(self.runtime.refresh_lexical_checkpoint(self.actor), 2)
+        self.assertEqual(self.runtime.search(self.actor, "青芦灯阵"), expected)
 
     def test_missing_and_modified_ownership_or_metadata_fall_back_without_repair(self) -> None:
         self.prepare()
