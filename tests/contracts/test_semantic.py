@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 from evernook import Access, Capture, Change, EmbeddingSpace, Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, initialize
 from evernook.models import SearchHit
+from evernook.purge import PurgeDecision, PurgeWorkflow
 
 
 class SyntheticEmbedding:
@@ -491,13 +492,56 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual((status.state, status.source_messages, status.indexed_messages, status.stored_vectors),
                          ("ready", 1, 1, 2))
 
+    def test_suppression_during_recall_does_not_report_complete_no_match(self) -> None:
+        target = self.save("合成：辛辣")
+        confirmation = self.save("合成：确认不再召回上一条")
+        self.runtime.refresh_lexical(self.access)
+        self.workflow.refresh(self.access)
+        baseline = self.workflow.recall(self.access, "辛辣")
+        self.assertEqual([hit.evidence.message_id for hit in baseline.hits], [target])
+        self.assertEqual(baseline.degraded, ())
+
+        other = MemoryRuntime(self.config)
+        self.backend.hook = lambda: other.change(
+            self.access, Change("recall-hide", target, 1, "suppress", confirmation, "synthetic"))
+        result = self.workflow.recall(self.access, "辛辣")
+        self.assertEqual(result.hits, ())
+        self.assertEqual(result.evidence_state, "incomplete")
+        self.assertIn("source_changed_during_recall", result.degraded)
+
+        self.backend.hook = None
+        self.assertEqual(self.workflow.recall(self.access, "辛辣").evidence_state, "no_matching_evidence")
+
+    def test_purge_during_recall_allows_lower_ranked_current_evidence(self) -> None:
+        target = self.save("合成：辛辣")
+        keeper = self.save("合成：饮食偏好")
+        purge = PurgeWorkflow(MemoryRuntime(self.config))
+        preview = purge.preview(self.access, "recall-purge", (target,))
+        confirmation = self.save("合成：确认彻底删除预览来源")
+        self.runtime.refresh_lexical(self.access)
+        self.workflow.refresh(self.access)
+        baseline = self.workflow.recall(self.access, "辛辣", limit=1)
+        self.assertEqual([hit.evidence.message_id for hit in baseline.hits], [target])
+
+        self.backend.hook = lambda: purge.purge(self.access, PurgeDecision(preview.request_id, confirmation))
+        result = self.workflow.recall(self.access, "辛辣", limit=1)
+        self.assertEqual([hit.evidence.message_id for hit in result.hits], [keeper])
+        self.assertEqual(result.evidence_state, "candidates")
+        self.assertIn("source_changed_during_recall", result.degraded)
+        self.assertIsNone(self.runtime.read(self.access, target))
+
     def test_projections_protected_queries_and_invalid_vectors_never_reach_success(self) -> None:
-        self.save("synthetic opaque protected", sensitive=True)
+        protected = self.save("synthetic opaque protected", sensitive=True)
+        self.runtime.refresh_lexical(self.access)
         self.assertEqual(self.workflow.refresh(self.access).source_messages, 0)
         self.assertEqual(self.backend.calls, [])
+        self.assertEqual([hit.message_id for hit in self.runtime.search(self.access, "protected").hits], [protected])
+        page = self.workflow.recall(self.access, "protected")
+        self.assertEqual((page.hits, page.evidence_state, page.degraded), ((), "no_matching_evidence", ()))
+        calls = len(self.backend.calls)
         with self.assertRaisesRegex(MemoryFailure, "protected_query"):
             self.workflow.recall(self.access, "password=synthetic-secret")
-        self.assertEqual(self.backend.calls, [])
+        self.assertEqual(len(self.backend.calls), calls)
         self.save("合成辛辣")
         for invalid in [(0.0, 0.0, 0.0), (float("nan"), 0.0, 1.0), (1.0,)]:
             self.backend.invalid = invalid

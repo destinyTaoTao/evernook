@@ -667,22 +667,33 @@ class SemanticRecall:
         reserved = recent_ids[:min(2, limit // 3)]
         selected = reserved + [key for key in ordered if key not in reserved]
         result: list[RecallHit] = []
-        for key in selected:
+        source_changed = False
+        if selected:
             try:
                 budget()
+                self.runtime._require_scope(access, "recall", "recall_revalidate")
+                with self.runtime._connection(check=budget) as db:
+                    db.execute("BEGIN")
+                    for key in selected:
+                        budget()
+                        hit = evidence[key]
+                        current = db.execute(f"""SELECT 1 FROM messages
+                            LEFT JOIN visibility v ON v.message_id=messages.id
+                            WHERE messages.id=? AND {_JOINED_ELIGIBLE} AND COALESCE(v.version,1)=?
+                              AND json_extract(messages.receipt,'$.content_version')=?""",
+                            (key, hit.state_version, hit.content_version)).fetchone()
+                        if current is None:
+                            source_changed = True
+                            continue
+                        result.append(RecallHit(hit, tuple(sources[key]), scores[key], similarities.get(key)))
+                        if len(result) == limit:
+                            break
             except MemoryFailure as failure:
+                if failure.code not in {"recall_canceled", "recall_timeout"}:
+                    raise
                 degraded.append(failure.code)
-                break
-            current = self.runtime.read(access, key)
-            if current is None:
-                continue
-            state = self.runtime.state(access, key)
-            hit = evidence[key]
-            if state.status != "active" or state.version != hit.state_version:
-                continue
-            result.append(RecallHit(hit, tuple(sources[key]), scores[key], similarities.get(key)))
-            if len(result) == limit:
-                break
+        if source_changed:
+            degraded.append("source_changed_during_recall")
         result.sort(key=lambda item: (-item.score, item.evidence.message_id))
         self.runtime._authorize(access)
         reasons = tuple(dict.fromkeys(degraded))

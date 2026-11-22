@@ -1286,7 +1286,11 @@ class MemoryRuntime:
                          memory_evidence_only: bool) -> SearchPage:
         # Reuse only within the transaction that verified this coverage and owns its temporary tables.
         status, indexed_query, pending_query = coverage.status, coverage.indexed_query, coverage.pending_query
-        recallable = _RECALLABLE + (' AND ' + _MEMORY_EVIDENCE if memory_evidence_only else '')
+        recallable = _RECALLABLE
+        if memory_evidence_only:
+            # Literal matching already rules out empty text. Exclude safe
+            # projections before they take seats in the ordinary recall page.
+            recallable += f" AND {_MEMORY_EVIDENCE} AND json_extract(messages.receipt,'$.original_saved')=1"
         scope = f"""FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
             WHERE (? IS NULL OR occurred>=?) AND (? IS NULL OR occurred<?) AND {recallable}
               AND (? IS NULL OR messages.id<>?)"""
