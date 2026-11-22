@@ -47,6 +47,8 @@ evernook rebuild-recall-candidate-index --config $runtimeConfig --access $client
 evernook remove-recall-candidate-index --config $runtimeConfig --access $clientFile
 ```
 
-新库默认关闭。`status` 的 `recall_candidate_index` 表示两个索引的定义均已核实。Python 入口为 `SemanticRecall(runtime).configure_candidate_index(access, enabled=True)`，传入 `rebuild=True` 可重建，传入 `enabled=False` 可移除。已激活服务模式的库遵循现有维护入口限制。
+新库默认关闭。`status` 的 `recall_candidate_index` 表示来源和时间索引的定义均已核实。Python 入口为 `SemanticRecall(runtime).configure_candidate_index(access, enabled=True)`，传入 `rebuild=True` 可重建，传入 `enabled=False` 可移除。已激活服务模式的库遵循现有维护入口限制。
 
-SQLite 为有非空普通原文的消息维护两个部分索引，按来源 ID 提供内容版本与时间，按发生时间定位近期窗口。来源抑制、更正、生成内容排除和向量版本仍在检索事务内核对。向量通道继续计算全部合格片段的精确距离，最终证据返回原文。构建和重建需要额外磁盘，在一个写事务内完成。配置失败会回滚。索引缺失或定义不匹配时，查询使用原有来源路径。遇到同名异构对象，维护命令返回 `recall_candidate_index_conflict` 供操作者核对。
+SQLite 为有非空普通原文的消息维护两个部分索引，按来源 ID 提供内容版本与时间，按发生时间定位近期窗口。显式准备或重建时，若账本已有语义分块表，同时构建覆盖索引。索引保持分块主键的空间、来源 ID、起始位置顺序，并包含状态和内容版本。语义覆盖统计可直接从索引核对版本，省去读取向量正文的数据页。只有来源和时间索引的旧库仍可继续查询。后来首次构建语义分块的库可重新执行 `prepare-recall-candidate-index` 补建覆盖索引。
+
+来源抑制、更正、生成内容排除和向量版本仍在检索事务内核对。向量通道继续计算全部合格片段的精确距离，最终证据返回原文。构建、重建和移除在一个写事务内完成，需为构建预留磁盘空间。配置失败会回滚。来源或时间索引缺失或定义不匹配时，查询使用原有来源路径。遇到同名异构对象，维护命令返回 `recall_candidate_index_conflict` 供操作者核对。

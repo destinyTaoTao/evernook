@@ -109,11 +109,65 @@ class SemanticTests(unittest.TestCase):
     def test_candidate_index_maintenance_preserves_an_active_lexical_checkpoint(self) -> None:
         self.save("合成覆盖。" * 4)
         self.runtime.refresh_lexical(self.access)
+        self.workflow.refresh(self.access)
         self.runtime.configure_lexical_id_acceleration(self.access, enabled=True)
         self.runtime.configure_lexical_checkpoint(self.access, enabled=True)
         for active, rebuild in ((True, False), (True, True), (False, False)):
             self.workflow.configure_candidate_index(self.access, enabled=active, rebuild=rebuild)
             self.assertTrue(self.runtime.lexical_checkpoint_enabled(self.access))
+
+    def test_candidate_index_can_add_coverage_for_an_existing_source_and_time_pair(self) -> None:
+        from evernook import recall_index
+
+        name = "evernook_recall_chunk_version_v1"
+        def coverage_index_exists() -> bool:
+            with self.runtime._connection() as db:
+                return db.execute("SELECT 1 FROM sqlite_schema WHERE name=? AND type='index'", (name,)).fetchone() is not None
+
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        self.assertFalse(coverage_index_exists())
+        self.save("合成辛辣" * 100)
+        self.workflow.refresh(self.access, limit=1)
+        baseline = self.workflow.status(self.access)
+        self.assertEqual((baseline.state, baseline.stored_vectors), ("behind", 1))
+        self.assertTrue(self.workflow.candidate_index_enabled(self.access))
+        self.assertFalse(coverage_index_exists())
+
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        self.assertTrue(coverage_index_exists())
+        self.assertEqual(self.workflow.status(self.access), baseline)
+        with self.runtime._connection() as db:
+            db.execute(f"CREATE TRIGGER {name} AFTER UPDATE ON messages BEGIN SELECT 1; END")
+            self.assertTrue(recall_index.enabled(db))
+        for active in (True, False):
+            with self.assertRaisesRegex(MemoryFailure, "recall_candidate_index_conflict"):
+                self.workflow.configure_candidate_index(self.access, enabled=active)
+        with self.runtime._connection() as db:
+            db.execute(f"DROP TRIGGER {name}")
+        self.workflow.configure_candidate_index(self.access, enabled=True, rebuild=True)
+        self.assertTrue(coverage_index_exists())
+        self.assertEqual(self.workflow.status(self.access), baseline)
+        self.workflow.configure_candidate_index(self.access, enabled=False)
+        self.assertFalse(coverage_index_exists())
+        self.assertEqual(self.workflow.status(self.access), baseline)
+
+    def test_candidate_index_preserves_the_span_for_tied_vector_chunks(self) -> None:
+        message_id = self.save("合成辛辣" * 40)
+        self.workflow.refresh(self.access)
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        from evernook import recall_index
+        with self.runtime._connection() as db:
+            db.execute(f"DROP INDEX {recall_index.BY_CHUNK_VERSION}")
+            # Two refresh attempts may publish the first chunk last. Its
+            # rowid order must not choose a different citation on equal scores.
+            first = db.execute("SELECT * FROM semantic_chunks_v1 WHERE message_id=? AND start=0", (message_id,)).fetchone()
+            db.execute("INSERT OR REPLACE INTO semantic_chunks_v1 VALUES(?,?,?,?,?,?,?)", tuple(first))
+
+        baseline = self.workflow.recall(self.access, "饮食偏好", as_of="2025-01-01T00:00:00Z")
+        self.assertGreater(baseline.semantic_scanned_chunks, 1)
+        self.assertEqual(baseline.hits[0].evidence.spans[0].start, 0)
+        self.workflow.configure_candidate_index(self.access, enabled=True)
+        self.assertEqual(self.workflow.recall(self.access, "饮食偏好", as_of="2025-01-01T00:00:00Z"), baseline)
 
     def test_literal_channels_share_the_lexical_coverage_snapshot(self) -> None:
         from evernook import lexical_checkpoint
@@ -424,6 +478,7 @@ class SemanticTests(unittest.TestCase):
         self.workflow.refresh(self.access)
         backend = RoleEmbedding()
         workflow = SemanticRecall(self.runtime, backend)
+        assert workflow.space is not None and self.workflow.space is not None
         self.assertNotEqual(workflow.space.key, self.workflow.space.key)
         self.assertEqual(workflow.status(self.access).indexed_messages, 0)
         signal = threading.Event()
