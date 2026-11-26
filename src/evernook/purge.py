@@ -279,6 +279,8 @@ class PurgeWorkflow:
             db.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
             from .lexical_checkpoint import remove_sources as remove_checkpoint_sources
             remove_checkpoint_sources(db, ids)
+            from .semantic_checkpoint import remove_sources as remove_semantic_checkpoint_sources
+            remove_semantic_checkpoint_sources(db, ids)
             result = PurgeResult(decision.request_id, "completed", preview.source_ids)
             db.execute("UPDATE purge_requests_v1 SET state='completed',result=? WHERE request_id=?",
                        (_json(asdict(result)), decision.request_id))

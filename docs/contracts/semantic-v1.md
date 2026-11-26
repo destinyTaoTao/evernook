@@ -76,3 +76,20 @@ evernook semantic-status --config E:\EverNookData\runtime.json --access E:\EverN
 MCP 启动参数可选加 `--embedding-config <absolute-path>`，新增查询工具 `evernook_v1_recall`，参数同上；它不能从工具参数修改模型路径或维护索引。默认 `recall` profile 现在共七个查询工具，`trusted-host` 共十一项，原有四项受限操作仍只在可信宿主模式开放。`status.semantic` 给出配置空间的覆盖；旧 `search` 仍只提供原词法/精确契约。
 
 Node worker 设置本地模型模式、禁用模型文件缓存，拒绝 Node fetch/socket；成功响应必须报告零次被拦截的出网尝试。这是进程层限制，不等于用户系统已断网或所有原生库网络能力都经过 OS 隔离。没有改变系统网络配置，完整 OS 断网、正式中文质量集及规模时延仍待准入。
+
+## 可选语义覆盖检查点
+
+具有 `maintain` 权限的身份可以为一个嵌入空间构建覆盖检查点。新库默认关闭。建好语义表后，可在维护窗口执行以下命令。准备或重建会占用 SQLite 写事务。对另一个模型执行准备会切换检查点跟踪的空间。
+
+```powershell
+evernook prepare-semantic-checkpoint --config $runtimeConfig --access $clientFile
+evernook refresh-semantic-checkpoint --config $runtimeConfig --access $clientFile --limit 5000
+evernook rebuild-semantic-checkpoint --config $runtimeConfig --access $clientFile
+evernook remove-semantic-checkpoint --config $runtimeConfig --access $clientFile
+```
+
+以上为已激活独立服务的用法。准备、重建、刷新都使用服务启动时绑定的嵌入空间，服务拒收调用方指定的模型配置路径。已变更的模型配置需要重启，换空间后应执行准备，再继续刷新。服务已停用模型或绑定配置损坏时，维护身份仍可移除检查点。四项操作仅通过可信 CLI/RPC 维护入口开放。尚未激活服务的直接模式需要为准备和重建命令添加 `--embedding-config $modelConfig`。
+
+Python 入口为 `SemanticRecall.configure_coverage_checkpoint` 和 `refresh_coverage_checkpoint`。检查点保存来源 ID、接收时间、版本覆盖状态、有效失败分块数及物理向量数。消息、可见性、采集清单及当前空间的文档、分块和失败记录变动时，SQLite 触发器在同一事务记录待复核 ID。触发器写入失败会回滚来源事务。`semantic-status` 和召回在同一状态读取快照中复核最多 100 个变动来源；读端保留队列。已存向量数包含该空间中已失效或已被抑制来源的遗留向量。队列为空时，状态查询读取受校验的计数与接收时间索引。所有候选仍按原流程检索和验证。
+
+超过 100 个待复核 ID 时使用原有全量统计，维护端每次可消化 1–5,000 个。检查点缺失、触发器不全、数据库结构版本变化、摘要失配、未授权改写派生行、查询其他空间或旧库缺少失败记录表时，也沿用全量路径。重新执行准备可重建失效检查点；旧库可先通过已有 `refresh-semantic` 补齐语义表。遇到同名异构对象时，维护操作报告 `semantic_checkpoint_conflict`。普通归档剥离检查点，确认彻底删除时同步清除相应 ID。

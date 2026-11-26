@@ -194,6 +194,10 @@ def _parser() -> Parser:
         ("prepare-search-checkpoint", "Trusted explicit lexical coverage checkpoint build; requires FTS ID acceleration"),
         ("remove-search-checkpoint", "Trusted removal of the optional coverage checkpoint and tracking triggers"),
         ("refresh-search-checkpoint", "Trusted bounded reconciliation of changed checkpoint IDs"),
+        ("prepare-semantic-checkpoint", "Build semantic coverage for one configured embedding space"),
+        ("rebuild-semantic-checkpoint", "Rebuild semantic coverage from authoritative rows"),
+        ("remove-semantic-checkpoint", "Remove optional semantic coverage and tracking triggers"),
+        ("refresh-semantic-checkpoint", "Reconcile changed semantic coverage IDs"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("context", "Build the authorized host context through the independent service"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
@@ -295,8 +299,10 @@ def _parser() -> Parser:
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
-        if name == "refresh-search-checkpoint":
+        if name in ("refresh-search-checkpoint", "refresh-semantic-checkpoint"):
             command.add_argument("--limit", type=int, default=5000)
+        if name in ("prepare-semantic-checkpoint", "rebuild-semantic-checkpoint"):
+            command.add_argument("--embedding-config", type=Path, help="Direct mode only; the service uses its bound model")
         if name in ("recall", "refresh-semantic", "semantic-status", "manage") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
         if name in ("extract", "extract-preferences"):
@@ -841,6 +847,13 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         if args.command == "refresh-semantic":
             return workflow.refresh(access)
         return workflow.status(access)
+    if args.command in ("prepare-semantic-checkpoint", "rebuild-semantic-checkpoint"):
+        return {"enabled": SemanticRecall(runtime, embedding()).configure_coverage_checkpoint(
+            access, enabled=True, rebuild=args.command == "rebuild-semantic-checkpoint")}
+    if args.command == "remove-semantic-checkpoint":
+        return {"enabled": SemanticRecall(runtime).configure_coverage_checkpoint(access, enabled=False)}
+    if args.command == "refresh-semantic-checkpoint":
+        return {"processed": SemanticRecall(runtime).refresh_coverage_checkpoint(access, limit=args.limit)}
     if args.command == "remember":
         event = read_input()
         source = Source(**event.pop("source"))
@@ -941,7 +954,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
 def main() -> None:
     try:
         args = _parser().parse_args()
-        from .service import CLI_OPERATIONS, ENDPOINT, ServiceClient, client_access
+        from .service import CLI_OPERATIONS, ENDPOINT, SEMANTIC_CHECKPOINT_COMMANDS, ServiceClient, client_access
         from .runtime import _load
         required = getattr(args, "require_service", False)
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
@@ -1022,10 +1035,17 @@ def main() -> None:
             if args.command in {'extract', 'extract-preferences'} and args.extraction_config is not None:
                 raise MemoryFailure('service_policy_mismatch')
             access = client_access(args.config, args.access)
-            value = {} if args.command == "status" else (
-                {"message_id": args.message_id} if args.command in ("read", "state") else _input())
+            if args.command in SEMANTIC_CHECKPOINT_COMMANDS:
+                if getattr(args, "embedding_config", None) is not None:
+                    raise MemoryFailure("service_policy_mismatch")
+                value = {"limit": args.limit} if args.command == "refresh-semantic-checkpoint" else {}
+            else:
+                value = {} if args.command == "status" else (
+                    {"message_id": args.message_id} if args.command in ("read", "state") else _input())
+            timeout = 300 if args.command in SEMANTIC_CHECKPOINT_COMMANDS else (
+                130 if args.command in {"reflect", "extract", "extract-preferences"} else 30)
             result = ServiceClient(args.config).call(access, "cli",
-                {"command": args.command, "input": value}, timeout=130 if args.command in {"reflect", "extract", "extract-preferences"} else 30)
+                {"command": args.command, "input": value}, timeout=timeout)
         else:
             if args.command in {'extract', 'extract-preferences'} and args.extraction_config is None:
                 raise MemoryFailure('invalid_arguments')

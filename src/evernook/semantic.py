@@ -17,7 +17,7 @@ from .runtime import MemoryRuntime, _identifier, _json, _RECALLABLE, _MEMORY_EVI
 from .query_plan import QueryPlan, plan_query
 from .vector_distance import distance_function
 from .lexical import NORMALIZATION_IDENTITY, matching_spans, query_expression
-from . import recall_index
+from . import recall_index, semantic_checkpoint
 
 
 _ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
@@ -126,7 +126,7 @@ class SemanticRecall:
 
     @staticmethod
     def _covered(*, eligible_only: bool = False, has_failure_table: bool = True,
-                 sources: str = "messages") -> str:
+                 sources: str = "messages", space_parameter: str = "?") -> str:
         # A chunk is acknowledged when it has a current-version vector or an explicit failure record.
         eligibility = f"AND {_JOINED_ELIGIBLE}" if eligible_only else ""
         # Older index schemas have no failure table. SQLite resolves table names before evaluation.
@@ -136,7 +136,7 @@ class SemanticRecall:
         return f"""SELECT d.message_id FROM semantic_documents_v1 d
             LEFT JOIN visibility v ON v.message_id=d.message_id
             JOIN {sources} ON messages.id=d.message_id
-            WHERE d.space_id=? AND d.state_version=COALESCE(v.version,1)
+            WHERE d.space_id={space_parameter} AND d.state_version=COALESCE(v.version,1)
               AND d.content_version=json_extract(messages.receipt,'$.content_version')
               AND d.chunk_count=(SELECT count(*) FROM semantic_chunks_v1 c
                   WHERE c.space_id=d.space_id AND c.message_id=d.message_id
@@ -144,10 +144,15 @@ class SemanticRecall:
               {failures} {eligibility}"""
 
     def _status(self, db: sqlite3.Connection) -> SemanticStatus:
+        space = self.space
+        if space is not None:
+            checkpoint = semantic_checkpoint.status(db, space.key)
+            if checkpoint is not None:
+                total, covered, failed, vectors, watermark = checkpoint
+                return self._built_status(space.key, total, covered, failed, vectors, watermark)
         sources = recall_index.source_table(db)
         counts = db.execute(f"SELECT count(*),max(received) FROM {sources} WHERE {_ELIGIBLE}").fetchone()
         total = int(counts[0])
-        space = self.space
         if space is None:
             return SemanticStatus("disabled", None, total, 0, total, counts[1])
         if not self._present(db):
@@ -167,8 +172,41 @@ class SemanticRecall:
                 WHERE f.space_id=? AND {_JOINED_ELIGIBLE} AND f.state_version=COALESCE(v.version,1)
                   AND f.content_version=json_extract(messages.receipt,'$.content_version')""", (space.key,)).fetchone()[0])
         vectors = int(db.execute("SELECT count(*) FROM semantic_chunks_v1 WHERE space_id=?", (space.key,)).fetchone()[0])
-        return SemanticStatus("ready" if covered == total else "behind", space.key, total, covered, total - covered, counts[1],
+        return self._built_status(space.key, total, covered, failed, vectors, counts[1])
+
+    @staticmethod
+    def _built_status(space: str, total: int, covered: int, failed: int, vectors: int,
+                      watermark: str | None) -> SemanticStatus:
+        return SemanticStatus("ready" if covered == total else "behind", space, total, covered, total - covered, watermark,
                               None, failed, vectors)
+
+    def configure_coverage_checkpoint(self, access: Access, *, enabled: bool, rebuild: bool = False,
+                                      check: Callable[[], float] | None = None) -> bool:
+        self.runtime._require_scope(access, "maintain", "configure_semantic_checkpoint")
+        if type(enabled) is not bool or type(rebuild) is not bool or (rebuild and not enabled):
+            raise MemoryFailure("invalid_semantic_checkpoint")
+        with self.runtime._connection(check=check) as db:
+            db.execute("BEGIN IMMEDIATE")
+            semantic_checkpoint.configure(db, self.space.key if self.space else None, enabled=enabled, rebuild=rebuild)
+            self.runtime._check_scope(access, "maintain", "configure_semantic_checkpoint")
+            if check is not None:
+                check()
+            db.execute("COMMIT")
+        return enabled
+
+    def refresh_coverage_checkpoint(self, access: Access, *, limit: int = 5000,
+                                    check: Callable[[], float] | None = None) -> int:
+        self.runtime._require_scope(access, "maintain", "refresh_semantic_checkpoint")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        with self.runtime._connection(check=check) as db:
+            db.execute("BEGIN IMMEDIATE")
+            processed = semantic_checkpoint.refresh(db, limit, space=self.space.key if self.space else None)
+            self.runtime._check_scope(access, "maintain", "refresh_semantic_checkpoint")
+            if check is not None:
+                check()
+            db.execute("COMMIT")
+        return processed
 
     def candidate_index_enabled(self, access: Access) -> bool:
         self.runtime._authorize(access)

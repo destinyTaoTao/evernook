@@ -14,6 +14,19 @@ from tests.contracts.contract_assertions import assert_original_roundtrip
 
 
 class CLITests(unittest.TestCase):
+    def test_semantic_checkpoint_cli_lifecycle_without_model_inference(self) -> None:
+        settings = self.directory / "embedding.json"
+        settings.write_text(json.dumps({"schema_version": 1, "node": str(self.directory / "node"),
+            "transformers_dir": str(self.directory), "model_dir": str(self.directory)}), encoding="utf-8")
+        options = ("--embedding-config", str(settings))
+        self.assertEqual(self.invoke("refresh-semantic", extra=options)[1]["result"]["source_messages"], 0)
+        self.assertEqual(self.invoke("prepare-semantic-checkpoint", extra=options)[1]["result"], {"enabled": True})
+        event = Event(Source("test", "session", "main", "one"), "user", 1, None, "complete", "合成来源")
+        MemoryRuntime(self.config).submit(self.access, event)
+        self.assertEqual(self.invoke("refresh-semantic-checkpoint", extra=("--limit", "1"))[1]["result"], {"processed": 1})
+        self.assertEqual(self.invoke("rebuild-semantic-checkpoint", extra=options)[1]["result"], {"enabled": True})
+        self.assertEqual(self.invoke("remove-semantic-checkpoint")[1]["result"], {"enabled": False})
+
     def test_recall_candidate_index_cli_lifecycle(self) -> None:
         for operation, expected in (("status", False), ("prepare-recall-candidate-index", True),
                                     ("rebuild-recall-candidate-index", True), ("remove-recall-candidate-index", False)):

@@ -246,6 +246,44 @@ class ServiceTests(unittest.TestCase):
         self.assertNotEqual(self.client.call(self.access, 'mcp', status_args)['semantic']['state'], 'unavailable')
         self.assertEqual(self.client.call(self.access, 'read', {'message_id': saved['message_id']})['event'], self.event())
 
+    def test_activated_semantic_checkpoint_cli_uses_bound_space_and_maintenance_identity(self) -> None:
+        from evernook import SemanticRecall
+        from evernook.embedding import load_embedding
+        self.processes[-1].terminate()
+        self.processes[-1].wait(timeout=15)
+        owner = self.config.parent / "mcp-access-synthetic.json"
+        pair_client(self.config, client_id="synthetic", entry="test", access_path=owner)
+        reader = pair_client(self.config, client_id="reader", entry="reader", scopes=("recall",),
+                             access_path=self.config.parent / "mcp-access-reader.json")
+        settings = Path(self.temporary.name) / "embedding.json"
+        settings.write_text(json.dumps({"schema_version": 1, "node": str(settings.parent / "node"),
+            "transformers_dir": str(settings.parent), "model_dir": str(settings.parent)}), encoding="utf-8")
+        SemanticRecall(MemoryRuntime(self.config), load_embedding(settings)).refresh(self.access)
+        self.start(["--activate-owner", str(owner), "--embedding-config", str(settings)])
+        def cli(command: str, *options: str) -> dict[str, Any]:
+            run = subprocess.run([sys.executable, "-m", "evernook.cli", command, "--config", str(self.config),
+                                  "--access", str(owner), *options], stdin=subprocess.DEVNULL,
+                                 capture_output=True, timeout=30)
+            value: dict[str, Any] = json.loads(run.stdout)
+            self.assertEqual(run.returncode, 0 if value["ok"] else 1)
+            return value
+        prepare = "prepare-semantic-checkpoint"
+        self.assertEqual(cli(prepare, "--embedding-config", str(settings))["error"]["code"], "service_policy_mismatch")
+        with self.assertRaisesRegex(MemoryFailure, "invalid_arguments"):
+            self.client.call(self.access, "cli", {"command": prepare, "input": {"embedding_config": str(settings)}})
+        with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            self.client.call(reader, "cli", {"command": prepare, "input": {}})
+        with self.assertRaisesRegex(MemoryFailure, "unknown_tool|operation_not_allowed"):
+            self.client.call(self.access, "mcp", {"profile": "recall", "name": prepare, "arguments": {}})
+        self.assertEqual(cli(prepare)["result"], {"enabled": True})
+        self.client.call(self.access, "remember", {"event": self.event()})
+        self.assertEqual(cli("refresh-semantic-checkpoint", "--limit", "1")["result"], {"processed": 1})
+        self.assertEqual(cli("rebuild-semantic-checkpoint")["result"], {"enabled": True})
+        settings.write_text("{}", encoding="utf-8")
+        self.assertEqual(cli(prepare)["error"]["code"], "embedding_config_changed")
+        self.assertEqual(cli("refresh-semantic-checkpoint")["error"]["code"], "embedding_config_changed")
+        self.assertEqual(cli("remove-semantic-checkpoint")["result"], {"enabled": False})
+
     def test_embedding_repaired_after_invalid_start_requires_restart(self) -> None:
         self.processes[-1].terminate()
         self.processes[-1].wait(timeout=15)
