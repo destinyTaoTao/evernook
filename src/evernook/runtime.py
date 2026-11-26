@@ -26,6 +26,7 @@ from .models import (
     Receipt, RuntimeStatus, Source, StoredMessage, SearchHit, SearchPage, LexicalStatus,
 )
 from .paths import external, provision_private_directory, verify_private_directory
+from .runtime_mode import runtime_mode
 from .safety import credential_signal
 from .lexical import NORMALIZATION_IDENTITY, index_terms, matching_spans, normalize, query_expression
 
@@ -393,23 +394,7 @@ class MemoryRuntime:
         self._management_view_key = secrets.token_bytes(32)
         config_path = external(config_path)
         config = _load(config_path)
-        base_keys = {"schema_version", "data_dir", "busy_timeout_ms"}
-        if (set(config) not in (base_keys, base_keys | {"service_mode"}, base_keys | {"service_mode", "restored_missing_vault"},
-                                base_keys | {"service_mode", "protected_multi_binding"},
-                                base_keys | {"service_mode", "restored_missing_vault", "protected_multi_binding"},
-                                base_keys | {"service_mode", "protected_single_binding"},
-                                base_keys | {"service_mode", "restored_missing_vault", "protected_single_binding"})
-                or type(config["schema_version"]) is not int or config["schema_version"] != 1):
-            raise MemoryFailure("unsupported_config")
-        if config.get("protected_multi_binding") is True and config.get("protected_single_binding") is True:
-            raise MemoryFailure("unsupported_config")
-        if "service_mode" in config and config["service_mode"] is not True:
-            raise MemoryFailure("unsupported_config")
-        if "restored_missing_vault" in config and config["restored_missing_vault"] is not True:
-            raise MemoryFailure("unsupported_config")
-        if "protected_multi_binding" in config and config["protected_multi_binding"] is not True:
-            raise MemoryFailure("unsupported_config")
-        if config.get("service_mode") and not service_owner:
+        if runtime_mode(config) != "embedded" and not service_owner:
             raise MemoryFailure("service_required")
         if not isinstance(config["data_dir"], str) or type(config["busy_timeout_ms"]) is not int or not 0 <= config["busy_timeout_ms"] <= 30000:
             raise MemoryFailure("invalid_config")

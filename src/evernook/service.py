@@ -780,50 +780,15 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                 if (activate_owner is not None or not _load(config).get('service_mode')) and (server.extraction_error or server.reflection_error):
                     raise MemoryFailure(server.extraction_error or server.reflection_error or 'service_provider_unavailable')
                 from .missing_vault import attachment, read_state, record_state
-                from .vault_single_binding import read as read_single_binding
-                with runtime._connection(ownership_exclusive=True) as check:
-                    initial_config = _load(config)
-                    multi_marker = initial_config.get('protected_multi_binding') is True
-                    single_marker = initial_config.get('protected_single_binding') is True
-                    if multi_marker and single_marker:
-                        raise MemoryFailure('protected_multi_binding_mismatch')
-                    binding_exists = (runtime.root / 'protected-multi-binding.json').exists()
-                    if (multi_marker and not binding_exists) or (binding_exists and not multi_marker and not activate_verified_multi):
-                        raise MemoryFailure('protected_multi_binding_mismatch')
-                    single_exists = (runtime.root / 'protected-single-binding.json').exists()
-                    if (single_marker and not single_exists) or (single_exists and not single_marker and not activate_verified_inbox):
-                        raise MemoryFailure('protected_single_binding_mismatch')
-                    if multi_marker and (protected_root is None or not protected_history_roots):
-                        raise MemoryFailure('protected_multi_binding_mismatch')
-                    if single_marker and (allow_legacy_shared or activate_verified_multi
-                                          or activate_restored_without_vault
-                                          or (activate_owner is not None and not activate_verified_inbox)):
-                        raise MemoryFailure('invalid_protected_service_config')
-                    if single_marker and (protected_root is None or protected_keys is None or protected_history_roots):
-                        raise MemoryFailure('protected_single_binding_mismatch')
-                    if single_marker and protected_root is not None and protected_keys is not None:
-                        bound = read_single_binding(runtime)
-                        if (bound is None or str(external(protected_root)) != bound['inbox_dir']
-                                or str(external(protected_keys)) != bound['key_dir']):
-                            raise MemoryFailure('protected_single_binding_mismatch')
-                    if ((protected_history_roots and not (multi_marker or activate_verified_multi))
-                            or (multi_marker and (activate_owner is not None or allow_legacy_shared))):
-                        raise MemoryFailure('invalid_protected_service_config')
-                    missing_vault = read_state(runtime, check)
-                    attached_vault = attachment(runtime, check)
-                    from .vault_retirement import active_registry, active_link_count
-                    if (len(active_registry(runtime, check)) > 1
-                            and not (multi_marker or activate_verified_multi or activate_restored_without_vault or missing_vault)):
-                        raise MemoryFailure('protected_cutover_requires_migration')
-                if missing_vault and (protected_root is not None or allow_legacy_shared):
-                    raise MemoryFailure('protected_restore_required')
-                if attached_vault is not None:
-                    if (multi_marker or activate_verified_multi or allow_legacy_shared or protected_root is None or protected_keys is None
-                            or str(external(protected_root)) != attached_vault['inbox_dir']
-                            or str(external(protected_keys)) != attached_vault['key_dir']):
-                        raise MemoryFailure('protected_attachment_mismatch')
-                if missing_vault and not _load(config).get('service_mode') and not activate_restored_without_vault:
-                    raise MemoryFailure('protected_restore_required')
+                from .service_bootstrap import inspect_vault_startup
+                from .runtime_mode import runtime_mode
+                from .vault_retirement import active_registry, active_link_count
+                mode, missing_vault, attached_vault = inspect_vault_startup(runtime, config,
+                    protected_root=protected_root, protected_keys=protected_keys, protected_history_roots=protected_history_roots,
+                    activate_owner=activate_owner, activate_verified_inbox=activate_verified_inbox,
+                    activate_verified_multi=activate_verified_multi, activate_restored_without_vault=activate_restored_without_vault,
+                    allow_legacy_shared=allow_legacy_shared)
+                multi_marker, single_marker = mode == "multi", mode == "single"
                 if missing_vault:
                     server.protected_state = 'restored_missing'
                 if protected_root is not None and protected_keys is not None:
@@ -835,6 +800,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     server.protected_state = 'configured'
                     if single_marker:
                         from .vault_migration import _materials
+                        from .vault_single_binding import read as read_single_binding
                         bound = read_single_binding(runtime)
                         if (bound is None or server.protected_inbox.inbox_id != bound['inbox_id']
                                 or server.protected_inbox.public['key_id'] != bound['key_id']
@@ -943,14 +909,14 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                             _atomic_json(config, {**value, "service_mode": True})
                             db.execute("COMMIT")
                 with runtime._connection(ownership_exclusive=True) as db:
-                    current_config = _load(config)
-                    if ((current_config.get('protected_multi_binding') is True) != multi_marker
+                    current_mode = runtime_mode(_load(config))
+                    if ((current_mode == 'multi') != multi_marker
                             or (runtime.root / 'protected-multi-binding.json').exists() != multi_marker):
                         raise MemoryFailure('protected_multi_binding_mismatch')
-                    if ((current_config.get('protected_single_binding') is True) != single_marker
+                    if ((current_mode == 'single') != single_marker
                             or (runtime.root / 'protected-single-binding.json').exists() != single_marker):
                         raise MemoryFailure('protected_single_binding_mismatch')
-                    activated = current_config.get('service_mode') is True
+                    activated = current_mode != 'embedded'
                     if read_state(runtime, db):
                         if server.protected_inbox is not None or allow_legacy_shared:
                             raise MemoryFailure('protected_restore_required')
