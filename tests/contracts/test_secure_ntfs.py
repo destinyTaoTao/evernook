@@ -46,11 +46,14 @@ class SecureNtfsTests(unittest.TestCase):
         (self.root / 'existing').mkdir()
         (self.root / 'sample').write_bytes(b'unchanged')
         with PrivateTree(self.root) as root:
-            with self.assertRaises(MemoryFailure):
+            with self.assertRaises(MemoryFailure) as refusal:
                 root.mkdir('existing')
+            self.assertEqual(refusal.exception.code, 'secure_creation_refused')
             with self.assertRaises(MemoryFailure):
                 with root.file('sample'):
                     self.fail('existing file opened')
+            root.mkdir('available')
+        self.assertTrue((self.root / 'available').is_dir())
         self.assertEqual((self.root / 'sample').read_bytes(), b'unchanged')
 
     def test_existing_open_file_is_not_modified(self) -> None:
@@ -208,13 +211,17 @@ class SecureNtfsTests(unittest.TestCase):
                             kernel.CloseHandle(handle)
                         stop.wait(0.001)
                 worker = threading.Thread(target=attacker, daemon=True)
+                created: set[str] = set()
                 worker.start()
                 try:
                     for step in range(20):
-                        child.mkdir(f'created-{step}')
-                        # Transient write-attributes conversions may or may not
-                        # be visible here; they are asserted statically below.
-                        # Content must never land in the redirected target.
+                        name = f'created-{step}'
+                        try:
+                            child.mkdir(name)
+                        except MemoryFailure as refusal:
+                            self.assertEqual(refusal.code, 'secure_creation_refused')
+                        else:
+                            created.add(name)
                         self.assertFalse(list(target.iterdir()))
                 finally:
                     stop.set()
@@ -222,6 +229,7 @@ class SecureNtfsTests(unittest.TestCase):
                 self.assertFalse(worker.is_alive())
                 self.assertFalse(detected, detected)
                 self.assertFalse(list(target.iterdir()))
+                self.assertEqual({entry.name for entry in path.iterdir()}, created)
 
     def test_in_place_junction_conversion_is_detected_and_never_redirects(self) -> None:
         target = self.root / 'target'
