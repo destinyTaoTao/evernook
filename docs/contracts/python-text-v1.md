@@ -22,7 +22,7 @@ saved = MemoryRuntime(config).read(access, receipt.message_id)
 assert saved is not None and saved.event.text == "合成：37.50元。\r\n甲🙂e\u0301乙"
 ```
 
-初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。每次启动用系统 Windows PowerShell 的 .NET ACL 接口核验目录和运行文件没有其他身份授权；失败拒绝启动，不自动修改已有目录权限。`runtime.json` 严格 schema v1，`client.json` 新建单身份为 v2，配对为 v3、兼容旧 v1/v2；未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=4`，兼容升级旧 v1–v3，见[工具与附件](capture-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
+初始化通过 Windows 自带 `whoami/icacls` 移除新数据目录的继承权限并授予当前用户完全控制，之后才写配置、访问 token、幂等密钥和数据库。已有目录拒绝覆盖。运行时和服务客户端在读取连接材料前通过 Win32 在进程内重新读取 DACL，核验受保护的根目录和实际存在的运行文件。拒绝其他身份授权、拒绝项和缺少当前用户完全控制的权限。检查失败返回错误，已有目录权限由用户管理。`runtime.json` 严格 schema v1，`client.json` 新建单身份为 v2，配对为 v3、兼容旧 v1/v2；未知字段、重复 JSON 键、错误类型/版本、checkout 内、相对路径及非本机固定 NTFS 路径均拒绝。当前数据库 `user_version=4`，兼容升级旧 v1–v3，见[工具与附件](capture-v1.md)。凭证和 SQLite/WAL/SHM 不得通过链接跳出数据目录。令牌不进入 CLI 参数或环境变量。
 
 重启时，受信任的本机宿主从私有访问文件装载 `client_id`、`token` 创建 `Access`，不得记录文件内容。T11 的 `pair_client` 可显式登记多个身份及其唯一绑定 `entry`，普通记忆共用同一账本；身份文件兼容 v1/v2，配对时写入 v3 清单。所有普通操作都要求 token 和 `contract_version=1`，每次重新核验登记。`access_from_file` 是可信本机启动操作，不是远程工具。同用户进程可读取授权文件，本边界不隔离已经控制该 Windows 账户的进程。传输适配器复用入口检查，不能通过工具参数授予权限。
 
