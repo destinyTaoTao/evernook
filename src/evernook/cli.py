@@ -258,11 +258,11 @@ def _parser() -> Parser:
         ("profile-summary", "Aggregate current confirmed profile tags by category"),
         ("profile-history", "Read one profile tag's revision history"),
         ("audit-query", "Query the append-only caller audit log using JSON stdin"),
+        ("audit-health", "Read this runtime instance's best-effort audit write loss counters"),
         ("consolidation-begin", "Claim a raw source range for explicit consolidation"),
         ("consolidation-complete", "Submit consolidation drafts into the review queue; profile tags propose only"),
         ("consolidation-queue", "Read the consolidation review queue"),
         ("consolidation-status", "Read one consolidation run status"),
-        ("audit-health", "Read this runtime instance's best-effort audit write loss counters"),
         ("consolidation-fail", "Mark a consolidation run failed with an error code"),
         ("consolidation-configure", "Set consolidation tier and the low-risk merge whitelist"),
         ("scheduler-configure", "Configure the in-process consolidation scheduler"),
@@ -863,6 +863,10 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
         return runtime.search(access, **read_input())
     if args.command == "audit-query":
         return runtime.audit_query(access, **read_input())
+    if args.command == "audit-health":
+        if input_value:
+            raise MemoryFailure("invalid_arguments")
+        return runtime.audit_health(access)
     if args.command.startswith("consolidation-"):
         from .candidates import EvidenceSpan
         from .consolidation import ConsolidationDraft, ConsolidationWorkflow
@@ -874,10 +878,6 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             value["source_ids"] = tuple(value["source_ids"])
             return consolidation.begin(access, **value)
         if args.command == "consolidation-complete":
-    if args.command == "audit-health":
-        if input_value:
-            raise MemoryFailure("invalid_arguments")
-        return runtime.audit_health(access)
             if not isinstance(value.get("drafts"), list):
                 raise MemoryFailure("invalid_arguments")
             drafts: list[ConsolidationDraft] = []
