@@ -142,10 +142,16 @@ class ServiceClient:
     def context(self, access: Access, query: str, *, model_id: str, max_tokens: int, as_of: str,
                 mode: str = 'normal', timeout: float = 30, current_input_id: str | None = None,
                 query_intent: str | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
-        value = self.call(access, 'mcp', {'name': 'evernook_v1_context', 'profile': 'trusted-host',
-            'arguments': {'query': query, 'model_id': model_id, 'max_tokens': max_tokens, 'as_of': as_of,
-                'mode': mode, 'timeout': timeout, 'current_input_id': current_input_id,
-                'query_intent': query_intent}}, timeout=130, cancel=cancel)
+        arguments = {'query': query, 'model_id': model_id, 'max_tokens': max_tokens, 'as_of': as_of,
+                     'mode': mode, 'timeout': timeout, 'current_input_id': current_input_id, 'query_intent': query_intent}
+        try:
+            value = self.call(access, 'context', arguments, timeout=130, cancel=cancel)
+        except MemoryFailure as failure:
+            if failure.code != 'unknown_service_operation':
+                raise
+            # Old servers can still provide the original read-only adapter.
+            value = self.call(access, 'mcp', {'name': 'evernook_v1_context', 'profile': 'trusted-host',
+                              'arguments': arguments}, timeout=130, cancel=cancel)
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value
@@ -305,9 +311,37 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
     if not isinstance(request["access"], dict) or not isinstance(request["arguments"], dict):
         raise MemoryFailure("invalid_service_request")
     access = Access(**request["access"])
-    runtime.handshake(access)
+    capabilities = runtime.handshake(access)
     arguments = request["arguments"]
     operation = request["operation"]
+    if operation == "handshake":
+        if arguments:
+            raise MemoryFailure("invalid_arguments")
+        return capabilities
+    if operation == "capture":
+        from .capture_wire import decode_capture
+        runtime._check_scope(access, "capture", "submit_capture")
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure("capture_canceled")
+        return runtime.submit_capture(access, decode_capture(arguments, max_attachment_chunks=4096), cancel=cancel)
+    if operation == "context":
+        from .host_context import HostContext
+        from .embedding import load_embedding
+        runtime._check_scope(access, "recall", "host_context_build")
+        required = {"query", "model_id", "max_tokens", "as_of"}
+        if (not required <= arguments.keys() or arguments.keys() - required - {"mode", "timeout", "current_input_id", "query_intent"}
+                or any(not isinstance(arguments[k], str) for k in ("query", "model_id", "as_of"))
+                or any(arguments.get(k) is not None and not isinstance(arguments[k], str) for k in ("current_input_id", "query_intent"))
+                or type(arguments["max_tokens"]) is not int or not isinstance(arguments.get("mode", "normal"), str)
+                or type(arguments.get("timeout", 30)) not in (int, float)):
+            raise MemoryFailure("invalid_arguments")
+        if cancel is not None and cancel.is_set():
+            raise MemoryFailure("context_canceled")
+        if context_config is None:
+            raise MemoryFailure("context_unconfigured")
+        backend = (embedding_binding.current() if embedding_binding is not None else load_embedding(embedding_config)) if embedding_config is not None else None
+        return HostContext(runtime, SemanticRecall(runtime, backend), context_config).build(
+            access, **{"mode": "normal", "timeout": 30, **arguments}, cancel=cancel)
     def selected_inbox() -> ProtectedInbox:
         if protected_inbox is None:
             raise MemoryFailure('protected_service_unconfigured')
@@ -523,9 +557,8 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
             finally:
                 extraction_gate.release()
         if command == 'context':
-            return dispatch(runtime, {**request, 'operation': 'mcp',
-                'arguments': {'name': 'evernook_v1_context', 'profile': 'trusted-host',
-                    'arguments': arguments['input']}}, cancel=cancel, context_config=context_config,
+            return dispatch(runtime, {**request, 'operation': 'context',
+                'arguments': arguments['input']}, cancel=cancel, context_config=context_config,
                 embedding_config=embedding_config, reflector=reflector, embedding_binding=embedding_binding)
         if command in {'reflect', 'reflect-configure'}:
             if reflector is None:

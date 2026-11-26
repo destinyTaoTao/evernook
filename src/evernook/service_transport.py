@@ -22,7 +22,7 @@ SERIAL_IDLE = 10.0
 
 
 def serial_operation(operation: object, arguments: object) -> bool:
-    if operation in ("status", "read", "search", "recall", "remember", "mcp-list"):
+    if operation in ("status", "handshake", "read", "search", "recall", "remember", "capture", "context", "mcp-list"):
         return True
     if operation != "mcp" or not isinstance(arguments, dict):
         return False

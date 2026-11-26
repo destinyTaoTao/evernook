@@ -1096,7 +1096,11 @@ class MemoryRuntime:
         value["gaps"] = tuple(value["gaps"])
         return CaptureReceipt(**value)
 
-    def submit_capture(self, access: Access, capture: Capture) -> CaptureReceipt:
+    def submit_capture(self, access: Access, capture: Capture, *, cancel: threading.Event | None = None) -> CaptureReceipt:
+        def check() -> None:
+            if cancel is not None and cancel.is_set():
+                raise MemoryFailure("capture_canceled")
+        check()
         identity = self._require_scope(access, "capture", "submit_capture",
             _json(asdict(capture.event.source)) if isinstance(capture, Capture) and isinstance(capture.event, Event) else "")
         if not isinstance(capture, Capture):
@@ -1112,6 +1116,7 @@ class MemoryRuntime:
             stream_oversize = sum(len(chunk) for chunk in capture.text_chunks) > 1048576
             keyed_stream = hmac.new(self._fingerprint_key, digestmod=hashlib.sha256)
             for chunk in capture.text_chunks:
+                check()
                 keyed_stream.update(chunk.encode("utf-8", errors="surrogatepass"))
             stream_fingerprint = keyed_stream.hexdigest()
             event = replace(event, text="" if stream_oversize else "".join(capture.text_chunks),
@@ -1144,6 +1149,7 @@ class MemoryRuntime:
         protected = event.sensitive or event.protected_source or credential_signal(event.text)
         attachment_ids: set[str] = set()
         for attachment in capture.attachments:
+            check()
             if not isinstance(attachment, AttachmentInput):
                 raise MemoryFailure("invalid_attachment")
             _identifier(attachment.attachment_id)
@@ -1205,6 +1211,7 @@ class MemoryRuntime:
             retained = replace(event, text=f"[CAPTURE_GAP:{body_gap}]")
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            check()
             if capture.input_id is not None:
                 self._state(db, capture.input_id)
             receipt = self._persist_event(db, event, retained, fingerprint)
@@ -1230,6 +1237,7 @@ class MemoryRuntime:
                 enqueue(db, capture.event, result)
             for attachment_id, data, digest in objects:
                 db.execute("INSERT INTO attachments VALUES (?,?,?,?)", (receipt.message_id, attachment_id, data, digest))
+            check()
             db.execute("COMMIT")
         return result
 

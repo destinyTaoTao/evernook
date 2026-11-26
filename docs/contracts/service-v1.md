@@ -81,3 +81,17 @@ Core 0.1.74 对经过可信审查发布且回执声明保险库缺失的新机�
 旧版开发／测试若有意保留双写路径，可在未激活账本上显式传入 `--allow-legacy-shared`；服务向 stderr 提示 `legacy_shared_mode_not_single_writer`，服务状态的 `service.single_writer` 为 false。该模式不会切换账本，不提供单写入者保证，不应用于日常数据。已存在受保护关联的账本拒绝以此模式启动；独立 pending 收件箱无法自动发现，不能据此认定切换安全。管理员激活和此标志不能同时使用。已激活账本的服务状态 `service.single_writer` 为 true，表示持久模式已设置且当前版本的入口受栅栏约束；此前已运行的旧二进制仍须按切换步骤停止，也不防同账户恶意代码。正常重启无需重复传入管理员材料。
 
 Core 0.1.33（#151）在新建合成账本上复现旧无参数启动允许服务与旧运行时同时写入，随后增加默认拒绝。新增进程回归在旧代码失败；修复后服务契约9项、切换及桥接13项、后台维护及MCP28项通过。非 editable wheel 的切换6项及新增兼容／冲突2项通过，service 与切换测试 strict mypy 通过。首次切换测试因隔离测试环境缺少可选 PyNaCl 失败，安装项目固定版本后通过。未对现有用户账本做激活或迁移；#115 的私密输入、外部 pending 清点与迁移、#150 的完整处理仍未完成。
+
+## 普通宿主 Core RPC
+
+dsh、Maneki 和其他本地宿主可以在已激活的同一服务上使用以下操作。每一帧都要提交已配对凭据。三个操作由 Core 直接处理，服务进程只安装基础包即可。构建上下文仍需要服务端配置的本地 tokenizer 与对应资产。
+
+| operation | arguments 与权限 | result |
+| --- | --- | --- |
+| `handshake` | 空对象，任一有效身份，包括只有 `capture` 的身份 | `MemoryRuntime.handshake` 的契约版本、入口和权限范围 |
+| `capture` | 必需 `event` 和 `kind`，可选 `input_id`、`tool_name`、`attachments`、`provided` 和 `text_chunks`。要求 `capture` 权限，事件入口与配对身份一致 | 标准 `CaptureReceipt`，含原文回执、附件和缺口 |
+| `context` | 必需 `query`、`model_id`、`max_tokens`、`as_of`，可选 `mode`（默认 `normal`）、`timeout`（默认 30 秒）、`current_input_id`、`query_intent`。要求 `recall` 权限 | 预算、来源和省略情况随 `ContextBundle` 返回，使用启动时指定的上下文配置及嵌入空间 |
+
+普通采集允许至多 16 个附件。每项必需 `attachment_id`、`label` 和 `media_type`，可选 `chunks_base64`、`expected_size`、`expected_sha256`、`complete`、`protected`。每个附件接收至多 4,096 个严格 Base64 块，正文可传至多 4,096 个 `text_chunks`，整帧适用 8 MiB 上限。附件的大小、完整性、隐私投影和缺口沿用[采集契约](capture-v1.md)。取消在提交前生效时回滚本次写入；若连接中断且未知是否提交，宿主可按相同来源和内容重试以核对回执。
+
+不同身份写入的合格原文可在同一账本中回忆；来源抑制或撤回后，后续上下文按最新状态筛选。调用端只能指定目标模型 ID 和请求预算，配置路径由启动服务的操作者提供。未绑定上下文配置的服务返回 `context_unconfigured`。现有 MCP 工具协议保留，Python SDK 的上下文方法遇到旧服务明确返回 `unknown_service_operation` 时可使用该服务的既有 MCP 入口。

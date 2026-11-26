@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
-import base64
 import json
 import io
 import logging
@@ -19,7 +18,8 @@ from mcp.server.stdio import stdio_server
 from mcp import types
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .models import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryFailure, Source
+from .models import Access, Change, Event, ImportantMark, MemoryFailure, Source
+from .capture_wire import decode_capture
 if TYPE_CHECKING:
     from .service import ServiceClient
 from .cli import Parser
@@ -187,13 +187,7 @@ def _required(value: object) -> object:
 
 
 def _capture(runtime: MemoryRuntime, access: Access, arguments: CaptureWire) -> object:
-    attachments = []
-    for item in arguments.attachments:
-        chunks = None if item.chunks_base64 is None else tuple(base64.b64decode(value, validate=True) for value in item.chunks_base64)
-        attachments.append(AttachmentInput(item.attachment_id, item.label, item.media_type, chunks,
-            item.expected_size, item.expected_sha256, item.complete, item.protected))
-    return runtime.submit_capture(access, Capture(arguments.event, arguments.kind, arguments.input_id, arguments.tool_name,
-        tuple(attachments), arguments.provided, None if arguments.text_chunks is None else tuple(arguments.text_chunks)))
+    return runtime.submit_capture(access, decode_capture(arguments.model_dump()))
 
 
 def _status(runtime: MemoryRuntime, access: Access, profile: str, semantic: SemanticRecall,

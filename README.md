@@ -37,6 +37,7 @@ flowchart TD
     DSH["dsh · 优先宿主"] --> Adapters["TypeScript 适配器 / MCP / 可信管理桥接"]
     Other["pi 或自有 Agent"] --> Adapters
     Adapters --> Service["已激活的本机记忆服务"]
+    Pet["桌宠及其他本地宿主 · Core RPC"] --> Service
     CLI["已支持的 CLI 命令 / Python ServiceClient"] --> Service
     Service --> Core["Core · 身份、范围与来源校验"]
     Direct["Python MemoryRuntime · 未切换的本地账本"] --> Core
@@ -50,6 +51,8 @@ flowchart TD
     Recall --> Reflect["可选反思 · 本地或显式授权的云端"]
     Reflect --> Host
 ```
+
+已激活账本由服务持有。dsh 和桌宠可分别配对，使用各自的入口身份共享同一账本。Python 宿主可通过 ServiceClient 调用 handshake、capture 和 context，基础包即可。上下文预算使用服务端绑定的 tokenizer。旧服务的只读上下文有兼容路径，结构化写入要求支持该操作的服务。[宿主接入契约](docs/contracts/service-v1.md#普通宿主-core-rpc)
 
 - **保存。** 普通消息以入口、会话、分支、源事件构成幂等键。相同内容重投返回稳定回执，异内容冲突显式报错。可靠文本模式提交成功后才允许宿主发布片段。敏感输入在普通库只留安全投影，受保护原件另走保险库路径。[文本契约](docs/contracts/python-text-v1.md) · [流式回执](docs/contracts/durable-stream-v1.md) · [受保护采集](docs/contracts/protected-migration-v1.md)
 - **回忆。** 最近记录与全历史候选共同参与召回，命中后回源核对版本、可见性和原文跨度。置顶交代支持逐字回取。时态事实区分生效时间与系统获知时间，索引落后和预算省略会影响结果覆盖。[长期召回](docs/contracts/long-term-recall-v1.md) · [事实与时点](docs/contracts/facts-v1.md)
