@@ -51,17 +51,17 @@ class NativeBGE:
 
     def embed(self, texts: tuple[str, ...], *, timeout: float,
                   cancel: threading.Event | None = None) -> VectorBatch:
-        raise MemoryFailure("embedding_role_required")
+        raise MemoryFailure("embedding_role_missing")
 
     def embed_documents(self, texts: tuple[str, ...], *, timeout: float,
                   cancel: threading.Event | None = None) -> VectorBatch:
-        return self._embed(texts, "", timeout, cancel)
+        return self._embed(texts, timeout, cancel)
 
     def embed_query(self, texts: tuple[str, ...], *, timeout: float,
                   cancel: threading.Event | None = None) -> VectorBatch:
-        return self._embed(texts, "为这个句子生成表示以用于检索相关文章：", timeout, cancel)
+        return self._embed(tuple("为这个句子生成表示以用于检索相关文章：" + text for text in texts), timeout, cancel)
 
-    def _embed(self, texts: tuple[str, ...], prefix: str, timeout: float, cancel: threading.Event | None) -> VectorBatch:
+    def _embed(self, texts: tuple[str, ...], timeout: float, cancel: threading.Event | None) -> VectorBatch:
         deadline = time.monotonic() + timeout
 
         def check() -> None:
@@ -73,11 +73,11 @@ class NativeBGE:
         check()
         if any(not text or len(text) > 256 or credential_signal(text) for text in texts):
             raise MemoryFailure("protected_embedding_input")
-        batch = self.tokenizer.encode_batch([prefix + s for s in texts])
+        batch = self.tokenizer.encode_batch(list(texts))
         valid = [s for s, item in zip(texts, batch) if sum(item.attention_mask) <= 512]
         if not valid:
             return (None,) * len(texts)
-        selected = batch if len(valid) == len(texts) else self.tokenizer.encode_batch([prefix + s for s in valid])
+        selected = batch if len(valid) == len(texts) else self.tokenizer.encode_batch(valid)
         feeds = {name: self.np.asarray([getattr(item, field) for item in selected], dtype=self.np.int64)
                  for name, field in (("input_ids", "ids"), ("attention_mask", "attention_mask"), ("token_type_ids", "type_ids"))}
         check()
