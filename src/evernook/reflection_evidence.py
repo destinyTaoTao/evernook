@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 import json
 import hashlib
+import sqlite3
 from typing import Any
 
 from .candidates import EvidenceSpan
@@ -19,10 +20,12 @@ from .safety import credential_signal
 
 class EvidenceTools:
     def __init__(self, runtime: MemoryRuntime, recall: SemanticRecall, access: Access, *, maximum: int,
-                 chars: int, candidates: int, check: Callable[[], float], current_input_id: str | None = None):
+                 chars: int, candidates: int, check: Callable[[], float], current_input_id: str | None = None,
+                 include_control_history: bool = False):
         self.runtime, self.recall, self.access = runtime, recall, access
         self.maximum, self.chars, self.candidates, self.check = maximum, chars, candidates, check
         self.current_input_id = current_input_id
+        self.include_control_history = include_control_history
         self.evidence: list[dict[str, Any]] = []
         self.preference_statements: dict[str, tuple[PreferenceStatement, ...]] = {}
         self.discovered: set[str] = set()
@@ -30,6 +33,20 @@ class EvidenceTools:
         self.returned_chars = 0
         self.candidate_count = 0
         self.coverage: list[dict[str, Any]] = []
+
+    def _control_confirmation(self, db: sqlite3.Connection, message_id: str) -> bool:
+        if self.include_control_history:
+            return False
+        if db.execute("""SELECT 1 FROM changes WHERE evidence_id=?
+                AND json_extract(request,'$.action') IN ('suppress','revoke','purge') LIMIT 1""",
+                      (message_id,)).fetchone():
+            return True
+        # Phase two removes the target and its change rows. The purge receipt
+        # retains the independent confirmation that authorized that operation.
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='purge_requests_v1'").fetchone():
+            return False
+        return db.execute("SELECT 1 FROM purge_requests_v1 WHERE confirmation_id=? LIMIT 1",
+                          (message_id,)).fetchone() is not None
 
     @staticmethod
     def check_remote_input(runtime: MemoryRuntime, access: Access, message_id: str | None, check: Callable[[], float]) -> None:
@@ -52,6 +69,8 @@ class EvidenceTools:
             db.execute('BEGIN')
             for item in self.evidence:
                 self.check()
+                if self._control_confirmation(db, item['message_id']):
+                    raise MemoryFailure('reflection_source_unavailable')
                 span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'],
                     item['start'], item['end'], item['quote'])
                 current = source_contexts(db, (span,), 'reflection_remote')[0]
@@ -70,6 +89,8 @@ class EvidenceTools:
             raise MemoryFailure('reflection_invalid_action')
         with self.runtime._connection(check=self.check) as db:
             db.execute('BEGIN')
+            if self._control_confirmation(db, message_id):
+                return
             state = self.runtime._state(db, message_id)
             row = db.execute('SELECT event,receipt FROM messages WHERE id=?', (message_id,)).fetchone()
             stored = self.runtime._stored(row)
@@ -164,6 +185,9 @@ class EvidenceTools:
             db.execute('BEGIN')
             for item in self.evidence:
                 check()
+                if self._control_confirmation(db, item['message_id']):
+                    unchanged = False
+                    continue
                 span = EvidenceSpan(item['message_id'], item['state_version'], 'original', item['content_version'], item['start'], item['end'], item['quote'])
                 try:
                     current = source_contexts(db, (span,), 'reflection_original')[0]

@@ -41,6 +41,47 @@ class ReflectionTests(unittest.TestCase):
         engine = ReflectionEngine(self.runtime, SemanticRecall(self.runtime), model, policy or self.policy)
         engine.configure(self.access)
         return engine
+
+    def test_confirmation_evidence_is_reserved_for_explicit_control_history(self) -> None:
+        from evernook.purge import PurgeDecision, PurgeWorkflow
+
+        suppressed = self.save('合成白鹭在窗边。')
+        suppression = self.save('确认停止使用合成白鹭的位置。')
+        self.runtime.change(self.access, Change('suppress-test', suppressed, 1, 'suppress', suppression, 'review'))
+        removed = self.save('合成白鹭在山里。')
+        workflow = PurgeWorkflow(self.runtime)
+        preview = workflow.preview(self.access, 'remove-test', (removed,))
+        deletion = self.save('确认删除合成白鹭的旧位置。')
+        workflow.purge(self.access, PurgeDecision(preview.request_id, deletion))
+        unrelated = self.save('记录里也出现了“删除合成白鹭”这几个字。')
+        done = {'action': 'done', 'conclusions': [], 'conflicts': [], 'unknown': ['unknown'], 'clarification_required': True}
+        model = ScriptModel([done, done])
+        engine = self.engine(model, replace(self.policy, cache_entries=2))
+        for history in (False, True):
+            query = '合成白鹭'
+            result = (engine.reflect(self.access, query, include_control_history=True) if history
+                      else engine.reflect(self.access, query))
+            delivered = {item['message_id'] for item in result['evidence']}
+            self.assertIn(unrelated, delivered)
+            self.assertEqual(delivered & {suppression, deletion}, {suppression, deletion} if history else set())
+            self.assertFalse({suppressed, removed} & delivered)
+            self.assertEqual(delivered, {item['message_id'] for item in model.calls[-1]['evidence']})
+
+    def test_recheck_drops_a_quote_newly_used_as_revocation_confirmation(self) -> None:
+        from evernook.reflection_evidence import EvidenceTools
+
+        old = self.save('合成旧记录')
+        confirmation = self.save('确认撤回合成旧记录')
+        tools = EvidenceTools(self.runtime, SemanticRecall(self.runtime), self.access, maximum=4,
+                              chars=1024, candidates=4, check=lambda: 5.0)
+        tools.discovered.add(confirmation)
+        tools.admit(confirmation)
+        self.assertEqual([item['message_id'] for item in tools.evidence], [confirmation])
+        self.runtime.change(self.access, Change('revoke-test', old, 1, 'revoke', confirmation, 'review'))
+        with self.assertRaisesRegex(MemoryFailure, 'reflection_source_unavailable'):
+            tools.authorize_remote()
+        self.assertFalse(tools.verify(lambda: 5.0))
+        self.assertFalse(tools.evidence)
     def test_second_search_finds_a_link_without_known_year_and_does_not_write_memory(self) -> None:
         first = self.save('合成：旧相册代号是银叶桥。')
         second = self.save('合成：银叶桥湿地那次看到了苍鹭。', 'other')

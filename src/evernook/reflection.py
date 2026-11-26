@@ -256,11 +256,13 @@ class ReflectionEngine:
 
     def reflect(self, access: Access, query: str, *, mode: str = 'deep', topic_view_ids: tuple[str, ...] = (),
                 timeout: float | None = None, cancel: threading.Event | None = None, current_input_id: str | None = None,
-                allow_remote: bool = False, provider_check: Callable[[], None] | None = None) -> dict[str, Any]:
+                allow_remote: bool = False, include_control_history: bool = False,
+                provider_check: Callable[[], None] | None = None) -> dict[str, Any]:
         self.runtime._require_scope(access, 'recall', 'reflection')
         if not isinstance(mode, str) or mode not in {'normal', 'deep'} or not isinstance(query, str) or not 1 <= len(query) <= 1048576:
             raise MemoryFailure('invalid_reflection_request')
-        if not isinstance(topic_view_ids, tuple) or len(topic_view_ids) > 8 or type(allow_remote) is not bool:
+        if (not isinstance(topic_view_ids, tuple) or len(topic_view_ids) > 8 or type(allow_remote) is not bool
+                or type(include_control_history) is not bool):
             raise MemoryFailure('invalid_reflection_request')
         for view_id in topic_view_ids:
             _identifier(view_id)
@@ -303,13 +305,15 @@ class ReflectionEngine:
             result.update(state='busy', stop_reason='reflection_busy')
             return result
         tools = EvidenceTools(self.runtime, self.recall, access, maximum=selected.sources, chars=selected.source_chars,
-            candidates=selected.candidates, check=check, current_input_id=current_input_id)
+            candidates=selected.candidates, check=check, current_input_id=current_input_id,
+            include_control_history=include_control_history)
         clock: dict[str, Any] | None = None
         key = ''
         completed = False
         try:
             clock = self.clock(check)
-            key = hashlib.sha256(_json([access.client_id, self.identity, query, mode, topic_view_ids, current_input_id, clock]).encode()).hexdigest()
+            key = hashlib.sha256(_json([access.client_id, self.identity, query, mode, topic_view_ids, current_input_id,
+                                        include_control_history, clock]).encode()).hexdigest()
             with self.lock:
                 cached = self.cache.get(key)
             if cached is not None and cached[0] > time.monotonic():

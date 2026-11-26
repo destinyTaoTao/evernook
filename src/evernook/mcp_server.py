@@ -142,6 +142,7 @@ class Reflect(Arguments):
     topic_view_ids: list[str] = []
     timeout: float = 60
     allow_remote: bool = False
+    include_control_history: bool = False
 
 
 class FactQuery(Arguments):
@@ -275,7 +276,8 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
     if reflector is not None:
         operations['evernook_v1_reflect'] = (Reflect, lambda args: reflector.reflect(access,
             query=args.query, mode=args.mode, topic_view_ids=tuple(args.topic_view_ids), timeout=args.timeout,
-            current_input_id=args.current_input_id, allow_remote=args.allow_remote),
+            current_input_id=args.current_input_id, allow_remote=args.allow_remote,
+            include_control_history=args.include_control_history),
             'Explicit experimental memory reasoning using the trusted configured provider. Remote requires client allowlist and explicit opt-in. Temporary unverified inference; no external tools, publication, persona or vault authority.')
     elif reflection_error is not None:
         def unavailable_reflection(args: Reflect) -> object:

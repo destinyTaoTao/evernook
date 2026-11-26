@@ -22,6 +22,7 @@ export interface ReflectionRequest {
   topic_view_ids?: string[];
   current_input_id?: string;
   allow_remote?: boolean;
+  include_control_history?: boolean;
 }
 
 export interface Source { entry: string; session: string; branch: string; event: string }
