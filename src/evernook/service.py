@@ -8,7 +8,6 @@ from dataclasses import asdict, is_dataclass
 import json
 import hashlib
 import hmac
-import msvcrt
 from pathlib import Path
 import secrets
 import select
@@ -22,6 +21,7 @@ from typing import Any, TYPE_CHECKING
 from .models import Access, Event, MemoryFailure, Source
 from .embedding import ServiceEmbedding
 from .paths import external, verify_private_directory
+from .platform.service_gate import single_service_writer
 from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identifier, _json, pair_client
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
@@ -935,15 +935,7 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
     lock_path = runtime.root / "memory-service.lock"
     verify_private_directory(runtime.root, extra_files=(lock_path, runtime.root / ENDPOINT))
     with lock_path.open("a+b") as lock:
-        if lock.tell() == 0:
-            lock.write(b"0")
-            lock.flush()
-        lock.seek(0)
-        try:
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            raise MemoryFailure("service_already_running") from None
-        try:
+        with single_service_writer(lock):
             if next(runtime.root.glob('vault-destruction-*.json'), None) is not None:
                 from .vault_destroy import require_no_pending
                 require_no_pending(runtime)
@@ -1118,9 +1110,6 @@ def serve(config: Path, *, context_config: Path | None = None, embedding_config:
                     server.stopping.set()
                     if server.maintenance:
                         server.maintenance.thread.join()
-        finally:
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def main() -> None:

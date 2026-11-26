@@ -60,7 +60,8 @@ def main() -> int:
             raise RuntimeError("installed_long_recall_failed")
         modules = Path(evernook.__file__).parent
         report = {"version": version("evernook"), "package_root": str(modules),
-            "module_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in modules.glob("*.py")},
+            "module_sha256": {path.relative_to(modules).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                              for path in modules.rglob("*.py")},
             "receipt": receipt, "idle_status": status, "recall": page,
             "scope": "Actual installed service and pinned embedding; no dsh host present during maintenance. One synthetic source; no scale or daily admission.",
             "admission": "pending"}

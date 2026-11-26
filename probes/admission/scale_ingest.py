@@ -60,8 +60,8 @@ def main() -> int:
     root = external(args.output)
     root.mkdir()
     checkout = Path(__file__).resolve().parents[2]
-    hashes = {str(path.relative_to(checkout)).replace("\\", "/"): hashlib.sha256(path.read_bytes()).hexdigest()
-              for path in sorted((checkout / "src" / "evernook").iterdir()) if path.suffix in (".py", ".mjs")}
+    hashes = {path.relative_to(checkout).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in sorted((checkout / "src" / "evernook").rglob("*")) if path.suffix in (".py", ".mjs") and path.is_file()}
     latency_file = 'submit-ms.f64le' if args.batch_size == 1 else 'batch-commit-ms.f64le'
     manifest = {"phase": "public_scale_ingestion", "expected_messages": args.messages,
                 'batch_size': args.batch_size, 'operation': 'submit' if args.batch_size == 1 else 'submit_many',

@@ -33,9 +33,11 @@ def save(path: Path, value: object) -> None:
 def implementation_identity(*probe_files: Path) -> dict[str, str]:
     package_root = Path(evernook.__file__).resolve().parent
     digest = hashlib.sha256()
-    for module in sorted(path for path in package_root.iterdir() if path.suffix in ('.py', '.mjs')):
-        digest.update(module.name.encode())
-        digest.update(module.read_bytes())
+    names = sorted(path.relative_to(package_root).as_posix() for path in package_root.rglob('*')
+                   if path.suffix in ('.py', '.mjs') and path.is_file())
+    for name in names:
+        digest.update(name.encode())
+        digest.update((package_root / name).read_bytes())
     digest.update(Path(__file__).read_bytes())
     for path in probe_files:
         digest.update(path.name.encode())
@@ -66,8 +68,11 @@ root=pathlib.Path(evernook.__file__).parent
 digest=hashlib.sha256()
 for path in sorted(root.glob('*.py')):
     digest.update(path.name.encode()); digest.update(path.read_bytes())
+tree=hashlib.sha256()
+for name in sorted(p.relative_to(root).as_posix() for p in root.rglob('*.py') if p.is_file()):
+    tree.update(name.encode()); tree.update((root/name).read_bytes())
 print(json.dumps({'settings':asdict(updates.settings(access)),'package_root':str(root),
-    'package_version':version('evernook'),'package_sha256':digest.hexdigest()}))
+    'package_version':version('evernook'),'package_sha256':digest.hexdigest(),'package_tree_sha256':tree.hexdigest()}))
 '''
     output.mkdir()
     arguments = [str(external(python)), '-I', '-B', '-c', command, str(config), current_processor]

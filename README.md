@@ -98,6 +98,8 @@ Windows SDK 和服务客户端通过 Win32 在进程内检查账本目录和连�
 | 取回原话后，模型能否判断正确？ | 冻结的 33 例中，Core 判断 14 通过、15 失败、4 缺失。证据齐备的失败包括否定反转、误信助手推测和措辞失配。后续 12 例定向首轮对照覆盖否定、来源角色与独立记录计数，补充通用指令没有提升这组样本的通过率。[逐例归因](docs/reports/2026-11-21-reflection-failure-attribution.md) · [三类判断对照](docs/reports/2026-11-21-reflection-reasoning-ablation.md) |
 | 多个客户端同时工作时，审计和恢复能证明什么？ | dsh 混合负载窗口分别统计了已落盘写入和忙时尽力写入的管理审计。合成故障测试覆盖若干恢复边界；物理锁屏、整机丢失后的异机恢复和长期日用另行验收。[混合负载](docs/reports/2026-11-14-fingerprint-24k.md) · [恢复边界](docs/reports/architecture-review-2026-11-15.md) |
 
+Windows 的目录、ACL、NTFS 句柄、服务锁和 worker Job 位于 [Core 平台包](src/evernook/platform/)。原有 Python 导入路径和 worker CLI 继续可用。当前支持范围仍是 Windows 本机固定 NTFS。
+
 架构与后续设计见[当前实现与流程图](docs/current-architecture.md)、[目标架构](docs/architecture.md)、[需求](docs/requirements.md)与[路线图](docs/roadmap.md)。开源设计对照和具体取舍见[同类系统研究](docs/research.md)。贡献代码前请阅读[贡献指南](CONTRIBUTING.md)，公开测试只使用合成材料。
 
 [MIT License](LICENSE)

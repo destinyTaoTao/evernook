@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from pathlib import Path
 import shutil
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import patch
 import evernook
 from evernook.evaluation import EvaluationError
 from evernook.learning_evaluation import ARMS, load_suite, score
+from probes.admission import learning
 from probes.admission.learning import implementation_identity
 
 
@@ -179,8 +181,15 @@ class LearningEvaluationTests(unittest.TestCase):
             with patch.object(evernook, "__file__", str(package)):
                 first = implementation_identity()
                 self.assertEqual(first["package_root"], str(root.resolve()))
+                flat = hashlib.sha256(package.name.encode() + package.read_bytes() + Path(learning.__file__).read_bytes())
+                self.assertEqual(first["sha256"], flat.hexdigest())
                 package.write_text("# another installed version", encoding="utf-8")
-                self.assertNotEqual(first["sha256"], implementation_identity()["sha256"])
+                second = implementation_identity()["sha256"]
+                self.assertNotEqual(first["sha256"], second)
+                nested = root / "platform"
+                nested.mkdir()
+                (nested / "__init__.py").write_text("# synthetic platform", encoding="utf-8")
+                self.assertNotEqual(second, implementation_identity()["sha256"])
 
 
 if __name__ == "__main__":

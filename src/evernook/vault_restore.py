@@ -5,7 +5,6 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
-import msvcrt
 import os
 from pathlib import Path
 import sqlite3
@@ -20,6 +19,7 @@ from .backup import _decrypt, _hex, _json_bytes, _unlock
 from .missing_vault import read_state
 from .models import Access, MemoryFailure
 from .paths import external, verify_private_directory
+from .platform.service_gate import single_service_writer
 from .protected import ProtectedInbox
 from .runtime import MemoryRuntime, _json
 from .secure_ntfs import HeldFile, PrivateTree
@@ -65,19 +65,8 @@ def _stopped_service(root: Path) -> Iterator[None]:
     lock_path = root / 'memory-service.lock'
     verify_private_directory(root, extra_files=(lock_path,))
     with lock_path.open('a+b') as lock:
-        if lock.tell() == 0:
-            lock.write(b'0')
-            lock.flush()
-        lock.seek(0)
-        try:
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        except OSError:
-            raise MemoryFailure('service_already_running') from None
-        try:
+        with single_service_writer(lock):
             yield
-        finally:
-            lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def restore_stage(config: Path, access: Access, source: Path, destination: Path, recovery_file: Path,
