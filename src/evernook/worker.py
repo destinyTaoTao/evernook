@@ -6,6 +6,7 @@ from .platform import worker as _implementation
 
 if TYPE_CHECKING:
     from .platform.worker import (
+        _ExtendedLimits as _ExtendedLimits,
         protect_parent_lifetime as protect_parent_lifetime,
         main as main,
     )
