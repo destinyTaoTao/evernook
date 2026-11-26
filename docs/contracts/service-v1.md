@@ -97,3 +97,23 @@ dsh、Maneki 和其他本地宿主可以在已激活的同一服务上使用以�
 普通采集允许至多 16 个附件。每项必需 `attachment_id`、`label` 和 `media_type`，可选 `chunks_base64`、`expected_size`、`expected_sha256`、`complete`、`protected`。每个附件接收至多 4,096 个严格 Base64 块，正文可传至多 4,096 个 `text_chunks`，整帧适用 8 MiB 上限。附件的大小、完整性、隐私投影和缺口沿用[采集契约](capture-v1.md)。取消在提交前生效时回滚本次写入；若连接中断且未知是否提交，宿主可按相同来源和内容重试以核对回执。
 
 不同身份写入的合格原文可在同一账本中回忆；来源抑制或撤回后，后续上下文按最新状态筛选。调用端只能指定目标模型 ID 和请求预算，配置路径由启动服务的操作者提供。未绑定上下文配置的服务返回 `context_unconfigured`。现有 MCP 工具协议保留，Python SDK 的上下文方法遇到旧服务明确返回 `unknown_service_operation` 时可使用该服务的既有 MCP 入口。
+
+### 新 Python 宿主的最小保存入口
+
+Core 0.1.98 中，下面的函数可供宿主在用户开启保存时调用。`config` 是已初始化账本的绝对配置路径，`access_file` 是为这个宿主预置的普通身份文件。`capture.event.source.entry` 使用配对入口，同一宿主事件重试时应保留相同的来源、内容和分块。
+
+```python
+from pathlib import Path
+
+from evernook import Capture, CaptureReceipt, MemoryRuntime
+from evernook.service import ServiceClient
+
+
+def save_event(config: Path, access_file: Path, capture: Capture) -> CaptureReceipt:
+    client = ServiceClient.for_ledger(config)
+    memory = client if client is not None else MemoryRuntime(config)
+    access = memory.access_from_file(access_file)
+    return memory.submit_capture(access, capture)
+```
+
+此例使用默认的单次连接。长寿命宿主可以保存 `reuse=True` 的客户端实例，并在卸载时调用 `close()`。如果某次提交发出后失去连接，按相同来源重试可核对结果。已激活账本在服务离线时仍要求服务接管。召回许可、是否把证据交给模型、以及可靠文本流未获回执时能否发布，由宿主按各自契约处理。
