@@ -24,6 +24,7 @@ _ELIGIBLE = f"{_RECALLABLE} AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
 _JOINED_ELIGIBLE = f"(v.status IS NULL OR v.status='active') AND {_MEMORY_EVIDENCE} AND {recall_index.ORIGINAL}"
 _KEYWORD_LIMIT = 100
 _KEYWORD_PREFIX_SIZE = 256
+_KEYWORD_SCORE_SAMPLE = 8192
 _KEYWORD_WINDOW_SOURCES = 2048
 
 
@@ -443,8 +444,20 @@ class SemanticRecall:
                 return exact(scope) if scope else []
 
         try:
+            # A prefix of MATCH in arbitrary order is enough to prove an upper
+            # bound on the global Kth score. Computing BM25 needs the FTS index;
+            # fetching message_id also loads the FTS content row. Avoid that
+            # load for strictly worse scores. Every tie still competes by ID.
+            bound = db.execute("""WITH sampled AS MATERIALIZED (
+                SELECT bm25(lexical) AS score FROM lexical WHERE lexical MATCH ? LIMIT ?
+            ), boundary AS (SELECT score FROM sampled ORDER BY score LIMIT 1 OFFSET ?)
+            SELECT score FROM boundary WHERE EXISTS
+                (SELECT 1 FROM sampled WHERE sampled.score>boundary.score)""",
+                (expression, _KEYWORD_SCORE_SAMPLE, _KEYWORD_PREFIX_SIZE - 1)).fetchone()
+            score_filter = "AND bm25(lexical)<=?" if bound is not None else ""
+            score_parameters = (bound[0],) if bound is not None else ()
             prefix = db.execute(f"""WITH keyword_prefix AS MATERIALIZED (
-                SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ?
+                SELECT lexical.message_id,bm25(lexical) AS keyword_rank FROM lexical WHERE lexical MATCH ? {score_filter}
                 ORDER BY keyword_rank,CAST(lexical.message_id AS TEXT) COLLATE BINARY LIMIT ?
             ), qualified AS MATERIALIZED (
                 SELECT messages.id AS message_id,min(keyword_prefix.keyword_rank) AS best
@@ -455,7 +468,7 @@ class SemanticRecall:
             )
             SELECT qualified.message_id, examined FROM (SELECT count(*) AS examined FROM keyword_prefix)
             LEFT JOIN qualified ON 1 ORDER BY qualified.best,qualified.message_id""",
-                (expression, _KEYWORD_PREFIX_SIZE, *parameters, _KEYWORD_LIMIT)).fetchall()
+                (expression, *score_parameters, _KEYWORD_PREFIX_SIZE, *parameters, _KEYWORD_LIMIT)).fetchall()
         except sqlite3.DatabaseError as error:
             check()
             if getattr(error, "sqlite_errorcode", None) != sqlite3.SQLITE_CORRUPT_VTAB or not db.in_transaction:
