@@ -208,6 +208,37 @@ class SemanticRecall:
             db.execute("COMMIT")
         return processed
 
+    def configure_vector_screen(self, access: Access, *, enabled: bool, rebuild: bool = False,
+                                check: Callable[[], float] | None = None) -> bool:
+        from . import vector_screen
+        self.runtime._require_scope(access, "maintain", "configure_vector_screen")
+        if type(enabled) is not bool or type(rebuild) is not bool or (rebuild and not enabled):
+            raise MemoryFailure("invalid_vector_screen")
+        with self.runtime._connection(check=check) as db:
+            db.execute("BEGIN IMMEDIATE")
+            vector_screen.configure(db, self.space.key if self.space else None, self.space.dimensions if self.space else None,
+                                    enabled=enabled, rebuild=rebuild, check=check)
+            if check:
+                check()
+            self.runtime._check_scope(access, "maintain", "configure_vector_screen")
+            db.execute("COMMIT")
+        return enabled
+
+    def refresh_vector_screen(self, access: Access, *, limit: int = 5000,
+                              check: Callable[[], float] | None = None) -> int:
+        from . import vector_screen
+        self.runtime._require_scope(access, "maintain", "refresh_vector_screen")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise MemoryFailure("invalid_page")
+        with self.runtime._connection(check=check) as db:
+            db.execute("BEGIN IMMEDIATE")
+            processed = vector_screen.refresh(db, self.space.key if self.space else None, limit, check)
+            if check:
+                check()
+            self.runtime._check_scope(access, "maintain", "refresh_vector_screen")
+            db.execute("COMMIT")
+        return processed
+
     def candidate_index_enabled(self, access: Access) -> bool:
         self.runtime._authorize(access)
         with self.runtime._connection() as db:
@@ -548,7 +579,15 @@ class SemanticRecall:
                 return _SemanticCandidates([], [], 0, "disabled")
             function, encoded, engine = distance_function(db, vector, check=check)
             sources = recall_index.source_table(db)
-            base = f"""FROM semantic_chunks_v1 c
+            chunks = "semantic_chunks_v1 c"
+            if engine == "sqlite-vec-0.1.9-exact" and not (since is not None and until is not None):
+                from . import vector_screen
+                shortlist = vector_screen.candidates(db, space.key, encoded, minimum)
+                if shortlist is not None:
+                    chunks = "json_each(?) chosen CROSS JOIN semantic_chunks_v1 c ON c.message_id=chosen.value"
+                    parameters.insert(0, _json(shortlist))
+                    engine = "sqlite-vec-0.1.9-int8-bound-exact"
+            base = f"""FROM {chunks}
                 JOIN {sources} ON messages.id=c.message_id LEFT JOIN visibility v ON v.message_id=messages.id
                 WHERE c.space_id=? AND (? IS NULL OR messages.id<>?) AND {_JOINED_ELIGIBLE} AND c.state_version=COALESCE(v.version,1)
                   AND c.content_version=json_extract(messages.receipt,'$.content_version') {condition}"""

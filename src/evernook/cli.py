@@ -198,6 +198,10 @@ def _parser() -> Parser:
         ("rebuild-semantic-checkpoint", "Rebuild semantic coverage from authoritative rows"),
         ("remove-semantic-checkpoint", "Remove optional semantic coverage and tracking triggers"),
         ("refresh-semantic-checkpoint", "Reconcile changed semantic coverage IDs"),
+        ("prepare-vector-screen", "Build the optional int8 cosine screening index"),
+        ("rebuild-vector-screen", "Rebuild compact codes from current float32 chunks"),
+        ("remove-vector-screen", "Remove the compact codes and tracking triggers"),
+        ("refresh-vector-screen", "Refresh changed compact vector codes"),
         ("recall", "Fuse lexical and optional local semantic evidence using JSON stdin"),
         ("context", "Build the authorized host context through the independent service"),
         ("refresh-semantic", "Index at most 16 missing semantic chunks"),
@@ -300,9 +304,9 @@ def _parser() -> Parser:
         if name == "refresh-index-window":
             command.add_argument("--limit", type=int, default=5000)
             command.add_argument("--budget-seconds", type=float, default=120)
-        if name in ("refresh-search-checkpoint", "refresh-semantic-checkpoint"):
+        if name in ("refresh-search-checkpoint", "refresh-semantic-checkpoint", "refresh-vector-screen"):
             command.add_argument("--limit", type=int, default=5000)
-        if name in ("prepare-semantic-checkpoint", "rebuild-semantic-checkpoint"):
+        if name in ("prepare-semantic-checkpoint", "rebuild-semantic-checkpoint", "prepare-vector-screen", "rebuild-vector-screen"):
             command.add_argument("--embedding-config", type=Path, help="Direct mode only; the service uses its bound model")
         if name in ("recall", "refresh-semantic", "semantic-status", "manage") or name.startswith('topic-view-'):
             command.add_argument("--embedding-config", type=Path)
@@ -851,6 +855,13 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
     if args.command in ("prepare-semantic-checkpoint", "rebuild-semantic-checkpoint"):
         return {"enabled": SemanticRecall(runtime, embedding()).configure_coverage_checkpoint(
             access, enabled=True, rebuild=args.command == "rebuild-semantic-checkpoint")}
+    if args.command in ("prepare-vector-screen", "rebuild-vector-screen"):
+        return {"enabled": SemanticRecall(runtime, embedding()).configure_vector_screen(
+            access, enabled=True, rebuild=args.command == "rebuild-vector-screen")}
+    if args.command == "remove-vector-screen":
+        return {"enabled": SemanticRecall(runtime).configure_vector_screen(access, enabled=False)}
+    if args.command == "refresh-vector-screen":
+        return {"processed": SemanticRecall(runtime).refresh_vector_screen(access, limit=args.limit)}
     if args.command == "remove-semantic-checkpoint":
         return {"enabled": SemanticRecall(runtime).configure_coverage_checkpoint(access, enabled=False)}
     if args.command == "refresh-semantic-checkpoint":
@@ -959,7 +970,7 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
 def main() -> None:
     try:
         args = _parser().parse_args()
-        from .service import CLI_OPERATIONS, ENDPOINT, SEMANTIC_CHECKPOINT_COMMANDS, ServiceClient, client_access
+        from .service import CLI_OPERATIONS, ENDPOINT, SEMANTIC_MAINTENANCE_COMMANDS, ServiceClient, client_access
         from .runtime import _load
         required = getattr(args, "require_service", False)
         configured = hasattr(args, "config") and bool(_load(args.config).get("service_mode"))
@@ -1040,14 +1051,14 @@ def main() -> None:
             if args.command in {'extract', 'extract-preferences'} and args.extraction_config is not None:
                 raise MemoryFailure('service_policy_mismatch')
             access = client_access(args.config, args.access)
-            if args.command in SEMANTIC_CHECKPOINT_COMMANDS:
+            if args.command in SEMANTIC_MAINTENANCE_COMMANDS:
                 if getattr(args, "embedding_config", None) is not None:
                     raise MemoryFailure("service_policy_mismatch")
-                value = {"limit": args.limit} if args.command == "refresh-semantic-checkpoint" else {}
+                value = {"limit": args.limit} if args.command.startswith("refresh-") else {}
             else:
                 value = {} if args.command in ("status", "audit-health") else (
                     {"message_id": args.message_id} if args.command in ("read", "state") else _input())
-            timeout = 300 if args.command in SEMANTIC_CHECKPOINT_COMMANDS else (
+            timeout = 300 if args.command in SEMANTIC_MAINTENANCE_COMMANDS else (
                 130 if args.command in {"reflect", "extract", "extract-preferences"} else 30)
             result = ServiceClient(args.config).call(access, "cli",
                 {"command": args.command, "input": value}, timeout=timeout)

@@ -279,9 +279,20 @@ class ServiceTests(unittest.TestCase):
         self.client.call(self.access, "remember", {"event": self.event()})
         self.assertEqual(cli("refresh-semantic-checkpoint", "--limit", "1")["result"], {"processed": 1})
         self.assertEqual(cli("rebuild-semantic-checkpoint")["result"], {"enabled": True})
+        with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            self.client.call(reader, "cli", {"command": "prepare-vector-screen", "input": {}})
+        with self.assertRaisesRegex(MemoryFailure, "unknown_tool|operation_not_allowed"):
+            self.client.call(self.access, "mcp", {"profile": "recall", "name": "prepare-vector-screen", "arguments": {}})
+        self.assertEqual(cli("prepare-vector-screen", "--embedding-config", str(settings))["error"]["code"],
+                         "service_policy_mismatch")
+        self.assertTrue(cli("prepare-vector-screen")["result"]["enabled"])
+        self.assertEqual(cli("refresh-vector-screen", "--limit", "1")["result"]["processed"], 0)
+        self.assertTrue(cli("rebuild-vector-screen")["result"]["enabled"])
         settings.write_text("{}", encoding="utf-8")
         self.assertEqual(cli(prepare)["error"]["code"], "embedding_config_changed")
         self.assertEqual(cli("refresh-semantic-checkpoint")["error"]["code"], "embedding_config_changed")
+        self.assertEqual(cli("refresh-vector-screen")["error"]["code"], "embedding_config_changed")
+        self.assertFalse(cli("remove-vector-screen")["result"]["enabled"])
         self.assertEqual(cli("remove-semantic-checkpoint")["result"], {"enabled": False})
 
     def test_embedding_repaired_after_invalid_start_requires_restart(self) -> None:

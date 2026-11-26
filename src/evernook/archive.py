@@ -226,6 +226,8 @@ def export_archive(runtime: MemoryRuntime, access: Access, destination: Path) ->
                 target.execute("BEGIN IMMEDIATE")
                 strip_topic_clock(target)
                 strip_skill_schedule(target)
+                from .vector_screen import strip_export as strip_vector_screen
+                strip_vector_screen(target)
                 strip_semantic_checkpoint(target)
                 strip_export(target)
                 target.execute("COMMIT")

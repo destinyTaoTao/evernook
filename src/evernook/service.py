@@ -37,6 +37,8 @@ ENDPOINT = "memory-service.json"
 PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inboxes', 'protected-inventory', 'protected-links', 'protected-show-local', 'protected-backup', 'transcription-submit', 'transcription-read'})
 SEMANTIC_CHECKPOINT_COMMANDS = frozenset({"prepare-semantic-checkpoint", "rebuild-semantic-checkpoint",
                                          "refresh-semantic-checkpoint", "remove-semantic-checkpoint"})
+SEMANTIC_MAINTENANCE_COMMANDS = SEMANTIC_CHECKPOINT_COMMANDS | {
+    "prepare-vector-screen", "rebuild-vector-screen", "refresh-vector-screen", "remove-vector-screen"}
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
     "audit-health", "audit-query", "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
     "experience-queue", "experience-read", "experience-decide",
@@ -48,7 +50,7 @@ CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important
     "episode-status", "episode-configure", "episode-propose", "episode-read",
     "observation-propose", "observation-rebind", "observation-read", "observation-decide", "observation-split", "observation-related",
     "observation-query", "observation-configure", "observation-status", "observation-process", "observation-evidence",
-    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure", "context", "extract", "extract-preferences"}) | SEMANTIC_CHECKPOINT_COMMANDS
+    "topic-view-define", "topic-view-read", "topic-view-control", "topic-view-status", "topic-view-refresh", "topic-view-tick", "topic-view-edit", "reflect", "reflect-configure", "context", "extract", "extract-preferences"}) | SEMANTIC_MAINTENANCE_COMMANDS
 
 
 def client_access(config: Path, access_path: Path) -> Access:
@@ -515,21 +517,27 @@ def dispatch(runtime: MemoryRuntime, request: dict[str, Any], *, cancel: threadi
                 or not isinstance(arguments["input"], dict)):
             raise MemoryFailure("operation_not_allowed")
         command = arguments["command"]
-        if command in SEMANTIC_CHECKPOINT_COMMANDS:
-            runtime._check_scope(access, "maintain", "service_semantic_checkpoint")
+        if command in SEMANTIC_MAINTENANCE_COMMANDS:
+            action = "service_semantic_checkpoint" if command in SEMANTIC_CHECKPOINT_COMMANDS else "service_vector_screen"
+            runtime._check_scope(access, "maintain", action)
             value = arguments["input"]
-            refresh = command == "refresh-semantic-checkpoint"
+            refresh = command.startswith("refresh-")
             if set(value) - ({"limit"} if refresh else set()):
                 raise MemoryFailure("invalid_arguments")
             def check_checkpoint() -> float:
                 if cancel is not None and cancel.is_set():
                     raise MemoryFailure("service_canceled")
                 return runtime._timeout
-            enabled = command != "remove-semantic-checkpoint"
+            enabled = not command.startswith("remove-")
             if enabled and embedding_binding is None:
                 raise MemoryFailure("embedding_disabled")
             backend = embedding_binding.current() if enabled and embedding_binding else None
             workflow = SemanticRecall(runtime, backend)
+            if command.endswith("vector-screen"):
+                if refresh:
+                    return {"processed": workflow.refresh_vector_screen(access, limit=value.get("limit", 5000), check=check_checkpoint)}
+                return {"enabled": workflow.configure_vector_screen(access, enabled=enabled,
+                    rebuild=command.startswith("rebuild-"), check=check_checkpoint)}
             if refresh:
                 return {"processed": workflow.refresh_coverage_checkpoint(
                     access, limit=value.get("limit", 5000), check=check_checkpoint)}

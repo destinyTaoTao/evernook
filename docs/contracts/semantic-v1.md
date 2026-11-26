@@ -93,3 +93,20 @@ evernook remove-semantic-checkpoint --config $runtimeConfig --access $clientFile
 Python 入口为 `SemanticRecall.configure_coverage_checkpoint` 和 `refresh_coverage_checkpoint`。检查点保存来源 ID、接收时间、版本覆盖状态、有效失败分块数及物理向量数。消息、可见性、采集清单及当前空间的文档、分块和失败记录变动时，SQLite 触发器在同一事务记录待复核 ID。触发器写入失败会回滚来源事务。`semantic-status` 和召回在同一状态读取快照中复核最多 100 个变动来源；读端保留队列。已存向量数包含该空间中已失效或已被抑制来源的遗留向量。队列为空时，状态查询读取受校验的计数与接收时间索引。所有候选仍按原流程检索和验证。
 
 超过 100 个待复核 ID 时使用原有全量统计，维护端每次可消化 1–5,000 个。检查点缺失、触发器不全、数据库结构版本变化、摘要失配、未授权改写派生行、查询其他空间或旧库缺少失败记录表时，也沿用全量路径。重新执行准备可重建失效检查点；旧库可先通过已有 `refresh-semantic` 补齐语义表。遇到同名异构对象时，维护操作报告 `semantic_checkpoint_conflict`。普通归档剥离检查点，确认彻底删除时同步清除相应 ID。
+
+## 可选 int8 候选筛选
+
+`prepare-vector-screen` 从指定嵌入空间已有的 float32 分块构建紧凑编码。默认关闭。在已激活服务上，四项命令都使用可信 CLI/RPC，要求 `maintain` 权限；准备、重建与刷新使用服务绑定的模型。直接 SDK 可以调用 `SemanticRecall.configure_vector_screen` 和 `refresh_vector_screen`。机器学习模型工具没有这些维护操作。
+
+```powershell
+evernook prepare-vector-screen --config $runtimeConfig --access $clientFile
+evernook refresh-vector-screen --config $runtimeConfig --access $clientFile --limit 5000
+evernook rebuild-vector-screen --config $runtimeConfig --access $clientFile
+evernook remove-vector-screen --config $runtimeConfig --access $clientFile
+```
+
+直接 CLI 模式准备或重建时另传 `--embedding-config $modelConfig`。一次跟踪一个空间；切换空间需显式重建。准备、重建和待更新来源刷新都占用写事务。后台语义写入在同一事务登记变化，普通召回会把少量变化来源直接纳入精确计算；维护者可按批刷新。派生表、触发器或模式保护失效时执行准备以重建。删除来源时同时清理该来源的编码和队列，普通归档剥离表及触发器；删除索引后 SQLite 可复用空闲页。
+
+启用后，仅固定的 Windows x64 sqlite-vec 0.1.9 原生后端对正相似度阈值使用此筛选。粗分加上查询、存储编码和原生浮点舍入的保守误差界能达到阈值时，取该来源所有合格分块，调用原有 float32 cosine。资格、源版本、全局和近期通道各自的排序及引用跨度在同一快照核验。此路径报告 `sqlite-vec-0.1.9-int8-bound-exact`，`semantic_scanned_chunks` 统计实际接受 float32 评分的合格片段。
+
+明确给出起止时间、筛选结果超过 4,096 个分块、超过 100 个变动来源或变动分块、存在未能安全编码的分块、原生后端不可用、缓存空间或完整性校验失败，均回退到完整精确查询。超过候选上限时，筛选会增加回退成本。公开接口和实际有语义命中的量测见[百万条误差界对照](../reports/2026-11-26-vector-screen.md)。
