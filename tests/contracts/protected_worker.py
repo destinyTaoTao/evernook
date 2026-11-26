@@ -1,6 +1,6 @@
 """Synthetic crash windows; no credentials are accepted as command-line arguments."""
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import os
 from pathlib import Path
 import sys
@@ -23,8 +23,8 @@ original_connection = runtime._connection
 
 
 @contextmanager
-def exit_after_core_commit() -> Iterator[sqlite3.Connection]:
-    with original_connection() as db:
+def exit_after_core_commit(*, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
+    with original_connection(check=check) as db:
         yield db
         exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='protected_links_v1'").fetchone()
         committed = exists and db.execute("""SELECT 1 FROM protected_links_v1 l JOIN messages m ON m.id=l.message_id

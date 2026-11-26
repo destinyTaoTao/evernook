@@ -553,7 +553,15 @@ class SemanticRecall:
                recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
                cancel: threading.Event | None = None, current_input_id: str | None = None, query_intent: str | None = None,
                since: str | None = None, until: str | None = None) -> RecallPage:
-        self.runtime._require_scope(access, "recall", "recall")
+        with self.runtime._read_operation(access, "recall"):
+            return self._recall(access, query, limit=limit, as_of=as_of, recent_days=recent_days,
+                recent_target_chars=recent_target_chars, min_similarity=min_similarity, timeout=timeout,
+                cancel=cancel, current_input_id=current_input_id, query_intent=query_intent, since=since, until=until)
+
+    def _recall(self, access: Access, query: str, *, limit: int = 10, as_of: str | None = None,
+               recent_days: int = 7, recent_target_chars: int = 8192, min_similarity: float = 0.4, timeout: float = 30,
+               cancel: threading.Event | None = None, current_input_id: str | None = None, query_intent: str | None = None,
+               since: str | None = None, until: str | None = None) -> RecallPage:
         if current_input_id is not None:
             _identifier(current_input_id)
         self._timeout(timeout)
@@ -614,7 +622,7 @@ class SemanticRecall:
                 channels["keyword"] = list(self._keyword(access, query, since=focus_since, until=focus_until,
                     check=budget, current_input_id=current_input_id))
             except MemoryFailure as failure:
-                if failure.code in {"unauthorized", "incompatible_contract", "scope_forbidden"}:
+                if failure.code in {"unauthorized", "incompatible_contract", "scope_forbidden", "permission_denied"}:
                     raise
                 degraded.append(failure.code if failure.code in {"recall_canceled", "recall_timeout"} else "keyword_unavailable")
         if plan.limited:
@@ -695,7 +703,6 @@ class SemanticRecall:
         if source_changed:
             degraded.append("source_changed_during_recall")
         result.sort(key=lambda item: (-item.score, item.evidence.message_id))
-        self.runtime._authorize(access)
         reasons = tuple(dict.fromkeys(degraded))
         evidence_state = "candidates" if result else ("incomplete" if reasons else "no_matching_evidence")
         return RecallPage(tuple(result), lexical.index, semantic_status, reasons, evidence_state, since, expanded, chars,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
@@ -79,14 +79,14 @@ class DurableStreamTests(unittest.TestCase):
         transferred = 0
 
         @contextmanager
-        def counted_connection() -> Iterator[sqlite3.Connection]:
+        def counted_connection(*, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
             def decode(value: bytes) -> str:
                 nonlocal transferred
                 text = value.decode("utf-8")
                 transferred += text.count("样")
                 return text
 
-            with original() as db:
+            with original(check=check) as db:
                 db.text_factory = decode
                 yield db
 
@@ -171,8 +171,8 @@ r=MemoryRuntime(Path(sys.argv[1])); v=json.loads((r.root/'client.json').read_tex
 if sys.argv[3]=='before':
  original=r._connection
  @contextmanager
- def connection():
-  with original() as db:
+ def connection(**kwargs):
+  with original(**kwargs) as db:
    db.set_trace_callback(lambda sql: os._exit(77) if sql.startswith('UPDATE text_streams_v1 SET') else None)
    yield db
  r._connection=connection

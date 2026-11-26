@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from typing import Any
+from unittest.mock import patch
 
-from evernook import Event, MemoryFailure, MemoryRuntime, Source, configure_audit, configure_lockout, initialize, pair_client, unlock_pairing
+from evernook import Event, MemoryFailure, MemoryRuntime, SemanticRecall, Source, configure_audit, configure_lockout, initialize, pair_client, unlock_pairing
+from evernook.context import ContextBuilder, ContextPolicy
+from tests.contracts.test_context import SyntheticCounter
 
 
 class AuditTests(unittest.TestCase):
@@ -77,6 +82,91 @@ class AuditTests(unittest.TestCase):
             self.runtime.audit_query(self.harness)
         cli_page = self.invoke("audit-query", {"client_id": "harness"})
         self.assertTrue(cli_page["result"]["records"])
+
+    def test_composed_read_has_one_diagnostic_transaction_per_public_operation(self) -> None:
+        for i in range(4):
+            self.runtime.submit(self.harness, Event(Source("harness", "session", "main", str(i)),
+                "user", i, "2026-10-01T00:00:00+00:00", "complete", "synthetic audit sample"))
+        self.runtime.refresh_lexical(self.access, limit=10)
+        recall = SemanticRecall(self.runtime)
+        builder = ContextBuilder(self.runtime, recall, ContextPolicy(20000, 30000, 0, 7, 8192), SyntheticCounter())
+        sql: list[str] = []
+        connect = sqlite3.connect
+        def traced(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            db: sqlite3.Connection = connect(*args, **kwargs)
+            db.set_trace_callback(sql.append)
+            return db
+        with patch("sqlite3.connect", traced):
+            self.assertEqual(len(recall.recall(self.harness, "synthetic").hits), 4)
+            bundle = builder.build(self.harness, "synthetic", as_of="2026-10-02T00:00:00+00:00",
+                mode="normal", timeout=10)
+            self.assertEqual(bundle.evidence_count, 4)
+        self.assertEqual(sql.count("BEGIN IMMEDIATE"), 2)
+        self.assertFalse(any(line.startswith(("CREATE", "DELETE")) and "audit_" in line for line in sql))
+        records = self.runtime.audit_query(self.access, client_id="harness").records
+        self.assertEqual([(r.action, r.outcome) for r in records[-2:]], [("recall", "ok"), ("context_build", "ok")])
+
+    def test_revoke_recall_during_final_tokenization_prevents_handoff_and_records_denial(self) -> None:
+        counter = SyntheticCounter()
+        def revoke(text: str) -> int:
+            pair_client(self.config, client_id="harness", entry="harness", access_path=self.harness_path,
+                        scopes=("capture",))
+            return len(text)
+        builder = ContextBuilder(self.runtime, SemanticRecall(self.runtime),
+                                 ContextPolicy(4000, 8000, 0, 7, 8192), counter)
+        with patch.object(counter, "count", side_effect=revoke), self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            builder.build(self.harness, "", as_of="2026-10-02T00:00:00+00:00", mode="normal", timeout=10)
+        rows = self.runtime.audit_query(self.access, client_id="harness").records
+        self.assertEqual([row.outcome for row in rows if row.action == "context_build"], ["denied"])
+
+    def test_failed_submissions_never_leave_success_rows_for_rolled_back_sources(self) -> None:
+        event = Event(Source("harness", "session", "main", "one"), "user", 1, None, "complete", "synthetic audit")
+        receipt = self.runtime.submit(self.harness, event)
+        conflict = replace(event, text="another synthetic text")
+        with self.assertRaisesRegex(MemoryFailure, "source_conflict"):
+            self.runtime.submit(self.harness, conflict)
+        with self.assertRaisesRegex(MemoryFailure, "source_conflict"):
+            self.runtime.submit_many(self.harness, (replace(event, source=replace(event.source, event="two")), conflict))
+        rows = self.runtime.audit_query(self.access, client_id="harness").records
+        self.assertEqual([(r.action, r.outcome) for r in rows if r.action.startswith("submit")],
+                         [("submit", "ok"), ("submit", "source_conflict"), ("submit_many", "source_conflict")])
+        original = self.runtime.read_source(self.harness, event.source)
+        assert original is not None
+        self.assertEqual(original.receipt, receipt)
+
+    def test_unavailable_diagnostics_leave_single_receipt_and_read_result_usable(self) -> None:
+        event = Event(Source("harness", "session", "main", "busy"), "user", 1, None, "complete", "synthetic")
+        with self.runtime._connection() as db:
+            db.execute("""CREATE TRIGGER reject_diagnostic BEFORE INSERT ON audit_events_v1
+                BEGIN SELECT RAISE(FAIL, 'synthetic audit failure'); END""")
+        receipt = self.runtime.submit(self.harness, event)
+        with self.runtime._connection() as blocker:
+            blocker.execute("BEGIN IMMEDIATE")
+            recalled = SemanticRecall(self.runtime).recall(self.harness, "synthetic")
+            self.assertEqual([hit.evidence.message_id for hit in recalled.hits], [receipt.message_id])
+        records = self.runtime.audit_query(self.access, client_id="harness").records
+        self.assertFalse(any(row.action in {"submit", "recall"} for row in records))
+
+    def test_old_schema_reopens_and_expired_rows_are_hidden_during_bounded_cleanup(self) -> None:
+        with self.runtime._connection() as db:
+            db.execute("DROP TABLE audit_settings_v1")
+            db.execute("DROP TABLE audit_events_v1")
+        migrated = MemoryRuntime(self.config)
+        migrated.read(self.access, "missing")
+        with migrated._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.executemany("INSERT INTO audit_events_v1(at,client_id,entry,action,target,outcome) VALUES (?,?,?,?,?,?)",
+                           [("2000-01-01T00:00:00+00:00", "expired", "", "read", "", "ok")] * 300)
+            db.execute("COMMIT")
+        reopened = MemoryRuntime(self.config)
+        reopened.read(self.access, "missing")
+        with reopened._connection() as db:
+            remaining = db.execute("SELECT count(*) FROM audit_events_v1 WHERE client_id='expired'").fetchone()[0]
+        self.assertEqual(remaining, 44)
+        self.assertEqual(reopened.audit_query(self.access, client_id="expired").records, ())
+        configure_audit(self.config, retention_days=1)
+        with reopened._connection() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM audit_events_v1 WHERE client_id='expired'").fetchone()[0], 0)
 
     def test_pairing_failures_lock_and_trusted_unlock_restores(self) -> None:
         configure_lockout(self.config, failure_limit=3)

@@ -121,11 +121,22 @@ def _audit_schema(db: sqlite3.Connection) -> None:
     db.execute("CREATE TABLE IF NOT EXISTS audit_settings_v1 (id INTEGER PRIMARY KEY CHECK(id=1), retention_days INTEGER NOT NULL)")
 
 
-def _prune_audit(db: sqlite3.Connection) -> None:
+def _audit_retention(db: sqlite3.Connection) -> int:
     row = db.execute("SELECT retention_days FROM audit_settings_v1 WHERE id=1").fetchone()
-    retention = int(row["retention_days"]) if row is not None else AUDIT_RETENTION_DAYS
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).isoformat()
-    db.execute("DELETE FROM audit_events_v1 WHERE at<?", (cutoff,))
+    return int(row["retention_days"]) if row is not None else AUDIT_RETENTION_DAYS
+
+
+def _audit_cutoff(db: sqlite3.Connection) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=_audit_retention(db))).isoformat()
+
+
+def _next_audit_prune(db: sqlite3.Connection) -> float:
+    # The timestamp index makes this a single oldest-row lookup even on reopened ledgers.
+    oldest = db.execute("SELECT unixepoch(at) FROM audit_events_v1 ORDER BY at LIMIT 1").fetchone()
+    next_check = time.time() + 3600
+    if oldest is None or oldest[0] is None:
+        return next_check
+    return min(next_check, int(oldest[0]) + _audit_retention(db) * 86400)
 
 
 def _pairing_schema(db: sqlite3.Connection) -> None:
@@ -135,7 +146,6 @@ def _pairing_schema(db: sqlite3.Connection) -> None:
 
 
 def _audit_row(db: sqlite3.Connection, at: str, client_id: str, entry: str, action: str, target: str, outcome: str) -> None:
-    _audit_schema(db)
     db.execute("INSERT INTO audit_events_v1 (at,client_id,entry,action,target,outcome) VALUES (?,?,?,?,?,?)",
                (at, client_id, entry, action, target, outcome))
 
@@ -263,7 +273,6 @@ def pair_client(config_path: Path, *, client_id: str, entry: str, access_path: P
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
         _pairing_schema(db)
-        _audit_schema(db)
         now = datetime.now(timezone.utc).isoformat()
         lock = db.execute("SELECT failures,locked_until,failure_limit FROM pairing_lockout_v1 WHERE id=1").fetchone()
         failures = int(lock["failures"]) if lock is not None else 0
@@ -344,9 +353,9 @@ def configure_audit(config_path: Path, *, retention_days: int) -> dict[str, obje
     runtime = MemoryRuntime(config_path)
     with runtime._connection() as db:
         db.execute("BEGIN IMMEDIATE")
-        _audit_schema(db)
         db.execute("""INSERT INTO audit_settings_v1 VALUES (1,?) ON CONFLICT(id) DO UPDATE SET
             retention_days=excluded.retention_days""", (retention_days,))
+        db.execute("DELETE FROM audit_events_v1 WHERE at<?", (_audit_cutoff(db),))
         _audit_row(db, datetime.now(timezone.utc).isoformat(), "local-operator", "", "audit_configure",
                    "audit_settings", "ok")
         db.execute("COMMIT")
@@ -390,6 +399,7 @@ def initialize(root: Path, *, client_id: str, entry: str, allow_archive_review: 
 class MemoryRuntime:
     def __init__(self, config_path: Path, *, service_owner: bool = False):
         self._service_owner = service_owner
+        self._read_audit = threading.local()
         # A fresh in-memory key makes management-view tokens invalid across restarts.
         self._management_view_key = secrets.token_bytes(32)
         config_path = external(config_path)
@@ -422,13 +432,14 @@ class MemoryRuntime:
                 raise MemoryFailure("unsupported_storage_version")
             required = {"messages", "message_time", "jobs", "important", "changes", "visibility",
                         "source_context", "captures", "attachments", "ledger_identity_v1",
-                        "text_streams_v1", "text_stream_chunks_v1"}
+                        "text_streams_v1", "text_stream_chunks_v1", "audit_events_v1", "audit_at", "audit_settings_v1"}
             present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','index')")}
             if version == 5 and required <= present and db.execute("PRAGMA journal_mode").fetchone()[0] == "wal":
                 stored_id = db.execute("SELECT ledger_id FROM ledger_identity_v1 WHERE id=1").fetchone()
                 if stored_id is not None:
                     if not hmac.compare_digest(str(stored_id[0]), ledger_id):
                         raise MemoryFailure("ledger_identity_mismatch")
+                    self._next_audit_prune_at = _next_audit_prune(db)
                     if 'topic_view_clock_v1' in present:
                         from .topic_view_clock import install as install_topic_clock, ready as topic_clock_ready
                         if not topic_clock_ready(db):
@@ -468,6 +479,8 @@ class MemoryRuntime:
             # A non-secret, key-bound ledger identity travels with ordinary snapshots; the
             # idempotency key itself remains outside archives and is never copied into them.
             db.execute("BEGIN IMMEDIATE")
+            _audit_schema(db)
+            self._next_audit_prune_at = _next_audit_prune(db)
             db.execute("CREATE TABLE IF NOT EXISTS ledger_identity_v1 (id INTEGER PRIMARY KEY CHECK(id=1), ledger_id TEXT NOT NULL)")
             db.execute("INSERT OR IGNORE INTO ledger_identity_v1 VALUES (1,?)", (ledger_id,))
             stored_id = db.execute("SELECT ledger_id FROM ledger_identity_v1 WHERE id=1").fetchone()
@@ -502,27 +515,76 @@ class MemoryRuntime:
             raise MemoryFailure("unauthorized")
         return identity
 
-    def _require_scope(self, access: Access, scope: str, action: str, target: str = "") -> _Identity:
+    def _check_scope(self, access: Access, scope: str, action: str, target: str = "") -> _Identity:
         identity = self._authorize(access)
         if scope not in identity.scopes:
             self._audit(identity, action, target, "denied")
             raise MemoryFailure("permission_denied")
-        self._audit(identity, action, target, "ok")
         return identity
+
+    def _require_scope(self, access: Access, scope: str, action: str, target: str = "") -> _Identity:
+        identity = self._check_scope(access, scope, action, target)
+        if scope != "recall" or getattr(self._read_audit, "access", None) != access:
+            self._audit(identity, action, target, "ok")
+        return identity
+
+    @contextmanager
+    def _read_operation(self, access: Access, action: str) -> Iterator[None]:
+        identity = self._check_scope(access, "recall", action)
+        previous = getattr(self._read_audit, "access", None)
+        self._read_audit.access = access
+        try:
+            yield
+            self._check_scope(access, "recall", action)
+        except Exception as failure:
+            # A rejected scope has its own denial row, including nested stages.
+            if previous != access and not (isinstance(failure, MemoryFailure) and failure.code == "permission_denied"):
+                self._audit(identity, action, "", "failed")
+            raise
+        else:
+            if previous != access:
+                self._audit(identity, action, "", "ok")
+        finally:
+            self._read_audit.access = previous
+
+    @contextmanager
+    def _capture_operation(self, access: Access, action: str, target: str) -> Iterator[_Identity]:
+        identity = self._check_scope(access, "capture", action, target)
+        try:
+            yield identity
+        except Exception as failure:
+            code = failure.code if isinstance(failure, MemoryFailure) else ""
+            outcome = {"permission_denied": "denied", "unauthorized_source": "denied",
+                       "source_conflict": "source_conflict"}.get(code, "failed")
+            self._audit(identity, action, target, outcome)
+            raise
+        else:
+            self._audit(identity, action, target, "ok")
+
+    def _maybe_prune_audit(self) -> None:
+        if time.time() < self._next_audit_prune_at:
+            return
+        try:
+            with self._connection(check=lambda: 0.0) as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""DELETE FROM audit_events_v1 WHERE seq IN
+                    (SELECT seq FROM audit_events_v1 WHERE at<? ORDER BY at LIMIT 256)""", (_audit_cutoff(db),))
+                next_check = _next_audit_prune(db)
+                db.execute("COMMIT")
+                self._next_audit_prune_at = max(time.time() + 1, next_check)
+        except MemoryFailure:
+            self._next_audit_prune_at = time.time() + 1
 
     def _audit(self, identity: _Identity, action: str, target: str, outcome: str) -> None:
         # Best-effort observability: audit writes must never block or fail the caller operation,
         # including fault-injection scenarios. Rows that are written remain append-only.
         try:
-            with self._connection() as db:
-                db.execute("PRAGMA busy_timeout=0")
+            self._maybe_prune_audit()
+            with self._connection(check=lambda: 0.0) as db:
                 db.execute("BEGIN IMMEDIATE")
-                _audit_schema(db)
-                _prune_audit(db)
-                db.execute("INSERT INTO audit_events_v1 (at,client_id,entry,action,target,outcome) VALUES (?,?,?,?,?,?)",
-                    (datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry, action, target, outcome))
+                _audit_row(db, datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry, action, target, outcome)
                 db.execute("COMMIT")
-        except MemoryFailure:
+        except (MemoryFailure, OSError):
             return
 
     def audit_query(self, access: Access, *, client_id: str | None = None, since: str | None = None,
@@ -537,12 +599,11 @@ class MemoryRuntime:
             raise MemoryFailure("invalid_time_range")
         with self._connection() as db:
             db.execute("BEGIN")
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='audit_events_v1'").fetchone():
-                return AuditPage((), None)
+            cutoff = _audit_cutoff(db)
             rows = db.execute("""SELECT seq,at,client_id,entry,action,target,outcome FROM audit_events_v1
-                WHERE (? IS NULL OR client_id=?) AND (? IS NULL OR at>=?) AND (? IS NULL OR at<?)
+                WHERE at>=? AND (? IS NULL OR client_id=?) AND (? IS NULL OR at>=?) AND (? IS NULL OR at<?)
                 ORDER BY seq LIMIT ? OFFSET ?""",
-                (client_id, client_id, start, _iso(start) if start is not None else None,
+                (cutoff, client_id, client_id, start, _iso(start) if start is not None else None,
                  end, _iso(end) if end is not None else None, limit + 1, offset)).fetchall()
             records = tuple(AuditRecord(int(row["seq"]), row["at"], row["client_id"], row["entry"],
                 row["action"], row["target"], row["outcome"]) for row in rows[:limit])
@@ -633,15 +694,15 @@ class MemoryRuntime:
 
     def submit(self, access: Access, event: Event) -> Receipt:
         self._validate_event(event)
-        identity = self._require_scope(access, "capture", "submit", _json(asdict(event.source)))
-        if event.source.entry != identity.entry:
-            raise MemoryFailure("unauthorized_source")
-        fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
-        retained = replace(event, text="[PROTECTED:ORIGINAL_NOT_SAVED]") if event.sensitive or event.protected_source or credential_signal(event.text) else event
-        with self._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            receipt = self._persist_event(db, event, retained, fingerprint)
-            db.execute("COMMIT")
+        with self._capture_operation(access, "submit", _json(asdict(event.source))) as identity:
+            if event.source.entry != identity.entry:
+                raise MemoryFailure("unauthorized_source")
+            fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
+            retained = replace(event, text="[PROTECTED:ORIGINAL_NOT_SAVED]") if event.sensitive or event.protected_source or credential_signal(event.text) else event
+            with self._connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                receipt = self._persist_event(db, event, retained, fingerprint)
+                db.execute("COMMIT")
         return receipt
 
     def submit_many(self, access: Access, events: tuple[Event, ...], *,
@@ -669,42 +730,42 @@ class MemoryRuntime:
             size += len(event.text.encode('utf-8'))
             if size > 4 * 1048576:
                 raise MemoryFailure('batch_too_large')
-        identity = self._require_scope(access, 'capture', 'submit_many', str(len(events)))
-        prepared = []
-        for event in events:
-            check()
-            if event.source.entry != identity.entry:
-                raise MemoryFailure('unauthorized_source')
-            fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
-            retained = (replace(event, text='[PROTECTED:ORIGINAL_NOT_SAVED]')
-                        if event.sensitive or event.protected_source or credential_signal(event.text) else event)
-            prepared.append((event, retained, fingerprint))
-        receipts = []
-        with self._connection(check=check) as db:
-            lock_deadline = time.monotonic() + self._timeout
-            while True:
+        with self._capture_operation(access, 'submit_many', str(len(events))) as identity:
+            prepared = []
+            for event in events:
                 check()
-                try:
-                    db.execute('BEGIN IMMEDIATE')
-                    break
-                except sqlite3.OperationalError as failure:
-                    if ((failure.sqlite_errorcode & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
-                            or time.monotonic() >= lock_deadline):
-                        raise
-                    time.sleep(min(.01, max(0, lock_deadline - time.monotonic())))
-            for event, retained, fingerprint in prepared:
+                if event.source.entry != identity.entry:
+                    raise MemoryFailure('unauthorized_source')
+                fingerprint = hmac.digest(self._fingerprint_key, _json(asdict(event)).encode(), hashlib.sha256)
+                retained = (replace(event, text='[PROTECTED:ORIGINAL_NOT_SAVED]')
+                            if event.sensitive or event.protected_source or credential_signal(event.text) else event)
+                prepared.append((event, retained, fingerprint))
+            receipts = []
+            with self._connection(check=check) as db:
+                lock_deadline = time.monotonic() + self._timeout
+                while True:
+                    check()
+                    try:
+                        db.execute('BEGIN IMMEDIATE')
+                        break
+                    except sqlite3.OperationalError as failure:
+                        if ((failure.sqlite_errorcode & 255) not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                                or time.monotonic() >= lock_deadline):
+                            raise
+                        time.sleep(min(.01, max(0, lock_deadline - time.monotonic())))
+                for event, retained, fingerprint in prepared:
+                    check()
+                    receipts.append(self._persist_event(db, event, retained, fingerprint))
+                    _audit_row(db, datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry,
+                               'submit', _json(asdict(event.source)), 'ok')
+                current = self._authorize(access)
+                if 'capture' not in current.scopes:
+                    raise MemoryFailure('permission_denied')
+                if current.entry != identity.entry:
+                    raise MemoryFailure('unauthorized_source')
                 check()
-                receipts.append(self._persist_event(db, event, retained, fingerprint))
-                _audit_row(db, datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry,
-                           'submit', _json(asdict(event.source)), 'ok')
-            current = self._authorize(access)
-            if 'capture' not in current.scopes:
-                raise MemoryFailure('permission_denied')
-            if current.entry != identity.entry:
-                raise MemoryFailure('unauthorized_source')
-            check()
-            db.execute('COMMIT')
-            committed = True
+                db.execute('COMMIT')
+                committed = True
         return tuple(receipts)
 
     @staticmethod

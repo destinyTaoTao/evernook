@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import sqlite3
 import tempfile
 import unittest
@@ -58,8 +58,8 @@ class LexicalBatchTests(unittest.TestCase):
         statements: list[str] = []
         original = self.runtime._connection
         @contextmanager
-        def traced() -> Iterator[sqlite3.Connection]:
-            with original() as db:
+        def traced(*, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
+            with original(check=check) as db:
                 db.set_trace_callback(statements.append)
                 yield db
         with patch.object(self.runtime, '_connection', traced):
@@ -76,8 +76,8 @@ class LexicalBatchTests(unittest.TestCase):
         statements: list[str] = []
         original = self.runtime._connection
         @contextmanager
-        def traced() -> Iterator[sqlite3.Connection]:
-            with original() as db:
+        def traced(*, check: Callable[[], float] | None = None) -> Iterator[sqlite3.Connection]:
+            with original(check=check) as db:
                 db.set_trace_callback(statements.append)
                 yield db
         with patch.object(self.runtime, '_connection', traced):
