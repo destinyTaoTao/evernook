@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from typing import Any
 from unittest.mock import patch
@@ -40,7 +44,7 @@ class AuditTests(unittest.TestCase):
         arguments = [sys.executable, "-m", "evernook.cli", command]
         if "--config" not in extra:
             arguments += ["--config", str(self.config)]
-        if command == "audit-query":
+        if command in ("audit-query", "audit-health") and "--access" not in extra:
             arguments += ["--access", str(self.maintainer_path)]
         process = subprocess.run([*arguments, *extra],
             input=json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else b"",
@@ -144,8 +148,64 @@ class AuditTests(unittest.TestCase):
             blocker.execute("BEGIN IMMEDIATE")
             recalled = SemanticRecall(self.runtime).recall(self.harness, "synthetic")
             self.assertEqual([hit.evidence.message_id for hit in recalled.hits], [receipt.message_id])
+            self.assertEqual(self.runtime.audit_health(self.maintainer_access), {"dropped_busy": 1, "dropped_other": 1})
         records = self.runtime.audit_query(self.access, client_id="harness").records
         self.assertFalse(any(row.action in {"submit", "recall"} for row in records))
+
+    def test_activated_maintenance_cli_counts_lost_reads_and_resets_on_service_restart(self) -> None:
+        from evernook.service import ENDPOINT, ServiceClient
+        event = Event(Source("harness", "fixture", "main", "1"), "user", 1, None, "complete", "synthetic private payload")
+        saved = self.runtime.submit(self.harness, event)
+        self.assertEqual(self.invoke("audit-health")["result"], {"dropped_busy": 0, "dropped_other": 0})
+        endpoint = self.config.parent / ENDPOINT
+
+        @contextmanager
+        def running_service(*options: str) -> Iterator[None]:
+            previous = endpoint.read_bytes() if endpoint.exists() else None
+            with subprocess.Popen([sys.executable, "-m", "evernook.service", "--config", str(self.config), *options],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) as process:
+                try:
+                    deadline = time.monotonic() + 15
+                    while not endpoint.exists() or endpoint.read_bytes() == previous:
+                        self.assertIsNone(process.poll())
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(.03)
+                    yield
+                finally:
+                    process.terminate()
+                    _, stderr = process.communicate(timeout=10)
+                    self.assertEqual(stderr, b"")
+
+        def read(_: int) -> str:
+            reply = ServiceClient(self.config).call(self.harness, "read", {"message_id": saved.message_id})
+            return str(reply["event"]["text"])
+
+        def audit_rows() -> list[dict[str, Any]]:
+            result = self.invoke("audit-query", {"client_id": "harness"}, extra=("--require-service",))
+            encoded = json.dumps(result)
+            for secret in (event.text, self.access.token, self.harness.token, self.maintainer_access.token,
+                           self.directory.name):
+                self.assertNotIn(secret, encoded)
+            return list(result["result"]["records"])
+
+        with running_service("--activate-owner", str(self.owner_path)):
+            with closing(sqlite3.connect(self.config.parent / "memory.sqlite3", isolation_level=None)) as blocker:
+                blocker.execute("BEGIN IMMEDIATE")
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    self.assertEqual(list(pool.map(read, range(12))), [event.text] * 12)
+                for _ in range(2):
+                    self.assertEqual(self.invoke("audit-health", extra=("--require-service",))["result"],
+                                     {"dropped_busy": 12, "dropped_other": 0})
+            for command in ("audit-query", "audit-health"):
+                denied = self.invoke(command, {}, extra=("--access", str(self.harness_path), "--require-service"))
+                self.assertEqual(denied["error"], {"code": "permission_denied"})
+            self.assertFalse(any(row["action"] == "read" for row in audit_rows()))
+            self.assertEqual(read(0), event.text)
+            self.assertEqual(sum(row["action"] == "read" for row in audit_rows()), 1)
+        with running_service():
+            self.assertEqual(self.invoke("audit-health", extra=("--require-service",))["result"],
+                             {"dropped_busy": 0, "dropped_other": 0})
+            self.assertEqual(sum(row["action"] == "read" for row in audit_rows()), 1)
 
     def test_old_schema_reopens_and_expired_rows_are_hidden_during_bounded_cleanup(self) -> None:
         with self.runtime._connection() as db:

@@ -38,7 +38,7 @@ PRIVATE_OPERATIONS = frozenset({'protected-receive', 'protected-inboxes', 'prote
 SEMANTIC_CHECKPOINT_COMMANDS = frozenset({"prepare-semantic-checkpoint", "rebuild-semantic-checkpoint",
                                          "refresh-semantic-checkpoint", "remove-semantic-checkpoint"})
 CLI_OPERATIONS = frozenset({"status", "manage", "host-recovery", "mark-important", "change",
-    "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
+    "audit-health", "audit-query", "purge-preview", "purge", "profile-read", "profile-summary", "profile-history", "profile-decide", "candidate-list", "fact-query",
     "experience-queue", "experience-read", "experience-decide",
     "skill-draft-configure", "skill-draft-status",
     "persona-read", "persona-history", "persona-set", "persona-rollback",

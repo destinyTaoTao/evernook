@@ -400,6 +400,8 @@ class MemoryRuntime:
     def __init__(self, config_path: Path, *, service_owner: bool = False):
         self._service_owner = service_owner
         self._read_audit = threading.local()
+        self._audit_drop_lock = threading.Lock()
+        self._audit_drops = {"dropped_busy": 0, "dropped_other": 0}
         # A fresh in-memory key makes management-view tokens invalid across restarts.
         self._management_view_key = secrets.token_bytes(32)
         config_path = external(config_path)
@@ -584,8 +586,16 @@ class MemoryRuntime:
                 db.execute("BEGIN IMMEDIATE")
                 _audit_row(db, datetime.now(timezone.utc).isoformat(), identity.client_id, identity.entry, action, target, outcome)
                 db.execute("COMMIT")
-        except (MemoryFailure, OSError):
-            return
+        except (MemoryFailure, OSError) as error:
+            key = "dropped_busy" if isinstance(error, MemoryFailure) and error.code == "storage_busy" else "dropped_other"
+            with self._audit_drop_lock:
+                self._audit_drops[key] += 1
+
+    def audit_health(self, access: Access) -> dict[str, int]:
+        # Polling the counters under a writer lock must not create another lost row.
+        self._check_scope(access, "maintain", "audit_health")
+        with self._audit_drop_lock:
+            return self._audit_drops.copy()
 
     def audit_query(self, access: Access, *, client_id: str | None = None, since: str | None = None,
                     until: str | None = None, limit: int = 100, offset: int = 0) -> AuditPage:

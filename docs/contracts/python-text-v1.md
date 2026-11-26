@@ -64,6 +64,8 @@ Core 在同一快照中枚举范围内的合格原件，核对每个证据的 `m
 
 ## 审计与回执
 
+维护身份可用 `audit-query` 查询已保存的审计记录，也可用 `audit-health` 查看当前 `MemoryRuntime` 实例内未能确认写入的尽力审计次数。返回的两个整数字段 `dropped_busy` 和 `dropped_other` 分别统计锁竞争和其他写入故障。授权轮询计数不写审计行。对已激活账本执行 `evernook audit-health --require-service --config <runtime.json> --access <维护身份文件>` 可连续观测同一服务实例。服务重启或新建嵌入实例后从零开始，落盘的历史审计仍按保留期可查。
+
 `submit` 和 `submit_many` 的顶层诊断在操作结束时记录。`ok` 表示提交或幂等重放成功，来源冲突记为 `source_conflict`。写锁竞争或进程中断可能使顶层诊断缺失。确认证据是否已保存以稳定回执和来源回读为准。批量导入仍把每个成员的成功行与证据放在同一事务。
 
 一次 `SemanticRecall.recall` 或 `ContextBuilder.build` 正常返回时只追加一条顶层诊断。内部检索、状态查询和逐条回源仍重新核验调用者，返回前再查一次 recall 权限。权限收回时拒绝交付，尽力记录触发拒绝的阶段。单独调用上述子操作仍有各自的授权审计。其他操作中原有的范围检查 `ok` 只表示通过该次授权。

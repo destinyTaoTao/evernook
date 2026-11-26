@@ -262,6 +262,7 @@ def _parser() -> Parser:
         ("consolidation-complete", "Submit consolidation drafts into the review queue; profile tags propose only"),
         ("consolidation-queue", "Read the consolidation review queue"),
         ("consolidation-status", "Read one consolidation run status"),
+        ("audit-health", "Read this runtime instance's best-effort audit write loss counters"),
         ("consolidation-fail", "Mark a consolidation run failed with an error code"),
         ("consolidation-configure", "Set consolidation tier and the low-risk merge whitelist"),
         ("scheduler-configure", "Configure the in-process consolidation scheduler"),
@@ -873,6 +874,10 @@ def _execute(args: argparse.Namespace, *, input_value: dict[str, Any] | None = N
             value["source_ids"] = tuple(value["source_ids"])
             return consolidation.begin(access, **value)
         if args.command == "consolidation-complete":
+    if args.command == "audit-health":
+        if input_value:
+            raise MemoryFailure("invalid_arguments")
+        return runtime.audit_health(access)
             if not isinstance(value.get("drafts"), list):
                 raise MemoryFailure("invalid_arguments")
             drafts: list[ConsolidationDraft] = []
@@ -1040,7 +1045,7 @@ def main() -> None:
                     raise MemoryFailure("service_policy_mismatch")
                 value = {"limit": args.limit} if args.command == "refresh-semantic-checkpoint" else {}
             else:
-                value = {} if args.command == "status" else (
+                value = {} if args.command in ("status", "audit-health") else (
                     {"message_id": args.message_id} if args.command in ("read", "state") else _input())
             timeout = 300 if args.command in SEMANTIC_CHECKPOINT_COMMANDS else (
                 130 if args.command in {"reflect", "extract", "extract-preferences"} else 30)
