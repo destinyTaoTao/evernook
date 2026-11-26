@@ -13,6 +13,26 @@ from .models import MemoryFailure
 
 MAX_FRAME = 8 * 1024 * 1024
 
+# Negotiation precedes every business frame, so a legacy server can reject it
+# without leaving the outcome of a user operation in doubt.
+OPEN_SERIAL = {"version": 1, "transport": "open-serial"}
+SERIAL_READY = {"version": 1, "transport": "serial"}
+SINGLE_READY = {"version": 1, "transport": "single"}
+SERIAL_IDLE = 10.0
+
+
+def serial_operation(operation: object, arguments: object) -> bool:
+    if operation in ("status", "read", "search", "recall", "remember", "mcp-list"):
+        return True
+    if operation != "mcp" or not isinstance(arguments, dict):
+        return False
+    return arguments.get("name") in (
+        "evernook_v1_capture", "evernook_v1_capture_stream", "evernook_v1_capture_chunk",
+        "evernook_v1_remember", "evernook_v1_read", "evernook_v1_read_capture",
+        "evernook_v1_read_stream", "evernook_v1_read_source", "evernook_v1_read_important",
+        "evernook_v1_recall", "evernook_v1_search", "evernook_v1_state", "evernook_v1_status",
+        "evernook_v1_context", "evernook_v1_host_activity")
+
 
 def _timeout(connection: socket.socket, deadline: float, *, polling: bool = False) -> None:
     remaining = deadline - time.monotonic()

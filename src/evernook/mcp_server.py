@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import sys
 import threading
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import anyio
 from mcp.server import Server, ServerRequestContext
@@ -20,6 +20,8 @@ from mcp import types
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .models import Access, AttachmentInput, Capture, Change, Event, ImportantMark, MemoryFailure, Source
+if TYPE_CHECKING:
+    from .service import ServiceClient
 from .cli import Parser
 from .runtime import MemoryRuntime
 from .embedding import EmbeddingBackend, load_embedding
@@ -295,7 +297,11 @@ def build_operations(runtime: MemoryRuntime, access: Access, *, profile: str = "
 
 def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str = "recall",
                  backend: EmbeddingBackend | None = None, context_config: Path | None = None,
-                 service_config: Path | None = None, allow_remote_reflection: bool = False) -> Server[None]:
+                 service_config: Path | None = None, allow_remote_reflection: bool = False,
+                 service_client: ServiceClient | None = None) -> Server[None]:
+    if service_config is not None and service_client is None:
+        from .service import ServiceClient
+        service_client = ServiceClient(service_config)
     if runtime is None:
         if service_config is None:
             raise MemoryFailure("service_unavailable")
@@ -309,9 +315,8 @@ def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str 
     async def list_tools(context: ServerRequestContext[None], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         if runtime is not None:
             runtime.handshake(access)
-        if service_config is not None:
-            from .service import ServiceClient
-            listing = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+        if service_client is not None:
+            listing = await anyio.to_thread.run_sync(lambda: service_client.call(
                 access, "mcp-list", {"profile": profile}))
             return types.ListToolsResult(tools=[types.Tool(name=item["name"],
                 input_schema=item["schema"], description=item["description"]) for item in listing["tools"]])
@@ -331,15 +336,14 @@ def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str 
                     raise MemoryFailure("operation_not_allowed")
                 raise MemoryFailure("unknown_tool")
             result: object
-            if service_config is not None:
-                from .service import ServiceClient
+            if service_client is not None:
                 cancel = threading.Event()
                 requested_timeout = (params.arguments or {}).get("timeout", 60 if params.name == 'evernook_v1_reflect' else 30)
                 transport_timeout = 40.0
                 if type(requested_timeout) in (int, float) and 0 < requested_timeout <= 120:
                     transport_timeout = max(30.0, float(requested_timeout)) + 10
                 try:
-                    result = await anyio.to_thread.run_sync(lambda: ServiceClient(service_config).call(
+                    result = await anyio.to_thread.run_sync(lambda: service_client.call(
                         access, "mcp", {"name": params.name, "arguments": params.arguments or {},
                             "profile": profile}, cancel=cancel, timeout=transport_timeout), abandon_on_cancel=True)
                 finally:
@@ -393,23 +397,25 @@ async def serve(config_path: Path, access_path: Path, profile: str = "recall", e
     from .service import ENDPOINT, ServiceClient, client_access
     from .runtime import _load
     use_service = require_service or (config_path.parent / ENDPOINT).exists() or _load(config_path).get("service_mode")
-    if use_service:
-        runtime = None
-        access = client_access(config_path, access_path)
-        remote = ServiceClient(config_path)
-        remote.call(access, "status", {})
-        if embedding_config is not None or context_config is not None:
-            remote.call(access, "policy-match", {
-                "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
-                "context_config": str(context_config.resolve()) if context_config else None})
-        backend = None
-    else:
-        runtime = MemoryRuntime(config_path)
-        access = runtime.access_from_file(access_path)
-        backend = load_embedding(embedding_config) if embedding_config is not None else None
-    server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
-        service_config=config_path if use_service else None, allow_remote_reflection=allow_remote_reflection)
+    remote = None
     try:
+        if use_service:
+            runtime = None
+            access = client_access(config_path, access_path)
+            remote = ServiceClient(config_path, reuse=True)
+            remote.call(access, "status", {})
+            if embedding_config is not None or context_config is not None:
+                remote.call(access, "policy-match", {
+                    "embedding_config": str(embedding_config.resolve()) if embedding_config else None,
+                    "context_config": str(context_config.resolve()) if context_config else None})
+            backend = None
+        else:
+            runtime = MemoryRuntime(config_path)
+            access = runtime.access_from_file(access_path)
+            backend = load_embedding(embedding_config) if embedding_config is not None else None
+        server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
+            service_config=config_path if use_service else None, allow_remote_reflection=allow_remote_reflection,
+            service_client=remote)
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):
                 await server.run(incoming, outgoing, server.create_initialization_options())
@@ -417,6 +423,9 @@ async def serve(config_path: Path, access_path: Path, profile: str = "recall", e
         if _encoding_failure(error):
             raise MemoryFailure("invalid_encoding") from None
         raise
+    finally:
+        if remote is not None:
+            remote.close()
 
 
 def _encoding_failure(error: BaseException) -> bool:

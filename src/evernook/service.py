@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 import json
 import hashlib
@@ -24,7 +26,8 @@ from .runtime import MemoryRuntime, _atomic_json, _access_record, _load, _identi
 from .semantic import SemanticRecall
 from .reflection import ReflectionEngine
 from .service_transport import (authenticate_client, authenticate_server, open_private_frame,
-                                receive_json, seal_private_frame, send_json)
+                                receive_json, seal_private_frame, send_json, serial_operation,
+                                OPEN_SERIAL, SERIAL_READY, SINGLE_READY, SERIAL_IDLE)
 
 if TYPE_CHECKING:
     from .extraction import ExtractorBackend
@@ -159,8 +162,73 @@ class ServiceClient:
             raise MemoryFailure('service_invalid_response')
         return value
 
-    def __init__(self, config: Path):
+    def __init__(self, config: Path, *, reuse: bool = False):
         self.config = external(config)
+        self._reuse = reuse
+        self._lock = threading.Lock()
+        self._idle: tuple[tuple[int, bytes], socket.socket, bytes, float] | None = None
+        self._legacy: tuple[int, bytes] | None = None
+        self._closed = False
+
+    def close(self) -> None:
+        """Release the idle connection. In-flight calls finish without returning a socket."""
+        with self._lock:
+            self._closed = True
+            if self._idle is not None:
+                self._idle[1].close()
+                self._idle = None
+
+    @contextmanager
+    def _connection(self, port: int, key: bytes, deadline: float, cancel: threading.Event | None,
+                    *, serial: bool) -> Iterator[tuple[socket.socket, bytes]]:
+        identity = (port, key)
+        connection: socket.socket | None = None
+        session = b""
+        reusable = False
+        with self._lock:
+            if self._closed:
+                raise MemoryFailure("service_client_closed")
+            negotiate = serial and self._legacy != identity
+            if negotiate and self._idle is not None:
+                previous, cached, session, expires = self._idle
+                self._idle = None
+                if previous == identity and time.monotonic() < expires and not select.select([cached], [], [], 0)[0]:
+                    connection, reusable = cached, True
+                else:
+                    cached.close()
+        try:
+            while connection is None:
+                if cancel is not None and cancel.is_set():
+                    raise MemoryFailure("service_canceled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MemoryFailure("service_timeout")
+                connection = socket.create_connection(("127.0.0.1", port), timeout=min(remaining, 5))
+                session = authenticate_client(connection, key, deadline, cancel=cancel)
+                if not negotiate:
+                    break
+                send_json(connection, OPEN_SERIAL, deadline, cancel=cancel)
+                reply = receive_json(connection, deadline, cancel)
+                if reply == SERIAL_READY:
+                    reusable = True
+                elif reply == {"version": 1, "ok": False, "error": {"code": "invalid_service_request"}}:
+                    # An authenticated v1 server rejected only the control frame.
+                    with self._lock:
+                        self._legacy = identity
+                    connection.close()
+                    connection = None
+                    negotiate = False
+                elif reply != SINGLE_READY:
+                    raise MemoryFailure("invalid_service_response")
+            yield connection, session
+            if reusable:
+                with self._lock:
+                    if not self._closed and self._idle is None:
+                        self._idle = (identity, connection, session, time.monotonic() + SERIAL_IDLE / 2)
+                        connection = None
+        finally:
+            if connection is not None:
+                connection.close()
 
     def call(self, access: Access, operation: str, arguments: dict[str, Any],
              *, timeout: float = 30, cancel: threading.Event | None = None) -> Any:
@@ -178,8 +246,8 @@ class ServiceClient:
             if len(key) != 32:
                 raise MemoryFailure("invalid_service_endpoint")
             deadline = time.monotonic() + timeout
-            with socket.create_connection(("127.0.0.1", endpoint["port"]), timeout=min(timeout, 5)) as connection:
-                session = authenticate_client(connection, key, deadline, cancel=cancel)
+            with self._connection(endpoint["port"], key, deadline, cancel,
+                                  serial=self._reuse and serial_operation(operation, arguments)) as (connection, session):
                 request = {"version": 1, "access": asdict(access), "operation": operation, "arguments": arguments}
                 private = operation in PRIVATE_OPERATIONS
                 frame = seal_private_frame(session, request, direction='request') if private else request
@@ -619,6 +687,8 @@ class _Server(socketserver.ThreadingTCPServer):
             except MemoryFailure as failure:
                 self.reflection_error = failure.code
         self.slots = threading.BoundedSemaphore(8)
+        self.serial_sessions = threading.BoundedSemaphore(4)
+        self.connections = threading.BoundedSemaphore(12)
         self.stopping = threading.Event()
         from .service_maintenance import ServiceMaintenance
         self.maintenance: ServiceMaintenance | None = None
@@ -628,6 +698,7 @@ class _Server(socketserver.ThreadingTCPServer):
         return self.maintenance.snapshot() if self.maintenance else {"enabled": False}
 
     def server_close(self) -> None:
+        self.stopping.set()
         try:
             super().server_close()
         finally:
@@ -635,20 +706,20 @@ class _Server(socketserver.ThreadingTCPServer):
                 self.embedding_binding.close()
 
     def process_request(self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any) -> None:
-        if not self.slots.acquire(blocking=False):
+        if not self.connections.acquire(blocking=False):
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self.slots.release()
+            self.connections.release()
             raise
 
     def process_request_thread(self, request: socket.socket | tuple[bytes, socket.socket], client_address: Any) -> None:
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self.slots.release()
+            self.connections.release()
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         # socketserver's default traceback can contain private request values.
@@ -659,14 +730,62 @@ class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         server = self.server
         assert isinstance(server, _Server)
+        if not server.slots.acquire(blocking=False):
+            return
+        active = True
+        serial = False
+        authenticated = False
         deadline = time.monotonic() + 5
         try:
             session = authenticate_server(self.request, server.key, deadline)
-        except (OSError, MemoryFailure):
-            return
+            authenticated = True
+            request = receive_json(self.request, deadline)
+            if request != OPEN_SERIAL:
+                self._respond(server, session, request)
+                return
+            serial = server.serial_sessions.acquire(blocking=False)
+            send_json(self.request, SERIAL_READY if serial else SINGLE_READY, deadline)
+            if not serial:
+                self._respond(server, session, receive_json(self.request, deadline))
+                return
+            while not server.stopping.is_set():
+                server.slots.release()
+                active = False
+                idle_until = time.monotonic() + SERIAL_IDLE
+                while not select.select([self.request], [], [], 0.2)[0]:
+                    if server.stopping.is_set() or time.monotonic() >= idle_until:
+                        return
+                if not self.request.recv(1, socket.MSG_PEEK):
+                    return
+                active = server.slots.acquire(blocking=False)
+                if not active:
+                    send_json(self.request, {"version": 1, "ok": False, "error": {"code": "service_busy"}},
+                              time.monotonic() + 5)
+                    return
+                request = receive_json(self.request, time.monotonic() + 5)
+                if not serial_operation(request.get("operation"), request.get("arguments")):
+                    send_json(self.request, {"version": 1, "ok": False, "error": {"code": "operation_not_allowed"}},
+                              time.monotonic() + 5)
+                    return
+                self._respond(server, session, request)
+        except MemoryFailure as error:
+            if authenticated:
+                try:
+                    send_json(self.request, {"version": 1, "ok": False, "error": {"code": error.code}},
+                              time.monotonic() + 5)
+                except (OSError, MemoryFailure):
+                    pass
+        except OSError:
+            pass
+        finally:
+            if active:
+                server.slots.release()
+            if serial:
+                server.serial_sessions.release()
+
+    def _respond(self, server: _Server, session: bytes, request: dict[str, Any]) -> None:
         private = False
         try:
-            request = receive_json(self.request, deadline)
             if 'sealed' in request:
                 request = open_private_frame(session, request, direction='request')
                 private = True
@@ -726,8 +845,9 @@ class _Handler(socketserver.BaseRequestHandler):
         try:
             send_json(self.request, seal_private_frame(session, response, direction='response') if private else response,
                       time.monotonic() + 5)
-        except (OSError, MemoryFailure):
-            pass  # Commit may have completed. Stable source IDs allow receipt recovery.
+        except MemoryFailure:
+            # An unsendable reply closes the transport, including sealed replies.
+            raise ConnectionError from None
 
 
 def serve(config: Path, *, context_config: Path | None = None, embedding_config: Path | None = None, reflection_config: Path | None = None,
