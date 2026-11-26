@@ -81,8 +81,13 @@ class ReflectionCollectionTests(unittest.TestCase):
             self.assertEqual(details['old-processor']['missing_reason'], 'reflection_processor_transition_not_collected')
             self.assertEqual(details['control-restored']['lifecycle']['operation'], 'control_replayed_runtime')
             self.assertEqual(details['purge-continued']['controls'][0]['state'], 'completed')
-            self.assertNotIn('suppressed', rows['control-restored']['retrieval']['source_ids'])
-            self.assertNotIn('purge-source', rows['purge-continued']['retrieval']['source_ids'])
+            for case_id in ('control-restored', 'purge-continued'):
+                result = details[case_id]['result']
+                self.assertTrue(any(step['tool'] == 'search' and step['candidates'] > 0
+                                    for step in result['coverage']))
+                self.assertEqual(result['evidence'], [])
+                self.assertEqual(result['stop_reason'], 'reflection_model_unavailable')
+                self.assertEqual(rows[case_id], {})
             self.assertNotIn('judgment', rows['old-replay'])
             self.assertEqual(details['old-replay']['judgment_missing_reason'], 'reflection_model_unavailable')
             self.assertEqual(report['arms']['reflect']['judgment']['passed'], 0)
