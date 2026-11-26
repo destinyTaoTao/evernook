@@ -248,7 +248,7 @@ class ServiceCutoverTests(unittest.TestCase):
 
     def test_write_authorized_before_activation_cannot_cross_cutover(self) -> None:
         ready, release = threading.Event(), threading.Event()
-        original = self.runtime._require_scope
+        original = self.runtime._check_scope
         def authorized(*args: Any, **kwargs: Any) -> Any:
             result = original(*args, **kwargs)
             ready.set()
@@ -258,7 +258,7 @@ class ServiceCutoverTests(unittest.TestCase):
         later = Event(Source("test", "cutover", "main", "2"), "user", 2, None,
             "complete", "合成：授权后延迟的旧写入")
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with patch.object(self.runtime, "_require_scope", side_effect=authorized):
+            with patch.object(self.runtime, "_check_scope", side_effect=authorized):
                 future = executor.submit(self.runtime.submit, self.access, later)
                 try:
                     self.assertTrue(ready.wait(5))
