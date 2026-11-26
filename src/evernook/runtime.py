@@ -872,9 +872,8 @@ class MemoryRuntime:
 
     @staticmethod
     def _stored(row: sqlite3.Row) -> StoredMessage:
-        value = json.loads(row["event"])
-        value["source"] = Source(**value["source"])
-        return StoredMessage(Event(**value), Receipt(**json.loads(row["receipt"])))
+        from .capture_wire import stored_message
+        return stored_message(json.loads(row["event"]), json.loads(row["receipt"]))
 
     def read(self, access: Access, message_id: str) -> StoredMessage | None:
         self._require_scope(access, "recall", "read")
@@ -1100,11 +1099,8 @@ class MemoryRuntime:
 
     @staticmethod
     def _capture_receipt(encoded: str) -> CaptureReceipt:
-        value = json.loads(encoded)
-        value["message"] = Receipt(**value["message"])
-        value["attachments"] = tuple(AttachmentInfo(**item) for item in value["attachments"])
-        value["gaps"] = tuple(value["gaps"])
-        return CaptureReceipt(**value)
+        from .capture_wire import capture_receipt
+        return capture_receipt(json.loads(encoded))
 
     def submit_capture(self, access: Access, capture: Capture, *, cancel: threading.Event | None = None) -> CaptureReceipt:
         def check() -> None:

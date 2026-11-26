@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any, TYPE_CHECKING
 
-from .models import Access, Event, MemoryFailure, Source
+from .models import Access, Capture, CaptureReceipt, Event, MemoryFailure, Source, StoredMessage
 from .embedding import ServiceEmbedding
 from .paths import external, verify_private_directory
 from .platform.service_gate import single_service_writer
@@ -66,6 +66,59 @@ def client_access(config: Path, access_path: Path) -> Access:
 
 
 class ServiceClient:
+    @classmethod
+    def for_ledger(cls, config: Path, *, require_service: bool = False, reuse: bool = False) -> ServiceClient | None:
+        """Select transport without opening SQLite. An activated offline ledger still requires the service."""
+        from .runtime_mode import runtime_mode
+        config = external(config)
+        if require_service or (config.parent / ENDPOINT).exists() or runtime_mode(_load(config)) != "embedded":
+            return cls(config, reuse=reuse)
+        return None
+
+    def handshake(self, access: Access) -> dict[str, object]:
+        value = self.call(access, "handshake", {})
+        if (not isinstance(value, dict) or value.get("client_id") != access.client_id
+                or not isinstance(value.get("entry"), str) or not isinstance(value.get("scopes"), list)
+                or not all(isinstance(scope, str) for scope in value["scopes"])):
+            raise MemoryFailure("service_invalid_response")
+        return value
+
+    def access_from_file(self, access_path: Path) -> Access:
+        """Load ACL-checked credentials. Every subsequent request authenticates the identity."""
+        return client_access(self.config, access_path)
+
+    def submit_capture(self, access: Access, capture: Capture, *, timeout: float = 30,
+                       cancel: threading.Event | None = None) -> CaptureReceipt:
+        from .capture_wire import capture_receipt, encode_capture
+        if not isinstance(capture, Capture):
+            raise MemoryFailure("invalid_capture")
+        try:
+            arguments = encode_capture(capture)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise MemoryFailure("invalid_capture") from None
+        value = self.call(access, "capture", arguments, timeout=timeout, cancel=cancel)
+        try:
+            return capture_receipt(value)
+        except (KeyError, TypeError, ValueError):
+            raise MemoryFailure("service_invalid_response") from None
+
+    def read(self, access: Access, message_id: str, *, timeout: float = 30,
+             cancel: threading.Event | None = None) -> StoredMessage | None:
+        from .capture_wire import stored_message
+        try:
+            value = self.call(access, "read", {"message_id": message_id}, timeout=timeout, cancel=cancel)
+        except MemoryFailure as failure:
+            if failure.code == "message_not_found":
+                return None
+            raise
+        try:
+            message = stored_message(value["event"], value["receipt"])
+            if message.receipt.message_id != message_id:
+                raise ValueError("invalid_message_id")
+            return message
+        except (KeyError, TypeError, ValueError):
+            raise MemoryFailure("service_invalid_response") from None
+
     def submit_transcription(self, access: Access, material: object, *, timeout: float = 30,
                              cancel: threading.Event | None = None) -> dict[str, Any]:
         from .transcription import Transcription
@@ -143,17 +196,18 @@ class ServiceClient:
 
     def context(self, access: Access, query: str, *, model_id: str, max_tokens: int, as_of: str,
                 mode: str = 'normal', timeout: float = 30, current_input_id: str | None = None,
-                query_intent: str | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
+                query_intent: str | None = None, cancel: threading.Event | None = None,
+                transport_timeout: float = 130) -> dict[str, Any]:
         arguments = {'query': query, 'model_id': model_id, 'max_tokens': max_tokens, 'as_of': as_of,
                      'mode': mode, 'timeout': timeout, 'current_input_id': current_input_id, 'query_intent': query_intent}
         try:
-            value = self.call(access, 'context', arguments, timeout=130, cancel=cancel)
+            value = self.call(access, 'context', arguments, timeout=transport_timeout, cancel=cancel)
         except MemoryFailure as failure:
             if failure.code != 'unknown_service_operation':
                 raise
             # Old servers can still provide the original read-only adapter.
             value = self.call(access, 'mcp', {'name': 'evernook_v1_context', 'profile': 'trusted-host',
-                              'arguments': arguments}, timeout=130, cancel=cancel)
+                              'arguments': arguments}, timeout=transport_timeout, cancel=cancel)
         if not isinstance(value, dict):
             raise MemoryFailure('service_invalid_response')
         return value

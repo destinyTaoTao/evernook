@@ -15,7 +15,7 @@ from typing import Any
 import unittest
 from unittest.mock import patch
 
-from evernook import Access, Change, Event, MemoryFailure, MemoryRuntime, Source, initialize, pair_client
+from evernook import Access, AttachmentInput, Capture, CaptureReceipt, Change, Event, MemoryFailure, MemoryRuntime, Source, StoredMessage, initialize, pair_client
 from evernook.service import ENDPOINT, ServiceClient, dispatch
 
 
@@ -121,6 +121,50 @@ class CoreHostServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
             client.call(sender, "capture", capture)
 
+    def test_public_client_selects_ledger_and_roundtrips_domain_types(self) -> None:
+        self.assertIsNone(ServiceClient.for_ledger(self.config))
+        self.assertIsInstance(ServiceClient.for_ledger(self.config, require_service=True), ServiceClient)
+        self.start()
+        client = ServiceClient.for_ledger(self.config, reuse=True)
+        assert client is not None
+        self.addCleanup(client.close)
+        writer = client.access_from_file(self.config.parent / "mcp-access-dsh.json")
+        self.assertEqual(client.handshake(writer)["scopes"], ["capture"])
+        event = Event(Source("dsh", "synthetic", "main", "typed"), "user", 1, None, "complete", "")
+        attachment = AttachmentInput("fixture", "fixture.txt", "text/plain", (b"ab", b"cd"))
+        capture = Capture(event, "message", attachments=(attachment,), text_chunks=("ordinary ", "fixture"))
+        receipt = client.submit_capture(writer, capture)
+        self.assertIsInstance(receipt, CaptureReceipt)
+        self.assertTrue(receipt.attachments[0].saved)
+        self.assertEqual(receipt.attachments[0].size, 4)
+        message = client.read(self.reader, receipt.message.message_id)
+        self.assertIsInstance(message, StoredMessage)
+        assert message is not None
+        self.assertEqual(message.event.text, "ordinary fixture")
+        self.assertEqual(message.receipt, receipt.message)
+        self.assertIsNone(client.read(self.reader, "msg_missing"))
+        with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
+            client.read(writer, receipt.message.message_id)
+
+    def test_public_client_preserves_offline_mode_and_never_replays_failed_capture(self) -> None:
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        self.config.write_text(json.dumps({**config, "service_mode": True}), encoding="utf-8")
+        client = ServiceClient.for_ledger(self.config)
+        assert client is not None
+        with self.assertRaises(MemoryFailure):
+            client.handshake(self.writer)
+        capture = Capture(Event(Source("dsh", "s", "b", "e"), "user", 1, None, "complete", "fixture"), "message")
+        for error in ("service_unavailable", "service_canceled", "ledger_busy"):
+            with patch.object(client, "call", side_effect=MemoryFailure(error)) as rpc:
+                with self.assertRaisesRegex(MemoryFailure, error):
+                    client.submit_capture(self.writer, capture)
+                rpc.assert_called_once()
+        with patch.object(client, "call", return_value={}):
+            with self.assertRaisesRegex(MemoryFailure, "service_invalid_response"):
+                client.submit_capture(self.writer, capture)
+            with self.assertRaisesRegex(MemoryFailure, "service_invalid_response"):
+                client.read(self.reader, "msg_missing")
+
     def test_canceled_capture_rolls_back_before_commit(self) -> None:
         runtime = MemoryRuntime(self.config)
         cancel = threading.Event()
@@ -141,8 +185,9 @@ class CoreHostServiceTests(unittest.TestCase):
         client = ServiceClient(self.config)
         with patch.object(client, "call", side_effect=[MemoryFailure("unknown_service_operation"), {"payload": "ok"}]) as call:
             self.assertEqual(client.context(self.reader, "合成", model_id="test", max_tokens=128,
-                                           as_of="2025-01-01T00:00:00Z"), {"payload": "ok"})
+                                           as_of="2025-01-01T00:00:00Z", transport_timeout=10), {"payload": "ok"})
             self.assertEqual([item.args[1] for item in call.call_args_list], ["context", "mcp"])
+            self.assertEqual([item.kwargs["timeout"] for item in call.call_args_list], [10, 10])
         with patch.object(client, "call", side_effect=MemoryFailure("permission_denied")) as call:
             with self.assertRaisesRegex(MemoryFailure, "permission_denied"):
                 client.context(self.reader, "合成", model_id="test", max_tokens=128, as_of="2025-01-01T00:00:00Z")

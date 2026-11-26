@@ -388,15 +388,12 @@ def build_server(runtime: MemoryRuntime | None, access: Access, *, profile: str 
 
 async def serve(config_path: Path, access_path: Path, profile: str = "recall", embedding_config: Path | None = None,
                 context_config: Path | None = None, require_service: bool = False, allow_remote_reflection: bool = False) -> None:
-    from .service import ENDPOINT, ServiceClient, client_access
-    from .runtime import _load
-    use_service = require_service or (config_path.parent / ENDPOINT).exists() or _load(config_path).get("service_mode")
-    remote = None
+    from .service import ServiceClient
+    remote = ServiceClient.for_ledger(config_path, require_service=require_service, reuse=True)
     try:
-        if use_service:
+        if remote is not None:
             runtime = None
-            access = client_access(config_path, access_path)
-            remote = ServiceClient(config_path, reuse=True)
+            access = remote.access_from_file(access_path)
             remote.call(access, "status", {})
             if embedding_config is not None or context_config is not None:
                 remote.call(access, "policy-match", {
@@ -408,7 +405,7 @@ async def serve(config_path: Path, access_path: Path, profile: str = "recall", e
             access = runtime.access_from_file(access_path)
             backend = load_embedding(embedding_config) if embedding_config is not None else None
         server = build_server(runtime, access, profile=profile, backend=backend, context_config=context_config,
-            service_config=config_path if use_service else None, allow_remote_reflection=allow_remote_reflection,
+            service_config=config_path if remote is not None else None, allow_remote_reflection=allow_remote_reflection,
             service_client=remote)
         with io.TextIOWrapper(os.fdopen(os.dup(sys.stdin.fileno()), "rb"), encoding="utf-8", errors="strict") as reader:
             async with stdio_server(stdin=anyio.wrap_file(reader)) as (incoming, outgoing):

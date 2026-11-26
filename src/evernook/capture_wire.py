@@ -1,10 +1,35 @@
-"""Decode the ordinary structured capture shared by host transports."""
+"""Map ordinary host capture and stored evidence between wire and domain values."""
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict
 from typing import Any
 
-from .models import AttachmentInput, Capture, Event, MemoryFailure, Source
+from .models import AttachmentInfo, AttachmentInput, Capture, CaptureReceipt, Event, MemoryFailure, Receipt, Source, StoredMessage
+
+
+def encode_capture(capture: Capture) -> dict[str, Any]:
+    attachments = []
+    for item in capture.attachments:
+        wire = asdict(item)
+        chunks = wire.pop("chunks")
+        wire["chunks_base64"] = None if chunks is None else [base64.b64encode(part).decode("ascii") for part in chunks]
+        attachments.append(wire)
+    return {"event": asdict(capture.event), "kind": capture.kind, "input_id": capture.input_id,
+            "tool_name": capture.tool_name, "attachments": attachments, "provided": capture.provided,
+            "text_chunks": capture.text_chunks}
+
+
+def capture_receipt(value: dict[str, Any]) -> CaptureReceipt:
+    if not isinstance(value["attachments"], list) or not isinstance(value["gaps"], list):
+        raise ValueError("invalid_capture_receipt")
+    return CaptureReceipt(**{**value, "message": Receipt(**value["message"]),
+                          "attachments": tuple(AttachmentInfo(**item) for item in value["attachments"]),
+                          "gaps": tuple(value["gaps"])})
+
+
+def stored_message(event: dict[str, Any], receipt: dict[str, Any]) -> StoredMessage:
+    return StoredMessage(Event(**{**event, "source": Source(**event["source"])}), Receipt(**receipt))
 
 
 def decode_capture(value: dict[str, Any], *, max_attachment_chunks: int | None = None) -> Capture:

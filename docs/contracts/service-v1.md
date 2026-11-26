@@ -22,6 +22,8 @@ Core 0.1.61 起，已激活账本不带激活参数重启时如可选抽取或�
 
 Python 客户端 `ServiceClient(config).call(access, operation, arguments, timeout=30)` 支持 remember/read/search/recall/status，参数映射已有 Core 操作。已提交但响应丢失时须按来源重投或按ID回查，网络异常不证明提交失败。截止时间或认证失败不回退直写库。
 
+从 Core 0.1.98 起，Python 宿主可用 `ServiceClient.for_ledger(config)` 选择账本访问方式。对未激活且无发现文件的账本返回 `None`，可继续使用 `MemoryRuntime`。已激活账本即使服务离线也返回客户端，`require_service=True` 可显式要求服务。宿主通过 `access_from_file` 读取本地身份材料，`handshake(access)` 获取现有身份和权限，`submit_capture(access, Capture(...))` 返回 `CaptureReceipt`，`read(access, message_id)` 返回可见的 `StoredMessage` 或 `None`。权限不足和断连仍单独报错，客户端不会自动重发已发送的采集。预算上下文可用 `context(...)` 获取，消费端可以自己的 tokenizer 复核实际模型载荷。
+
 ### 普通请求的顺序会话
 
 Python 长驻调用端可创建 `ServiceClient(config, reuse=True)`，退出时调用 `close()`。stdio MCP 服务桥在宿主会话内使用此模式。dsh 和 pi 继续使用长期 stdio 进程，权限材料由 Python 读取。每个客户端至多保存一条闲置套接字，并发调用各自独占连接。每次调用仍检查发现文件的 ACL 和实际端口、密钥，每个业务帧携带完整 Access 并接受原有身份及范围检查。
