@@ -4,6 +4,8 @@ EverNook 是给 dsh、桌宠和个人 Agent 使用的本机长期记忆系统。
 
 **当前为开发预览。** 首验环境为 Windows、本机固定 NTFS 和 Python 3.14。普通文本账本可以独立使用，dsh 是优先适配的宿主。正式模型质量、十万至百万条记忆的完整时延矩阵、真实异机恢复和日常使用仍在验收。[总规格与进度](https://github.com/destinyTaoTao/evernook/issues/106)
 
+Core 0.1.98 的独立 wheel 已通过 1,415 项 Python 契约测试。dsh/pi 的 158 项 SDK 测试在各自适用的宿主配置下均已通过，Maneki 安装态适配器通过 44 项。[架构边界与验收记录](docs/current-architecture.md#11-月-27-日验收记录)
+
 ## 从一条记忆开始
 
 在 Windows 的仓库外 Python 3.14 虚拟环境中，从源码根目录运行 `python -m pip install -e .`。下面的示例使用系统临时目录中的合成账本。它保存一条消息，重试同一来源，再重新打开账本逐字读回。整个过程只需要本机 SQLite。
