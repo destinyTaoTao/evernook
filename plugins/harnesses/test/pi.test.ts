@@ -958,7 +958,8 @@ test('pi uses the same real tokenizer core with live settings and independent fu
     await host.session.prompt('x'.repeat(257));
     assert.equal(host.requests.length, 2);
     assert.equal(host.status().context?.token_limit, 256);
-    assert.ok(host.status().context?.degraded.includes('query_too_long'));
+    assert.ok(host.status().context?.degraded.includes('query_coverage_limited'));
+    assert.equal(host.status().context?.complete, false);
     const current = host.requests[1].messages.filter(message => message.role === 'user');
     assert.equal(current.filter(message => JSON.stringify(message).includes('untrusted_memory_context')).length, 1);
     saved.policy.normal_tokens = true;

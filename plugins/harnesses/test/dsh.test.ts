@@ -1410,11 +1410,17 @@ test('native profile revision confirmation and suppression use current core vers
     const confirmed = await maintenance.propose(handle.agent, { kind: 'profile', tag_id: 'native-interest', action: 'confirm' });
     handle.agent.followup(user('profile-confirm', confirmed.confirm_command)); await handle.agent.whenIdle();
     assert.equal(profile().state, 'confirmed');
+    assert.ok(!labels().includes('new preference'));
+    handle.agent.followup(user('profile-after-confirm', 'what are my interests?')); await handle.agent.whenIdle();
     assert.ok(labels().includes('new preference'));
+    assert.ok(!labels().includes('old preference'));
     const suppressed = await maintenance.propose(handle.agent, { kind: 'profile', tag_id: 'native-interest', action: 'suppress' });
     handle.agent.followup(user('profile-suppress-confirm', suppressed.confirm_command)); await handle.agent.whenIdle();
     assert.equal(profile().state, 'suppressed');
     assert.ok(!labels().includes('new preference'));
+    handle.agent.followup(user('profile-after-suppress', 'what are my interests?')); await handle.agent.whenIdle();
+    assert.ok(!labels().includes('new preference'));
+    assert.ok(!labels().includes('old preference'));
     assert.deepEqual(host.errors, []);
   } finally { await maintenance.close(); await handle.dispose(); await host.close(); }
 });
@@ -2378,7 +2384,7 @@ test('private session route fences both window types and never accepts secret fi
   const original = childProcess.spawn;
   const children: (EventEmitter & { stdout: PassThrough; kill: () => boolean })[] = [];
   childProcess.spawn = (() => {
-    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => { child.emit('close', null); return true; } });
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => { child.emit('close', null); return true; } });
     children.push(child);
     queueMicrotask(() => child.emit('spawn'));
     return child as unknown as ReturnType<typeof childProcess.spawn>;
