@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections.abc import Callable
 import json
 from pathlib import Path
 import subprocess
@@ -78,6 +79,15 @@ class ServiceMaintenanceTests(unittest.TestCase):
             time.sleep(0.2)
         self.fail(f"background did not process {count}")
 
+    def wait_maintenance(self, matches: Callable[[dict[str, Any]], bool]) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            status = self.client.call(self.access, 'status', {})['service']['maintenance']
+            if matches(status):
+                return
+            time.sleep(.05)
+        self.fail('maintenance did not reach the expected state')
+
     def test_background_runs_without_clients_and_resumes_after_restart(self) -> None:
         self.start()
         self.save(1)
@@ -89,10 +99,43 @@ class ServiceMaintenanceTests(unittest.TestCase):
         self.assertTrue(status["service"]["maintenance"]["enabled"])
         self.assertEqual(status["lexical"]["state"], "ready")
         self.assertGreater(status["service"]["maintenance"]["navigation"][self.policy_id]["succeeded"], 0)
+        # The public processed counter is committed before the scheduler releases
+        # its lease. Stop between ticks here; the in-flight crash is tested below.
+        self.client.call(self.access, 'cli', {'command': 'scheduler-pause', 'input': {'paused': True}})
+        self.wait_maintenance(lambda status: status['skipped'] == 'paused')
         self.stop()
+        self.scheduler.pause(self.access, paused=False)
         self.start()
         self.save(2)
         self.assertEqual(self.wait_processed(2)["processed"], 2)
+
+    def test_crash_during_scheduler_lease_resumes_after_real_expiry(self) -> None:
+        self.start()
+        self.save(1)
+        self.wait_processed(1)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with self.runtime._connection() as db:
+                # Hold the write slot while killing the owner, so it cannot
+                # release the observed lease between the query and terminate().
+                db.execute('BEGIN IMMEDIATE')
+                lease = db.execute('SELECT expires FROM scheduler_lease_v1 WHERE id=1').fetchone()
+                if lease is not None:
+                    expires = float(lease[0])
+                    self.stop()
+                    db.rollback()
+                    break
+                db.rollback()
+            time.sleep(.005)
+        else:
+            self.fail('no live scheduler lease observed')
+        self.start()
+        self.save(2)
+        self.wait_maintenance(lambda status: status['error'] == 'candidate_run_busy')
+        self.assertGreater(expires, time.time())
+        self.assertEqual(self.scheduler.status(self.access).processed, 1)
+        time.sleep(max(0, expires - time.time()))
+        self.assertEqual(self.wait_processed(2)['processed'], 2)
 
     def test_foreground_and_pause_keep_work_pending(self) -> None:
         self.scheduler.pause(self.access, paused=True)

@@ -36,3 +36,9 @@ Core 0.1.101 在**原账本**上开启正式后台服务，保留默认 5 秒轮
 ```powershell
 & $installedPython -m probes.installed.mixed_backlog_recovery --config $config --embedding-config $embeddingConfig --context-config $contextConfig --maintenance-access $pairedMaintenance --mixed $originalMixedRun --output $newOutput
 ```
+
+## 后台处理中强停
+
+一次安装态回归在 20 秒等待结束时仍未处理第二条来源。测试在看到第一条处理计数增加后立即终止服务，这时上一轮调度租约可能仍有效。分别在 0.1.99、0.1.100、0.1.101 的专用小账本上锁定这个时点后强停，重启均先报告 `candidate_run_busy`，随后在原租约到期后自动完成第二条；三次观察总时长分别为 33.686、33.374、33.245 秒。三版互斥行为一致。
+
+回归现在分别覆盖在已确认暂停的两轮之间重启、以及持有效租约时强停。后一项核验租约有效时维持互斥，并实际等到原租约到期后核对第二条完成。0.1.101 安装态合跑服务维护、词法窗口、语义检查点三个模块，33/33 通过，66.910 秒。该实验使用进程强停，物理断电需要单独验收。[进程回归](../../tests/contracts/test_service_maintenance.py)
