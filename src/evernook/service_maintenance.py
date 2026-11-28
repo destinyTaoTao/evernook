@@ -48,6 +48,31 @@ class ServiceMaintenance:
         with self.lock:
             return dict(self.state)
 
+    def _repair_semantic_checkpoint(self, access: Access, signal: _MaintenanceSignal) -> bool:
+        from .semantic_checkpoint import repair_if_stale
+
+        if self.semantic is None or self.semantic.space is None:
+            return False
+        self.runtime._require_scope(access, "maintain", "repair_semantic_checkpoint")
+
+        def validate() -> None:
+            if signal.is_set():
+                raise MemoryFailure("semantic_refresh_canceled")
+            self.runtime._check_scope(access, "maintain", "repair_semantic_checkpoint")
+
+        next_poll = 0.0
+
+        def poll() -> float:
+            nonlocal next_poll
+            now = time.monotonic()
+            if now >= next_poll or self.stopping.is_set():
+                validate()
+                next_poll = now + 0.1
+            return 0.1
+
+        with self.runtime._connection(check=poll) as db:
+            return repair_if_stale(db, self.semantic.space.key, check=validate)
+
     def tick(self) -> dict[str, Any]:
         access = self.runtime.access_from_file(self.access_path)
         scheduler = ConsolidationScheduler(self.runtime)
@@ -78,6 +103,7 @@ class ServiceMaintenance:
         if reason:
             return {"skipped": reason}
         semantic = None
+        checkpoint_repaired = False
         binding_error = None
         if self.embedding_binding is not None:
             try:
@@ -87,12 +113,13 @@ class ServiceMaintenance:
                 semantic = {"state": "unavailable", "error_code": failure.code}
         if self.semantic is not None and binding_error is None:
             try:
+                checkpoint_repaired = self._repair_semantic_checkpoint(access, signal)
                 semantic = asdict(self.semantic.refresh(access, limit=1, timeout=5, cancel=signal))
             except MemoryFailure as failure:
                 reason = signal.reason()
                 if reason:
                     return {"skipped": reason}
-                if failure.code in {"unauthorized", "scope_forbidden", "incompatible_contract", "service_required"}:
+                if failure.code in {"unauthorized", "permission_denied", "scope_forbidden", "incompatible_contract", "service_required"}:
                     raise
                 semantic = {"state": "unavailable", "error_code": failure.code}
         observations = None
@@ -122,7 +149,7 @@ class ServiceMaintenance:
         tick = scheduler.trigger(access, reason="idle")
         return {"skipped": tick.skipped, "scheduler": asdict(scheduler.status(access)),
             "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic,
-            "observations": observations, "topic_views": views}
+            "observations": observations, "topic_views": views, "semantic_checkpoint_repaired": checkpoint_repaired}
 
     def run(self) -> None:
         while not self.stopping.wait(self.interval):

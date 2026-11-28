@@ -143,10 +143,10 @@ class SemanticRecall:
                     AND c.state_version=d.state_version AND c.content_version=d.content_version)
               {failures} {eligibility}"""
 
-    def _status(self, db: sqlite3.Connection) -> SemanticStatus:
+    def _status(self, db: sqlite3.Connection, *, maintenance: bool = False) -> SemanticStatus:
         space = self.space
         if space is not None:
-            checkpoint = semantic_checkpoint.status(db, space.key)
+            checkpoint = semantic_checkpoint.status(db, space.key, maintenance=maintenance)
             if checkpoint is not None:
                 total, covered, failed, vectors, watermark = checkpoint
                 return self._built_status(space.key, total, covered, failed, vectors, watermark)
@@ -255,11 +255,14 @@ class SemanticRecall:
         return enabled
 
     def status(self, access: Access, *, check: Callable[[], float] | None = None) -> SemanticStatus:
+        return self._read_status(access, check=check, maintenance=False)
+
+    def _read_status(self, access: Access, *, check: Callable[[], float] | None, maintenance: bool) -> SemanticStatus:
         self.runtime._require_scope(access, "recall", "semantic_status")
         try:
             with self.runtime._connection(check=check) as db:
                 db.execute("BEGIN")
-                return self._status(db)
+                return self._status(db, maintenance=maintenance)
         except MemoryFailure as failure:
             if failure.code not in {"storage_busy", "storage_unavailable", "storage_full"}:
                 raise
@@ -309,9 +312,11 @@ class SemanticRecall:
                 raise MemoryFailure("embedding_space_mismatch")
             db.execute("COMMIT")
             db.execute("BEGIN")
-            rows = db.execute(f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
-                FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
-                WHERE {_ELIGIBLE} AND messages.id NOT IN ({self._covered()}) ORDER BY received,messages.id LIMIT ?""", (space.key, limit)).fetchall()
+            rows = semantic_checkpoint.pending(db, space.key, limit)
+            if rows is None:
+                rows = db.execute(f"""SELECT messages.event,messages.receipt,COALESCE(v.version,1) AS state_version
+                    FROM messages LEFT JOIN visibility v ON v.message_id=messages.id
+                    WHERE {_ELIGIBLE} AND messages.id NOT IN ({self._covered()}) ORDER BY received,messages.id LIMIT ?""", (space.key, limit)).fetchall()
             pending: list[tuple[str, int, int, int, int, int, int, str]] = []
             for row in rows:
                 message = self.runtime._stored(row)
@@ -333,7 +338,7 @@ class SemanticRecall:
                 if len(pending) == limit:
                     break
         if not pending:
-            return self.status(access, check=budget)
+            return self._read_status(access, check=budget, maintenance=True)
         assert self._embed_documents is not None
         for begin in range(0, len(pending), 16):
             budget()
@@ -378,12 +383,14 @@ class SemanticRecall:
                     db.execute("""DELETE FROM semantic_failures_v1 WHERE space_id=? AND message_id=?
                         AND (state_version<>? OR content_version<>?)""",
                         (space.key, message_id, version, content_version))
+                if writable:
+                    semantic_checkpoint.acknowledge(db, space.key, tuple(dict.fromkeys(item[0] for item, _ in writable)))
                 budget()
                 self.runtime._require_scope(access, "maintain", "semantic_refresh_commit")
                 db.execute("COMMIT")
             if unembeddable:
                 self._mark_failures(access, unembeddable, check=budget)
-        return self.status(access, check=budget)
+        return self._read_status(access, check=budget, maintenance=True)
 
     def _mark_failures(self, access: Access, items: list[tuple[str, int, int, int, int, int, int, str]], *,
                        check: Callable[[], float] | None = None) -> None:
@@ -411,6 +418,7 @@ class SemanticRecall:
                 for start in starts:
                     db.execute("INSERT OR REPLACE INTO semantic_failures_v1 VALUES (?,?,?,?,?,?)",
                         (space.key, message_id, start, version, content_version, "token_limit"))
+            semantic_checkpoint.acknowledge(db, space.key, tuple(dict.fromkeys(item[0] for item in items)))
             if check is not None:
                 check()
             db.execute("COMMIT")

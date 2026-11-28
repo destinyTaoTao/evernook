@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from functools import cache
 import hashlib
 import sqlite3
@@ -13,7 +14,9 @@ _PREFIX = "evernook_semantic_checkpoint_v1_"
 _ROWS = _PREFIX + "rows"
 _HEAD = _PREFIX + "head"
 _DIRTY = _PREFIX + "dirty"
+_PENDING_INDEX = _PREFIX + "pending_received"
 _READ_LIMIT = 100
+_MAINTENANCE_LIMIT = 5000
 _SOURCES = ("messages", "visibility", "captures", "semantic_documents_v1",
             "semantic_chunks_v1", "semantic_failures_v1")
 _VECTOR_ONLY = f"""SELECT c.message_id,NULL,0,0,count(*) FROM semantic_chunks_v1 c
@@ -27,6 +30,7 @@ def _definitions() -> dict[str, tuple[str, str]]:
         _HEAD: ("table", f"CREATE TABLE {_HEAD}(singleton INTEGER PRIMARY KEY CHECK(singleton=1), space TEXT NOT NULL, sources INTEGER NOT NULL, covered INTEGER NOT NULL, failed INTEGER NOT NULL, vectors INTEGER NOT NULL, seal TEXT NOT NULL)"),
         _DIRTY: ("table", f"CREATE TABLE {_DIRTY}(message_id TEXT PRIMARY KEY) WITHOUT ROWID"),
         _PREFIX + "received": ("index", f"CREATE INDEX {_PREFIX}received ON {_ROWS}(received)"),
+        _PENDING_INDEX: ("index", f"CREATE INDEX {_PENDING_INDEX} ON {_ROWS}(received,message_id) WHERE covered=0 AND received IS NOT NULL"),
     }
     for table in _SOURCES:
         key = "id" if table == "messages" else "message_id"
@@ -57,6 +61,7 @@ def _definitions() -> dict[str, tuple[str, str]]:
 
 
 _DEFINITIONS = _definitions()
+_LEGACY = _DEFINITIONS.keys() - {_PENDING_INDEX}
 
 
 def _owned(db: sqlite3.Connection) -> set[str]:
@@ -101,7 +106,7 @@ class _Head:
 
 
 def _head(db: sqlite3.Connection, found: set[str]) -> _Head | None:
-    if found != _DEFINITIONS.keys():
+    if not _LEGACY <= found:
         return None
     row = db.execute(f"SELECT space,sources,covered,failed,vectors,seal FROM {_HEAD} WHERE singleton=1").fetchone()
     if row is None or not row[5] or any(type(n) is not int for n in row[1:5]):
@@ -167,12 +172,14 @@ def _dirty(db: sqlite3.Connection, limit: int) -> list[str]:
 
 
 def _reconcile(db: sqlite3.Connection, head: _Head, ids: list[str] | tuple[str, ...], *,
-               persist: bool) -> tuple[_Head, str | None]:
+               persist: bool, completed_only: bool = False) -> tuple[_Head, str | None]:
     sources, covered, failed, vectors = head.sources, head.covered, head.failed, head.vectors
     newest = None
     for message_id in ids:
-        old = db.execute(f"SELECT received,covered,failed,vectors FROM {_ROWS} WHERE message_id=?", (message_id,)).fetchone()
         current = db.execute(_projection(True), {"space": head.space, "id": message_id}).fetchone()
+        if completed_only and current is not None and not current[2]:
+            continue  # Keep a partially embedded document in the dirty work set.
+        old = db.execute(f"SELECT received,covered,failed,vectors FROM {_ROWS} WHERE message_id=?", (message_id,)).fetchone()
         if current is None:
             current = db.execute("""SELECT message_id,NULL,0,0,count(*) FROM semantic_chunks_v1
                 WHERE space_id=? AND message_id=? GROUP BY message_id""", (head.space, message_id)).fetchone()
@@ -200,9 +207,9 @@ def _reconcile(db: sqlite3.Connection, head: _Head, ids: list[str] | tuple[str, 
     return updated, newest
 
 
-def status(db: sqlite3.Connection, space: str) -> tuple[int, int, int, int, str | None] | None:
+def _optional_read[T](db: sqlite3.Connection, read: Callable[[], T]) -> T | None:
     try:
-        return _status(db, space)
+        return read()
     except MemoryFailure as failure:
         if failure.code != "semantic_checkpoint_conflict":
             raise
@@ -216,12 +223,57 @@ def status(db: sqlite3.Connection, space: str) -> tuple[int, int, int, int, str 
         return None
 
 
-def _status(db: sqlite3.Connection, space: str) -> tuple[int, int, int, int, str | None] | None:
+def _space_head(db: sqlite3.Connection, space: str) -> _Head | None:
     head = _head(db, _owned(db))
-    if head is None or head.space != space:
+    return head if head is not None and head.space == space else None
+
+
+def pending(db: sqlite3.Connection, space: str, limit: int) -> list[sqlite3.Row] | None:
+    from .semantic import SemanticRecall, _JOINED_ELIGIBLE
+
+    def read() -> list[sqlite3.Row] | None:
+        found = _owned(db)
+        head = _head(db, found)
+        if head is None or head.space != space:
+            return None
+        candidates = f"SELECT message_id FROM {_DIRTY}"
+        if head.covered < head.sources:
+            if _PENDING_INDEX not in found:
+                return None
+            # At most the first `limit` clean pending sources can win the
+            # merged ordering. Dirty IDs (including changed clean rows) are
+            # independently rechecked. Older complete heads need no new index.
+            candidates += f""" UNION ALL SELECT message_id FROM (SELECT message_id FROM {_ROWS} INDEXED BY {_PENDING_INDEX}
+                WHERE covered=0 AND received IS NOT NULL AND message_id NOT IN (SELECT message_id FROM {_DIRTY})
+                ORDER BY received,message_id LIMIT :limit)"""
+        covered = SemanticRecall._covered(space_parameter=":space")
+        return db.execute(f"""WITH candidates AS MATERIALIZED ({candidates})
+            SELECT messages.event,messages.receipt,coalesce(v.version,1) AS state_version
+            FROM candidates q CROSS JOIN messages ON messages.id=q.message_id
+            LEFT JOIN visibility v ON v.message_id=q.message_id
+            WHERE {_JOINED_ELIGIBLE} AND NOT EXISTS ({covered} AND d.message_id=q.message_id)
+            ORDER BY messages.received,messages.id LIMIT :limit""", {"space": space, "limit": limit}).fetchall()
+
+    return _optional_read(db, read)
+
+
+def acknowledge(db: sqlite3.Connection, space: str, ids: tuple[str, ...]) -> None:
+    head = _optional_read(db, lambda: _space_head(db, space))
+    if head is not None:
+        _reconcile(db, head, ids, persist=True, completed_only=True)
+
+
+def status(db: sqlite3.Connection, space: str, *, maintenance: bool = False) -> tuple[int, int, int, int, str | None] | None:
+    limit = _MAINTENANCE_LIMIT if maintenance else _READ_LIMIT
+    return _optional_read(db, lambda: _status(db, space, limit))
+
+
+def _status(db: sqlite3.Connection, space: str, limit: int) -> tuple[int, int, int, int, str | None] | None:
+    head = _space_head(db, space)
+    if head is None:
         return None
-    ids = _dirty(db, _READ_LIMIT + 1)
-    if len(ids) > _READ_LIMIT:
+    ids = _dirty(db, limit + 1)
+    if len(ids) > limit:
         return None
     clean = db.execute(f"""SELECT received FROM {_ROWS} WHERE received IS NOT NULL AND message_id NOT IN (SELECT message_id FROM {_DIRTY})
         ORDER BY received DESC LIMIT 1""").fetchone()
@@ -240,6 +292,72 @@ def refresh(db: sqlite3.Connection, limit: int, *, space: str | None = None) -> 
     ids = _dirty(db, limit)
     _reconcile(db, head, ids, persist=True)
     return len(ids)
+
+
+def repair_if_stale(db: sqlite3.Connection, space: str, *, check: Callable[[], object] | None = None) -> bool:
+    """Revalidate an explicitly configured checkpoint against one authoritative snapshot.
+
+    The caller provides a dedicated autocommit connection with its interrupt
+    handler installed. Writers remain free while the reference projection and
+    its differences are built in private temporary tables. A concurrent commit
+    invalidates this repair attempt before any main database changes.
+    """
+    from . import lexical_checkpoint
+
+    proof = 'temp.evernook_semantic_repair_rows'
+    changed = 'temp.evernook_semantic_repair_changed'
+    removed = 'temp.evernook_semantic_repair_removed'
+    staged = False
+    db.execute('BEGIN')
+    try:
+        found = _optional_read(db, lambda: _owned(db))
+        if found is None or not _LEGACY <= found:
+            return False
+        head = _head(db, found)
+        if head is not None and (head.space != space or head.covered == head.sources or _PENDING_INDEX in found):
+            return False
+        configured = db.execute(f'SELECT space,seal FROM {_HEAD} WHERE singleton=1').fetchone()
+        if not configured or configured[0] != space or not configured[1]:
+            return False
+        version = db.execute('PRAGMA main.data_version').fetchone()[0]
+        lexical_valid = _PENDING_INDEX not in found and lexical_checkpoint.enabled(db)
+        db.execute(f'CREATE TABLE {proof}(message_id TEXT PRIMARY KEY,received TEXT,covered INTEGER,failed INTEGER,vectors INTEGER) WITHOUT ROWID')
+        db.execute(f'INSERT INTO {proof} ' + _projection(False) + ' ORDER BY messages.id', {'space': space})
+        db.execute(f'INSERT INTO {proof} ' + _VECTOR_ONLY.replace(_ROWS, proof), {'space': space})
+        counts = db.execute(f'SELECT count(received),coalesce(sum(covered),0),coalesce(sum(failed),0),coalesce(sum(vectors),0) FROM {proof}').fetchone()
+        db.execute(f'''CREATE TABLE {changed} AS SELECT p.* FROM {proof} p LEFT JOIN {_ROWS} r USING(message_id)
+            WHERE r.message_id IS NULL OR p.received IS NOT r.received OR p.covered<>r.covered
+                OR p.failed<>r.failed OR p.vectors<>r.vectors''')
+        db.execute(f'''CREATE TABLE {removed} AS SELECT r.message_id FROM {_ROWS} r
+            WHERE NOT EXISTS (SELECT 1 FROM {proof} p WHERE p.message_id=r.message_id)''')
+        db.execute('COMMIT')
+        staged = True
+
+        if check is not None:
+            check()
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute('PRAGMA main.data_version').fetchone()[0] != version:
+            return False
+        db.execute(f'DELETE FROM {_ROWS} WHERE message_id IN (SELECT message_id FROM {removed})')
+        db.execute(f'INSERT OR REPLACE INTO {_ROWS} SELECT * FROM {changed}')
+        db.execute(f'DELETE FROM {_DIRTY}')
+        if _PENDING_INDEX not in found:
+            db.execute(_DEFINITIONS[_PENDING_INDEX][1])
+        proven = _Head(space, *counts)
+        db.execute(f'UPDATE {_HEAD} SET sources=?,covered=?,failed=?,vectors=?,seal=? WHERE singleton=1',
+                   (*counts, proven.seal(db)))
+        if lexical_valid:
+            db.execute(f'UPDATE {lexical_checkpoint._HEAD} SET schema_version=(SELECT schema_version FROM pragma_schema_version) WHERE singleton=1')
+        if check is not None:
+            check()
+        db.execute('COMMIT')
+        return True
+    finally:
+        if db.in_transaction:
+            db.rollback()
+        if staged:
+            for table in (removed, changed, proof):
+                db.execute(f'DROP TABLE {table}')
 
 
 def remove_sources(db: sqlite3.Connection, ids: tuple[str, ...]) -> None:

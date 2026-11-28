@@ -128,6 +128,100 @@ class SemanticCheckpointTests(unittest.TestCase):
         self.workflow.configure_coverage_checkpoint(self.actor, enabled=True)
         self.parity(active=True)
 
+    def test_pending_rechecks_dirty_ids_in_source_order_and_requires_a_complete_matching_head(self) -> None:
+        old = self.save("合成旧来源")
+        self.backend.none_for = "失败"
+        failed = self.save("合成失败")
+        self.workflow.refresh(self.actor)
+        self.workflow.configure_coverage_checkpoint(self.actor, enabled=True)
+        first, second = self.save("合成新一"), self.save("合成新二")
+        self.save("")
+        self.runtime.submit(self.actor, replace(self.event("合成敏感"), sensitive=True))
+        self.runtime.change(self.actor, Change("hide-dirty", second, 1, "suppress", first, "合成"))
+        with self.runtime._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("UPDATE semantic_chunks_v1 SET content_version=2 WHERE message_id=?", (old,))
+            db.execute("UPDATE semantic_failures_v1 SET error_code='token_limit' WHERE message_id=?", (failed,))
+            db.execute("UPDATE messages SET received='2026-01-01' WHERE id IN (?,?)", (old, first))
+            rows = cp.pending(db, self.backend.space.key, 1)
+            self.assertIsNotNone(rows)
+            assert rows is not None
+            self.assertEqual([self.runtime._stored(row).receipt.message_id for row in rows], [min(first, old)])
+            self.assertIsNone(cp.pending(db, 'other-space', 1))
+            db.commit()
+        self.workflow.refresh_coverage_checkpoint(self.actor)
+        with self.runtime._connection() as db:
+            rows = cp.pending(db, self.backend.space.key, 1)
+            assert rows is not None
+            self.assertEqual([self.runtime._stored(row).receipt.message_id for row in rows], [min(first, old)])
+        self.assertEqual(self.workflow.refresh(self.actor).pending_messages, 0)
+        with self.runtime._connection() as db:
+            db.execute(f"CREATE TRIGGER {cp._HEAD} AFTER INSERT ON captures BEGIN SELECT 1; END")
+            self.assertIsNone(cp.pending(db, self.backend.space.key, 1))
+        self.save("合成回退")
+        self.assertEqual(self.workflow.refresh(self.actor).pending_messages, 0)
+
+    def test_refresh_above_foreground_overlay_limit_avoids_full_scan_and_retires_only_complete_ids(self) -> None:
+        self.save("合成基线")
+        self.workflow.refresh(self.actor)
+        self.workflow.configure_coverage_checkpoint(self.actor, enabled=True)
+        long_id = self.save("合成长文本" * 35)
+        self.runtime.submit_many(self.actor, tuple(self.event(f"合成新增{i}") for i in range(100)))
+        self.save("合成新增100")
+        self.save("合成新增101")
+        covered = self.workflow._covered
+        def point_lookup_only(**kwargs: Any) -> str:
+            self.assertEqual(kwargs.get('space_parameter'), ':space', 'used full-space coverage query')
+            return covered(**kwargs)
+        with patch.object(SemanticRecall, '_covered', side_effect=point_lookup_only):
+            first = self.workflow.refresh(self.actor, limit=1, timeout=5)
+            self.assertEqual((first.pending_messages, first.stored_vectors), (103, 2))
+            with self.runtime._connection() as db:
+                self.assertIsNotNone(db.execute(f'SELECT 1 FROM {cp._DIRTY} WHERE message_id=?', (long_id,)).fetchone())
+                self.assertIsNone(cp.status(db, self.backend.space.key))
+            result = self.workflow.refresh_window(self.actor)
+            self.assertEqual((result.pending_messages, result.indexed_messages), (0, 104))
+        self.assertEqual(self.workflow.refresh_coverage_checkpoint(self.actor), 0)
+        self.parity(active=True)
+
+    def test_repair_verifies_untracked_mutations_and_rejects_concurrent_commits_and_cancellation(self) -> None:
+        hidden_damage = self.save('合成未跟踪修改')
+        self.workflow.refresh(self.actor)
+        # Produce the exact previous checkpoint layout and its original seal.
+        with patch.dict(cp._DEFINITIONS):
+            del cp._DEFINITIONS[cp._PENDING_INDEX]
+            self.workflow.configure_coverage_checkpoint(self.actor, enabled=True)
+        with self.runtime._connection() as db:
+            self.assertEqual(cp.pending(db, self.backend.space.key, 1), [])
+            self.assertFalse(cp.repair_if_stale(db, self.backend.space.key))
+            trigger = cp._PREFIX + 'semantic_chunks_v1_delete'
+            db.execute(f'DROP TRIGGER {trigger}')
+            db.execute('DELETE FROM semantic_chunks_v1 WHERE message_id=?', (hidden_damage,))
+            db.execute(cp._DEFINITIONS[trigger][1])
+            self.assertIsNone(cp.pending(db, self.backend.space.key, 1))
+            self.assertIsNone(db.execute(f'SELECT 1 FROM {cp._DIRTY}').fetchone())
+            self.assertFalse(cp.repair_if_stale(db, 'another-space'))
+            self.assertFalse(cp.repair_if_stale(db, self.backend.space.key, check=lambda: self.save('合成并发提交')))
+            checks = 0
+            def cancel_before_commit() -> None:
+                nonlocal checks
+                checks += 1
+                if checks == 2:
+                    raise MemoryFailure('synthetic_cancel')
+            with self.assertRaisesRegex(MemoryFailure, 'synthetic_cancel'):
+                cp.repair_if_stale(db, self.backend.space.key, check=cancel_before_commit)
+            self.assertNotIn(cp._PENDING_INDEX, cp._owned(db))
+            self.assertIsNone(cp.pending(db, self.backend.space.key, 1))
+            self.assertTrue(cp.repair_if_stale(db, self.backend.space.key))
+            self.assertFalse(cp.repair_if_stale(db, self.backend.space.key))
+            self.assertIn(cp._PENDING_INDEX, cp._owned(db))
+            rows = cp.pending(db, self.backend.space.key, 1)
+            assert rows is not None
+            self.assertEqual(self.runtime._stored(rows[0]).receipt.message_id, hidden_damage)
+        self.parity(active=True)
+        self.assertEqual(self.workflow.status(self.actor).pending_messages, 2)
+        self.assertEqual(self.workflow.refresh(self.actor).stored_vectors, 2)
+
     def test_failed_rebuild_rolls_back_and_direct_version_edits_use_the_overlay(self) -> None:
         target = self.save("合成独立版本")
         self.workflow.refresh(self.actor)
