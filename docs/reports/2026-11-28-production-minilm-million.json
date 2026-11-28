@@ -1,0 +1,160 @@
+{
+  "source_manifest": {
+    "expected_messages": 1000000,
+    "fixture_version": "zh-scale-public-events-v1",
+    "policy_sha256": "6b39e961a91fb1311fa498b2db80a61f1cfa64bb62813f31c8ef9f07e901a4ba",
+    "source_baseline": "a1275e22c1b0a5bbb94b6b8ec75cd7900f721bd3"
+  },
+  "build_source_commit": "b6c839668c9b2312df7877dbb0adec73f163da26",
+  "verification_source_commit": "74ed38c6ffdd3a4eff2688c73813e383572866a6",
+  "build": {
+    "build_probe_sha256": "ef7f35540c3f36cd4ac702514ffd54badc80eaf23b56b1b40e9aef5cfd2a452c",
+    "inference_batch_receipts_sha256": "eff87282a7a8a650af17fad998091950803b5df9a82bc544ea753a929c03791e",
+    "last_window_seconds": 1763.2605733999953,
+    "node_worker_sha256": "70b16e2256e7cffad33d0d85cfb500654cb562200bd1f7082844d88f251fc893",
+    "public_status": {
+      "error_code": null,
+      "failed_chunks": 0,
+      "indexed_messages": 1000000,
+      "pending_messages": 0,
+      "source_messages": 1000000,
+      "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+      "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+      "state": "ready",
+      "stored_vectors": 1000000
+    },
+    "space": {
+      "artifact_digest": "371b2499827ee7eac1bea9acf238546b2255aa688a34159917c77442859b761d",
+      "chunk_size": 192,
+      "dimensions": 384,
+      "encoding": "mean-l2-f32-v1",
+      "model": "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+      "overlap": 32,
+      "revision": "2c4055b12046f11709e9df2c122e59ffbdc2f900"
+    },
+    "workers": 3
+  },
+  "verification": {
+    "source_and_vector_inventory_sha256": "b4001a6b4ac4f6fd8052eb0aa34b1a7f77241dcf56cb001a779a824e21a5208f",
+    "readback_verified": 1000000,
+    "matched_public_model_batches_start_rowid": [
+      1,
+      16385,
+      492033,
+      999985
+    ],
+    "matched_recomputed_f32_vectors": 64,
+    "full_readback_and_sample_seconds": 31.77076840000518,
+    "seconds": 192.61697000000277,
+    "lexical_checkpoint_before_verification": false,
+    "effective_indexes": {
+      "lexical_checkpoint": true,
+      "candidate_index": true,
+      "semantic_checkpoint": true,
+      "lexical_id_acceleration": true
+    },
+    "lexical": {
+      "state": "ready",
+      "source_messages": 1000000,
+      "indexed_messages": 1000000,
+      "pending_messages": 0,
+      "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+      "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+      "normalization_version": 1
+    },
+    "semantic": {
+      "state": "ready",
+      "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+      "source_messages": 1000000,
+      "indexed_messages": 1000000,
+      "pending_messages": 0,
+      "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+      "error_code": null,
+      "failed_chunks": 0,
+      "stored_vectors": 1000000
+    },
+    "sqlite_version": "3.50.4"
+  },
+  "token_inventory": {
+    "source_count": 1000000,
+    "distinct_token_sha256": 1000000,
+    "source_order_token_inventory_sha256": "cc2483d889a3231d7c47b71d917df90a4c9dc451f5d675587acb5df06626b57d",
+    "token_lengths": {
+      "11": 1,
+      "21": 1,
+      "22": 6576,
+      "23": 319748,
+      "24": 587720,
+      "25": 85954
+    },
+    "tokenizer_sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441",
+    "elapsed_seconds": 79.1468802,
+    "node": "v24.12.0"
+  },
+  "monitor_reports": {
+    "build-window-1": {
+      "returncode": 1,
+      "elapsed_seconds": 26.406777900003362,
+      "stop_reason": "operator_stop",
+      "stop_error": null,
+      "root_exited": true,
+      "cleanup_errors": [],
+      "max_seconds": 1800.0,
+      "ownership": "windows_job_v1",
+      "samples": 105,
+      "query_failures": 0,
+      "peak_observed_tree_private_bytes": 2339315712,
+      "raw_resources_sha256": "eed581db32b827189fcbe23a02742f86fb60d2c49e0a62f27fae119e75ad6be0"
+    },
+    "build-window-2": {
+      "returncode": 0,
+      "elapsed_seconds": 1763.8406219000026,
+      "stop_reason": null,
+      "stop_error": null,
+      "root_exited": true,
+      "cleanup_errors": [],
+      "max_seconds": 1765.0,
+      "ownership": "windows_job_v1",
+      "samples": 7045,
+      "query_failures": 0,
+      "peak_observed_tree_private_bytes": 1848299520,
+      "raw_resources_sha256": "b3eea9c19fff0e865d8796a2006cb7ae0fe7b65fa41d071a0a00aac1bbe4906b"
+    },
+    "tokens-window": {
+      "returncode": 0,
+      "elapsed_seconds": 80.11514609999722,
+      "stop_reason": null,
+      "stop_error": null,
+      "root_exited": true,
+      "cleanup_errors": [],
+      "max_seconds": 300.0,
+      "ownership": "windows_job_v1",
+      "samples": 320,
+      "query_failures": 0,
+      "peak_observed_tree_private_bytes": 830189568,
+      "raw_resources_sha256": "554b3e6f4a6ea45e4e38b875128a4db7d032966b4dcb30b6f89bb31471f10ea0"
+    },
+    "verify-window": {
+      "returncode": 0,
+      "elapsed_seconds": 193.2599157000077,
+      "stop_reason": null,
+      "stop_error": null,
+      "root_exited": true,
+      "cleanup_errors": [],
+      "max_seconds": 450.0,
+      "ownership": "windows_job_v1",
+      "samples": 772,
+      "query_failures": 0,
+      "peak_observed_tree_private_bytes": 591261696,
+      "raw_resources_sha256": "837c20c5008d3f8b803426a3ef6d565e047327cab219f0be5aed7ed7e630d41c"
+    }
+  },
+  "copied_fixture_seconds": 17.395296700007748,
+  "committed_per_build_window": [
+    16384,
+    983616
+  ],
+  "wall_clock_from_initial_start_to_first_ready_seconds": 1801.2504515165492,
+  "ready_db_bytes": 6459949056,
+  "experiment_root_bytes_after_verification": 7127385776
+}
