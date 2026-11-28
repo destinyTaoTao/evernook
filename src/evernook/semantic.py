@@ -707,7 +707,9 @@ class SemanticRecall:
         channels: dict[str, list[SearchHit]] = {"exact": list(exact.hits), "lexical": list(lexical.hits),
                                                "recent_lexical": list(recent_lexical.hits) if recent_lexical is not None else []}
         degraded = [reason for reason in (lexical.fallback_reason, exact.fallback_reason) if reason is not None]
-        if lexical.index.state == "ready":
+        # A just-captured question can leave the index behind. Existing keyword
+        # rows still qualify individually against the current source and version.
+        if lexical.index.state in {"ready", "behind"} and lexical.index.indexed_messages > 0:
             try:
                 channels["keyword"] = list(self._keyword(access, query, since=focus_since, until=focus_until,
                     check=budget, current_input_id=current_input_id))

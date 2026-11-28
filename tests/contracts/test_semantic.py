@@ -858,6 +858,23 @@ class SemanticTests(unittest.TestCase):
         self.runtime.change(self.access, Change("keyword-hide", target, 1, "suppress", confirmation, "synthetic"))
         self.assertEqual(without_model.recall(self.access, "我在哪里学会水上划行？").hits, ())
 
+    def test_capture_before_recall_retains_valid_indexed_keywords_and_reports_pending(self) -> None:
+        target = self.save("合成：预算37元。")
+        stale = self.save("合成：预算单草稿。")
+        self.runtime.refresh_lexical(self.access)
+        with self.runtime._connection() as db:
+            db.execute("UPDATE lexical_docs SET content_version=0 WHERE message_id=?", (stale,))
+        query = "我之前说的预算是多少来着？"
+        current = self.save(query)
+        recall = SemanticRecall(self.runtime)
+        page = recall.recall(self.access, query, current_input_id=current)
+        self.assertEqual(page.lexical.state, "behind")
+        self.assertIn("index_behind", page.degraded)
+        self.assertEqual([(hit.evidence.message_id, hit.channels) for hit in page.hits], [(target, ("keyword",))])
+        confirmation = self.save("合成：确认隐藏旧金额。")
+        self.runtime.change(self.access, Change("hide-partially-indexed", target, 1, "suppress", confirmation, "synthetic"))
+        self.assertEqual(recall.recall(self.access, query, current_input_id=current).hits, ())
+
     def test_keyword_channel_filters_time_before_top_k_and_ignores_question_stopwords(self) -> None:
         old = self.save("合成：在银叶桥学会了独木舟。", "2019-01-01T00:00:00Z")
         new = self.save("合成：在星湖学会了独木舟。", "2025-01-01T00:00:00Z")

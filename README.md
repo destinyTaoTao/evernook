@@ -6,6 +6,8 @@ EverNook 是给 dsh、桌宠和个人 Agent 使用的本机长期记忆系统。
 
 Core 0.1.98 的独立 wheel 已通过 1,415 项 Python 契约测试。dsh/pi 的 158 项 SDK 测试在各自适用的宿主配置下均已通过，Maneki 安装态适配器通过 44 项。[架构边界与验收记录](docs/current-architecture.md#11-月-27-日验收记录)
 
+**跨天自然问答（Core 0.1.99）**：dsh 在写入新提问、词法索引短暂落后时，可以从已索引且仍有效的原文找回七天前的预算；同问开启答出 37 元，关闭未给出金额。小招用八个日历日前保存的饮品偏好实测，三条预设问句都把正确来源送到模型，完整答出茶名和配料为 0/3，三条追加问法中有一条答全。两组均使用本机 Qwen3-0.6B 和独立合成账本。[dsh 开关与修复前后原话](docs/reports/2026-11-28-dsh-cross-day-answer.md) · [小招逐题回答](https://github.com/destinyTaoTao/maneki-pet/blob/277b22c8ec4f5b089a968db807710f91651ca01f/docs/audits/2026-11-28-natural-memory-answers.md)
+
 **普通账本恢复实测**：三次同机离线恢复，从打开五条记录的加密快照到新服务首次读回原文和回执，用时 613–665 ms。快照前已隐藏的内容持续不可见，快照后才撤回的内容会重新可见。异机恢复和物理掉电仍待真机验收。[测量范围、重跑方式与真机步骤](docs/reports/2026-11-28-offline-recovery-drill.md)
 
 ## 从一条记忆开始
