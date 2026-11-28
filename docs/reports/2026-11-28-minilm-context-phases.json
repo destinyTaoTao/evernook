@@ -1,0 +1,1525 @@
+{
+  "installed_version": "0.1.101",
+  "probe_sha256": "5b869d245009866b274e0365356255e5f29ba7e228e4742c19577f2633033118",
+  "host_model": "qwen3-0.6b-q4-evaluation",
+  "max_tokens": 4096,
+  "metric": "perf_counter wall clock; stages in ms; exclusive stages partition server dispatch; parallel tokenizer warmup excluded",
+  "low_backlog": {
+    "fixture": {
+      "schema_version": 69,
+      "flags": {
+        "lexical_checkpoint": true,
+        "sem_status_checkpoint": true,
+        "lexical_id_acceleration": true,
+        "candidate_index": true
+      },
+      "lexical": {
+        "state": "behind",
+        "source_messages": 1000004,
+        "indexed_messages": 1000000,
+        "pending_messages": 4,
+        "source_watermark": "2026-11-28T14:06:26.525957+00:00",
+        "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+        "normalization_version": 1
+      },
+      "semantic": {
+        "state": "behind",
+        "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+        "source_messages": 1000004,
+        "indexed_messages": 1000000,
+        "pending_messages": 4,
+        "source_watermark": "2026-11-28T14:06:26.525957+00:00",
+        "error_code": null,
+        "failed_chunks": 0,
+        "stored_vectors": 1000000
+      }
+    },
+    "samples": [
+      {
+        "case": "historical",
+        "client_ms": 17408.6236,
+        "capture_ms": 21.0845,
+        "outside_dispatch_ms": 4.0742,
+        "parallel_tokenizer_warmup_ms": 310.2321,
+        "pair_timestamps": {
+          "read_start": 99333.3797,
+          "read_end": 99350.7883,
+          "write_start": 99333.3797,
+          "write_end": 99333.4008
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 9,
+        "target_present": true,
+        "query": "合成条目0000001",
+        "lexical_checkpoint_used": true,
+        "literal_calls": [
+          {
+            "elapsed_ms": 51.9761,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 51.453,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 17.061,
+            "hits": 0,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": true,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000005,
+          "indexed_messages": 1000000,
+          "pending_messages": 5,
+          "source_watermark": "2026-11-28T15:21:15.762694+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000005,
+          "indexed_messages": 1000000,
+          "pending_messages": 5,
+          "source_watermark": "2026-11-28T15:21:15.762694+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.3319,
+            "exclusive_ms": 0.3319
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 3.4721,
+            "exclusive_ms": 3.4721
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 239.9724,
+            "exclusive_ms": 239.9724
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 239.9933,
+            "exclusive_ms": 0.0209
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 99.5908,
+            "exclusive_ms": 99.5908
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 120.4901,
+            "exclusive_ms": 20.8993
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.7599,
+            "exclusive_ms": 4.7599
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 575.5081,
+            "exclusive_ms": 575.5081
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 586.4098,
+            "exclusive_ms": 10.9017
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.988,
+            "exclusive_ms": 0.988
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 5.5218,
+            "exclusive_ms": 4.5338
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1063.1485,
+            "exclusive_ms": 1063.1485
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 14602.4052,
+            "exclusive_ms": 14602.4052
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 14694.4515,
+            "exclusive_ms": 92.0463
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 11.5881,
+            "exclusive_ms": 11.5881
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 16769.338,
+            "exclusive_ms": 42.975
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 152.0347,
+            "exclusive_ms": 152.0347
+          },
+          "context_revalidate": {
+            "calls": 41,
+            "inclusive_ms": 1.5273,
+            "exclusive_ms": 1.5273
+          },
+          "context_tokens": {
+            "calls": 25,
+            "inclusive_ms": 436.0584,
+            "exclusive_ms": 436.0584
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 17382.4844,
+            "exclusive_ms": 23.526
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 17402.34,
+            "exclusive_ms": 16.3835
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 17404.5494,
+            "exclusive_ms": 1.8775
+          }
+        }
+      },
+      {
+        "case": "recent",
+        "client_ms": 17514.4413,
+        "capture_ms": 36.3587,
+        "outside_dispatch_ms": 4.3762,
+        "parallel_tokenizer_warmup_ms": 305.7159,
+        "pair_timestamps": {
+          "read_start": 99350.8086,
+          "read_end": 99368.323,
+          "write_start": 99350.8085,
+          "write_end": 99350.8448
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 9,
+        "target_present": true,
+        "query": "合成条目0999999",
+        "lexical_checkpoint_used": true,
+        "literal_calls": [
+          {
+            "elapsed_ms": 58.7218,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 78.0193,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 64.8263,
+            "hits": 1,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": true,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000005,
+          "indexed_messages": 1000000,
+          "pending_messages": 5,
+          "source_watermark": "2026-11-28T15:21:15.762694+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000006,
+          "indexed_messages": 1000000,
+          "pending_messages": 6,
+          "source_watermark": "2026-11-28T15:21:33.210836+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.7679,
+            "exclusive_ms": 0.7679
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 3.4648,
+            "exclusive_ms": 3.4648
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 338.3108,
+            "exclusive_ms": 338.3108
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 338.3318,
+            "exclusive_ms": 0.021
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 175.6138,
+            "exclusive_ms": 175.6138
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 201.5674,
+            "exclusive_ms": 25.9536
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.4133,
+            "exclusive_ms": 4.4133
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 670.5666,
+            "exclusive_ms": 670.5666
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 684.448,
+            "exclusive_ms": 13.8814
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.8998,
+            "exclusive_ms": 0.8998
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 7.8121,
+            "exclusive_ms": 6.9123
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1088.8079,
+            "exclusive_ms": 1088.8079
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 14360.4321,
+            "exclusive_ms": 14360.4321
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 14398.0813,
+            "exclusive_ms": 37.6492
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 10.2703,
+            "exclusive_ms": 10.2703
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 16777.6571,
+            "exclusive_ms": 43.925
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 174.6378,
+            "exclusive_ms": 174.6378
+          },
+          "context_revalidate": {
+            "calls": 41,
+            "inclusive_ms": 1.7319,
+            "exclusive_ms": 1.7319
+          },
+          "context_tokens": {
+            "calls": 25,
+            "inclusive_ms": 506.6255,
+            "exclusive_ms": 506.6255
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 17486.0274,
+            "exclusive_ms": 25.3751
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 17507.7058,
+            "exclusive_ms": 18.2136
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 17510.0651,
+            "exclusive_ms": 1.5914
+          }
+        }
+      },
+      {
+        "case": "no_answer",
+        "client_ms": 15922.1182,
+        "capture_ms": 33.6206,
+        "outside_dispatch_ms": 6.3719,
+        "parallel_tokenizer_warmup_ms": 324.4837,
+        "pair_timestamps": {
+          "read_start": 99368.3267,
+          "read_end": 99384.2488,
+          "write_start": 99368.3266,
+          "write_end": 99368.3602
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 0,
+        "target_present": null,
+        "query": "外星深海音乐会许可证",
+        "lexical_checkpoint_used": true,
+        "literal_calls": [
+          {
+            "elapsed_ms": 1.5167,
+            "hits": 0,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 0.4326,
+            "hits": 0,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 1.2429,
+            "hits": 0,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": true,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000006,
+          "indexed_messages": 1000000,
+          "pending_messages": 6,
+          "source_watermark": "2026-11-28T15:21:33.210836+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000007,
+          "indexed_messages": 1000000,
+          "pending_messages": 7,
+          "source_watermark": "2026-11-28T15:21:50.724704+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.6476,
+            "exclusive_ms": 0.6476
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 4.1207,
+            "exclusive_ms": 4.1207
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 379.9531,
+            "exclusive_ms": 379.9531
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 379.9781,
+            "exclusive_ms": 0.025
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 0.5885,
+            "exclusive_ms": 0.5885
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 3.1922,
+            "exclusive_ms": 2.6037
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 10.0689,
+            "exclusive_ms": 10.0689
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 1.785,
+            "exclusive_ms": 1.785
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 7.317,
+            "exclusive_ms": 5.532
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 1.0306,
+            "exclusive_ms": 1.0306
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 6.6371,
+            "exclusive_ms": 5.6065
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1150.7562,
+            "exclusive_ms": 1150.7562
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 14284.6146,
+            "exclusive_ms": 14284.6146
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 14295.365,
+            "exclusive_ms": 10.7504
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 0.0099,
+            "exclusive_ms": 0.0099
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 15868.0703,
+            "exclusive_ms": 14.7459
+          },
+          "context_tokens": {
+            "calls": 1,
+            "inclusive_ms": 14.7018,
+            "exclusive_ms": 14.7018
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 15893.5872,
+            "exclusive_ms": 10.8151
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 15911.686,
+            "exclusive_ms": 13.9781
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 15915.7463,
+            "exclusive_ms": 3.4127
+          }
+        }
+      },
+      {
+        "case": "popular",
+        "client_ms": 19772.7831,
+        "capture_ms": 29.7826,
+        "outside_dispatch_ms": 7.1895,
+        "parallel_tokenizer_warmup_ms": 321.2275,
+        "pair_timestamps": {
+          "read_start": 99384.2515,
+          "read_end": 99404.0243,
+          "write_start": 99384.2514,
+          "write_end": 99384.2812
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 10,
+        "target_present": null,
+        "query": "记录",
+        "lexical_checkpoint_used": true,
+        "literal_calls": [
+          {
+            "elapsed_ms": 118.2211,
+            "hits": 100,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 113.894,
+            "hits": 100,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 2379.9831,
+            "hits": 100,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": true,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000008,
+          "indexed_messages": 1000000,
+          "pending_messages": 8,
+          "source_watermark": "2026-11-28T15:22:06.645588+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000008,
+          "indexed_messages": 1000000,
+          "pending_messages": 8,
+          "source_watermark": "2026-11-28T15:22:06.645588+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.4568,
+            "exclusive_ms": 0.4568
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 6.7394,
+            "exclusive_ms": 6.7394
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 371.6838,
+            "exclusive_ms": 371.6838
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 371.7038,
+            "exclusive_ms": 0.02
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 2555.8306,
+            "exclusive_ms": 2555.8306
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 2612.0982,
+            "exclusive_ms": 56.2676
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.309,
+            "exclusive_ms": 4.309
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 300.8239,
+            "exclusive_ms": 300.8239
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 312.3019,
+            "exclusive_ms": 11.478
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 1.4676,
+            "exclusive_ms": 1.4676
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 6.8823,
+            "exclusive_ms": 5.4147
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1086.4986,
+            "exclusive_ms": 1086.4986
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 14441.2403,
+            "exclusive_ms": 14441.2403
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 14474.6417,
+            "exclusive_ms": 33.4014
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 9.4201,
+            "exclusive_ms": 9.4201
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 18939.9021,
+            "exclusive_ms": 62.0465
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 171.1373,
+            "exclusive_ms": 171.1373
+          },
+          "context_revalidate": {
+            "calls": 42,
+            "inclusive_ms": 3.2993,
+            "exclusive_ms": 3.2993
+          },
+          "context_tokens": {
+            "calls": 24,
+            "inclusive_ms": 587.421,
+            "exclusive_ms": 587.421
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 19738.6817,
+            "exclusive_ms": 36.922
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 19762.1673,
+            "exclusive_ms": 16.7462
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 19765.5936,
+            "exclusive_ms": 2.9695
+          }
+        }
+      }
+    ]
+  },
+  "high_backlog": {
+    "fixture": {
+      "copy_hashes": {
+        "memory.sqlite3": {
+          "bytes": 6461755392,
+          "sha256": "f84457584612b535fb948d0f86117fbc9cd28a8173e5ce369eb932cf4b14b403"
+        }
+      },
+      "schema_version": 69,
+      "flags": {
+        "lexical_checkpoint_configured": true,
+        "lexical_checkpoint_read_used": false,
+        "semantic_checkpoint_read_used": false,
+        "lexical_id_acceleration": true,
+        "candidate_index": true
+      },
+      "dirty_count": {
+        "lexical_checkpoint": 120,
+        "semantic_checkpoint": 120
+      }
+    },
+    "samples": [
+      {
+        "case": "historical",
+        "client_ms": 35883.7744,
+        "capture_ms": 164.3415,
+        "outside_dispatch_ms": 4.0338,
+        "parallel_tokenizer_warmup_ms": 329.4513,
+        "pair_timestamps": {
+          "read_start": 99177.8851,
+          "read_end": 99213.7689,
+          "write_start": 99177.8852,
+          "write_end": 99178.0495
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 9,
+        "target_present": true,
+        "query": "合成条目0000001",
+        "lexical_checkpoint_used": false,
+        "literal_calls": [
+          {
+            "elapsed_ms": 1010.1133,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 965.1489,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 228.7245,
+            "hits": 0,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": false,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000121,
+          "indexed_messages": 1000000,
+          "pending_messages": 121,
+          "source_watermark": "2026-11-28T15:18:40.415577+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000121,
+          "indexed_messages": 1000000,
+          "pending_messages": 121,
+          "source_watermark": "2026-11-28T15:18:40.415577+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.3505,
+            "exclusive_ms": 0.3505
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 3.6933,
+            "exclusive_ms": 3.6933
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 248.0091,
+            "exclusive_ms": 248.0091
+          },
+          "lexical_fallback": {
+            "calls": 1,
+            "inclusive_ms": 5257.4741,
+            "exclusive_ms": 5257.4741
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 5505.5278,
+            "exclusive_ms": 0.0446
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 2203.8558,
+            "exclusive_ms": 2203.8558
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 2203.9867,
+            "exclusive_ms": 0.1309
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.4483,
+            "exclusive_ms": 4.4483
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 650.4241,
+            "exclusive_ms": 650.4241
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 667.7178,
+            "exclusive_ms": 17.2937
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.27,
+            "exclusive_ms": 0.27
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 10216.0111,
+            "exclusive_ms": 10215.7411
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1152.6014,
+            "exclusive_ms": 1152.6014
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 15114.6751,
+            "exclusive_ms": 15114.6751
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 15219.6824,
+            "exclusive_ms": 105.0073
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 9.5884,
+            "exclusive_ms": 9.5884
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 35045.2695,
+            "exclusive_ms": 65.7056
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 151.7489,
+            "exclusive_ms": 151.7489
+          },
+          "context_revalidate": {
+            "calls": 41,
+            "inclusive_ms": 1.5978,
+            "exclusive_ms": 1.5978
+          },
+          "context_tokens": {
+            "calls": 25,
+            "inclusive_ms": 488.5591,
+            "exclusive_ms": 488.5591
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 35713.3204,
+            "exclusive_ms": 26.1451
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 35877.6341,
+            "exclusive_ms": 160.6204
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 35879.7406,
+            "exclusive_ms": 1.756
+          }
+        }
+      },
+      {
+        "case": "recent",
+        "client_ms": 37301.1065,
+        "capture_ms": 27.056,
+        "outside_dispatch_ms": 5.9222,
+        "parallel_tokenizer_warmup_ms": 316.5071,
+        "pair_timestamps": {
+          "read_start": 99213.7925,
+          "read_end": 99251.0936,
+          "write_start": 99213.7924,
+          "write_end": 99213.8195
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 9,
+        "target_present": true,
+        "query": "合成条目0999999",
+        "lexical_checkpoint_used": false,
+        "literal_calls": [
+          {
+            "elapsed_ms": 1173.2598,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 1130.8249,
+            "hits": 1,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 259.7769,
+            "hits": 1,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": false,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000121,
+          "indexed_messages": 1000000,
+          "pending_messages": 121,
+          "source_watermark": "2026-11-28T15:18:40.415577+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000122,
+          "indexed_messages": 1000000,
+          "pending_messages": 122,
+          "source_watermark": "2026-11-28T15:19:16.187365+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.3025,
+            "exclusive_ms": 0.3025
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 5.3539,
+            "exclusive_ms": 5.3539
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 335.4531,
+            "exclusive_ms": 335.4531
+          },
+          "lexical_fallback": {
+            "calls": 1,
+            "inclusive_ms": 5990.7339,
+            "exclusive_ms": 5990.7339
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 6326.2245,
+            "exclusive_ms": 0.0375
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 2563.747,
+            "exclusive_ms": 2563.747
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 2563.8616,
+            "exclusive_ms": 0.1146
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.5669,
+            "exclusive_ms": 4.5669
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 660.308,
+            "exclusive_ms": 660.308
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 673.8591,
+            "exclusive_ms": 13.5511
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.4865,
+            "exclusive_ms": 0.4865
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 10276.9128,
+            "exclusive_ms": 10276.4263
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1080.4016,
+            "exclusive_ms": 1080.4016
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 15578.6201,
+            "exclusive_ms": 15578.6201
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 15615.6586,
+            "exclusive_ms": 37.0385
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 10.7661,
+            "exclusive_ms": 10.7661
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 36609.9281,
+            "exclusive_ms": 57.6769
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 146.7442,
+            "exclusive_ms": 146.7442
+          },
+          "context_revalidate": {
+            "calls": 41,
+            "inclusive_ms": 2.1265,
+            "exclusive_ms": 2.1265
+          },
+          "context_tokens": {
+            "calls": 25,
+            "inclusive_ms": 484.608,
+            "exclusive_ms": 484.608
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 37270.1382,
+            "exclusive_ms": 26.7314
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 37292.1785,
+            "exclusive_ms": 16.6864
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 37295.1843,
+            "exclusive_ms": 2.7033
+          }
+        }
+      },
+      {
+        "case": "no_answer",
+        "client_ms": 34150.8264,
+        "capture_ms": 25.6564,
+        "outside_dispatch_ms": 5.9837,
+        "parallel_tokenizer_warmup_ms": 323.3833,
+        "pair_timestamps": {
+          "read_start": 99251.0992,
+          "read_end": 99285.25,
+          "write_start": 99251.0991,
+          "write_end": 99251.1247
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 0,
+        "target_present": null,
+        "query": "外星深海音乐会许可证",
+        "lexical_checkpoint_used": false,
+        "literal_calls": [
+          {
+            "elapsed_ms": 818.0072,
+            "hits": 0,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 775.4873,
+            "hits": 0,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 203.3149,
+            "hits": 0,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": false,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000123,
+          "indexed_messages": 1000000,
+          "pending_messages": 123,
+          "source_watermark": "2026-11-28T15:19:53.492096+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000123,
+          "indexed_messages": 1000000,
+          "pending_messages": 123,
+          "source_watermark": "2026-11-28T15:19:53.492096+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.5634,
+            "exclusive_ms": 0.5634
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 6.0706,
+            "exclusive_ms": 6.0706
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 361.3227,
+            "exclusive_ms": 361.3227
+          },
+          "lexical_fallback": {
+            "calls": 1,
+            "inclusive_ms": 5799.4417,
+            "exclusive_ms": 5799.4417
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 6160.8009,
+            "exclusive_ms": 0.0365
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 1796.7036,
+            "exclusive_ms": 1796.7036
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 1796.8094,
+            "exclusive_ms": 0.1058
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.5326,
+            "exclusive_ms": 4.5326
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 3.4743,
+            "exclusive_ms": 3.4743
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 10.2026,
+            "exclusive_ms": 6.7283
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.2577,
+            "exclusive_ms": 0.2577
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 9743.8642,
+            "exclusive_ms": 9743.6065
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1106.4164,
+            "exclusive_ms": 1106.4164
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 15224.4551,
+            "exclusive_ms": 15224.4551
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 15238.2948,
+            "exclusive_ms": 13.8397
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 0.0185,
+            "exclusive_ms": 0.0185
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 34098.7046,
+            "exclusive_ms": 37.7652
+          },
+          "context_tokens": {
+            "calls": 1,
+            "inclusive_ms": 14.2626,
+            "exclusive_ms": 14.2626
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 34123.9338,
+            "exclusive_ms": 10.9666
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 34141.2252,
+            "exclusive_ms": 11.2208
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 34144.8427,
+            "exclusive_ms": 3.0541
+          }
+        }
+      },
+      {
+        "case": "popular",
+        "client_ms": 46809.6058,
+        "capture_ms": 27.4559,
+        "outside_dispatch_ms": 6.2238,
+        "parallel_tokenizer_warmup_ms": 299.519,
+        "pair_timestamps": {
+          "read_start": 99285.253,
+          "read_end": 99332.0626,
+          "write_start": 99285.2529,
+          "write_end": 99285.2803
+        },
+        "complete": false,
+        "degraded": [
+          "index_behind",
+          "semantic_behind"
+        ],
+        "evidence_items": 10,
+        "target_present": null,
+        "query": "记录",
+        "lexical_checkpoint_used": false,
+        "literal_calls": [
+          {
+            "elapsed_ms": 3091.3378,
+            "hits": 100,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 2837.0075,
+            "hits": 100,
+            "reason": "index_behind"
+          },
+          {
+            "elapsed_ms": 4704.4045,
+            "hits": 100,
+            "reason": "index_behind"
+          }
+        ],
+        "semantic_checkpoint_used": false,
+        "backend": "sqlite-vec-0.1.9-exact",
+        "scanned": 1000000,
+        "scan_limited": false,
+        "lexical": {
+          "state": "behind",
+          "source_messages": 1000124,
+          "indexed_messages": 1000000,
+          "pending_messages": 124,
+          "source_watermark": "2026-11-28T15:20:27.642905+00:00",
+          "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+          "normalization_version": 1
+        },
+        "semantic": {
+          "state": "behind",
+          "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+          "source_messages": 1000124,
+          "indexed_messages": 1000000,
+          "pending_messages": 124,
+          "source_watermark": "2026-11-28T15:20:27.642905+00:00",
+          "error_code": null,
+          "failed_chunks": 0,
+          "stored_vectors": 1000000
+        },
+        "stages": {
+          "handshake": {
+            "calls": 1,
+            "inclusive_ms": 0.5704,
+            "exclusive_ms": 0.5704
+          },
+          "host_config": {
+            "calls": 1,
+            "inclusive_ms": 4.0502,
+            "exclusive_ms": 4.0502
+          },
+          "lexical_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 318.1448,
+            "exclusive_ms": 318.1448
+          },
+          "lexical_fallback": {
+            "calls": 1,
+            "inclusive_ms": 5900.8485,
+            "exclusive_ms": 5900.8485
+          },
+          "lexical_coverage": {
+            "calls": 1,
+            "inclusive_ms": 6219.0318,
+            "exclusive_ms": 0.0385
+          },
+          "literal_rows": {
+            "calls": 3,
+            "inclusive_ms": 10632.5015,
+            "exclusive_ms": 10632.5015
+          },
+          "literal_search": {
+            "calls": 3,
+            "inclusive_ms": 10632.7498,
+            "exclusive_ms": 0.2483
+          },
+          "recent_window": {
+            "calls": 1,
+            "inclusive_ms": 4.5617,
+            "exclusive_ms": 4.5617
+          },
+          "bm25_ids": {
+            "calls": 1,
+            "inclusive_ms": 320.5911,
+            "exclusive_ms": 320.5911
+          },
+          "keyword_hits": {
+            "calls": 1,
+            "inclusive_ms": 331.6534,
+            "exclusive_ms": 11.0623
+          },
+          "semantic_checkpoint": {
+            "calls": 1,
+            "inclusive_ms": 0.259,
+            "exclusive_ms": 0.259
+          },
+          "semantic_coverage": {
+            "calls": 1,
+            "inclusive_ms": 10781.5407,
+            "exclusive_ms": 10781.2817
+          },
+          "embedding": {
+            "calls": 1,
+            "inclusive_ms": 1207.5762,
+            "exclusive_ms": 1207.5762
+          },
+          "vector_sql": {
+            "calls": 1,
+            "inclusive_ms": 16767.0686,
+            "exclusive_ms": 16767.0686
+          },
+          "semantic_candidates": {
+            "calls": 1,
+            "inclusive_ms": 16801.7604,
+            "exclusive_ms": 34.6918
+          },
+          "recall_revalidate": {
+            "calls": 1,
+            "inclusive_ms": 10.4019,
+            "exclusive_ms": 10.4019
+          },
+          "recall": {
+            "calls": 1,
+            "inclusive_ms": 46080.6592,
+            "exclusive_ms": 91.3833
+          },
+          "source_read": {
+            "calls": 32,
+            "inclusive_ms": 182.4664,
+            "exclusive_ms": 182.4664
+          },
+          "context_revalidate": {
+            "calls": 42,
+            "inclusive_ms": 1.6117,
+            "exclusive_ms": 1.6117
+          },
+          "context_tokens": {
+            "calls": 24,
+            "inclusive_ms": 483.7181,
+            "exclusive_ms": 483.7181
+          },
+          "context_build": {
+            "calls": 1,
+            "inclusive_ms": 46778.2068,
+            "exclusive_ms": 29.7514
+          },
+          "host_context": {
+            "calls": 1,
+            "inclusive_ms": 46800.1904,
+            "exclusive_ms": 17.9334
+          },
+          "dispatch": {
+            "calls": 1,
+            "inclusive_ms": 46803.382,
+            "exclusive_ms": 2.6212
+          }
+        }
+      }
+    ]
+  },
+  "prior_low_backlog": {
+    "installed_version": "0.1.99",
+    "probe_sha256": "db4dc94941c8e5de7f29c13f6015edca350c3deb9eedcf5b58eeecbc171174ce",
+    "fixture": {
+      "copy_hashes": {
+        "memory.sqlite3": {
+          "bytes": 6459912192,
+          "sha256": "8f731e35939c3751e335cb7e48763faf485833bd9b67b4c230f4fb6c429bb01d"
+        }
+      },
+      "schema_version": 69,
+      "flags": {
+        "lexical_checkpoint": true,
+        "semantic_checkpoint": true,
+        "lexical_id_acceleration": true,
+        "candidate_index": true
+      },
+      "lexical": {
+        "state": "ready",
+        "source_messages": 1000000,
+        "indexed_messages": 1000000,
+        "pending_messages": 0,
+        "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+        "indexed_watermark": "2026-11-15T10:05:20.439952+00:00",
+        "normalization_version": 1
+      },
+      "semantic": {
+        "state": "ready",
+        "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+        "source_messages": 1000000,
+        "indexed_messages": 1000000,
+        "pending_messages": 0,
+        "source_watermark": "2026-11-15T10:05:20.439952+00:00",
+        "error_code": null,
+        "failed_chunks": 0,
+        "stored_vectors": 1000000
+      }
+    },
+    "samples": [
+      {
+        "case": "historical",
+        "client_ms": 24413.4507,
+        "vector_sql_ms": 20951.5278
+      },
+      {
+        "case": "recent",
+        "client_ms": 24459.3875,
+        "vector_sql_ms": 20585.7605
+      },
+      {
+        "case": "no_answer",
+        "client_ms": 21361.7118,
+        "vector_sql_ms": 19575.948
+      },
+      {
+        "case": "popular",
+        "client_ms": 28490.3861,
+        "vector_sql_ms": 21529.4459
+      }
+    ]
+  }
+}
