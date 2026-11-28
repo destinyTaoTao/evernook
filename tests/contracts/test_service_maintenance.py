@@ -13,6 +13,9 @@ import threading
 from unittest.mock import patch
 
 from evernook import Event, MemoryRuntime, Source, initialize
+from evernook.lexical import index_terms
+from evernook.models import MemoryFailure
+from evernook.runtime import pair_client
 from evernook.scheduler import ConsolidationScheduler
 from evernook.service import ServiceClient
 from evernook.service_maintenance import ServiceMaintenance
@@ -163,26 +166,69 @@ class ServiceMaintenanceTests(unittest.TestCase):
             self.runtime.submit(self.access, Event(Source("test", "mid-tick", "main", str(number)),
                 "user", number, None, "complete", f"合成中途暂停{number}"))
         maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event())
-        original = self.runtime.refresh_lexical
+        original = self.runtime._refresh_lexical_rows
         def pause_after_one(*args: Any, **kwargs: Any) -> Any:
             result = original(*args, **kwargs)
             self.scheduler.pause(self.access, paused=True)
             return result
-        with patch.object(self.runtime, "refresh_lexical", side_effect=pause_after_one) as indexing:
+        with patch.object(self.runtime, "_refresh_lexical_rows", side_effect=pause_after_one) as indexing:
             outcome = maintenance.tick()
         self.assertEqual(indexing.call_count, 1)
         self.assertEqual(outcome["skipped"], "paused")
         self.assertEqual(self.scheduler.status(self.access).processed, 0)
+        self.assertEqual(self.runtime.lexical_status(self.access).indexed_messages, 1)
+
+    def test_slow_selection_resumes_ids_once_and_skips_a_peer_indexed_source(self) -> None:
+        for number in range(3):
+            self.runtime.submit(self.access, Event(Source('test', 'slow-selection', 'main', str(number)),
+                'user', number, None, 'complete', f'合成积压{number}'))
+        queue: list[str] = []
+        clock = [1.0]
+        select = self.runtime._lexical_pending
+        def slow_select(*args: Any, **kwargs: Any) -> Any:
+            clock[0] = 5.0
+            return select(*args, **kwargs)
+        with patch('evernook.runtime.time.monotonic', side_effect=lambda: clock[0]), patch.object(
+                self.runtime, '_lexical_pending', side_effect=slow_select) as queried:
+            self.runtime._service_lexical_window(self.access, queue, deadline=2.0, stopped=lambda: False)
+            self.assertEqual(len(queue), 3)
+            self.assertEqual(self.runtime.lexical_status(self.access).indexed_messages, 0)
+            peer = MemoryRuntime(self.config)
+            self.assertEqual(peer.refresh_lexical(self.access, limit=1).indexed_messages, 1)
+            with self.runtime._connection() as db:
+                db.execute('CREATE TABLE synthetic_writes (id TEXT)')
+                db.execute('CREATE TRIGGER synthetic_audit AFTER INSERT ON lexical_docs BEGIN INSERT INTO synthetic_writes VALUES(NEW.message_id); END')
+            self.runtime._service_lexical_window(self.access, queue, deadline=6.0, stopped=lambda: False)
+            self.assertEqual(queried.call_count, 1)
+        self.assertFalse(queue)
+        with self.runtime._connection() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM synthetic_writes').fetchone()[0], 2)
+        self.assertEqual(self.runtime.lexical_status(self.access).indexed_messages, 3)
+
+    def test_scope_revoked_during_derivation_keeps_current_source_uncommitted(self) -> None:
+        actor_path = self.config.parent / 'mcp-access-service-window.json'
+        actor = pair_client(self.config, client_id='service-window', entry='worker', access_path=actor_path, scopes=('maintain','recall'))
+        self.runtime.submit(self.access, Event(Source('test', 'revoke', 'main', '1'), 'user', 1, None, 'complete', '合成撤权'))
+        def revoke(text: str) -> str:
+            pair_client(self.config, client_id='service-window', entry='worker', access_path=actor_path, scopes=('recall',))
+            return index_terms(text)
+        with patch('evernook.runtime.index_terms', side_effect=revoke), self.assertRaisesRegex(MemoryFailure, 'permission_denied'):
+            self.runtime._service_lexical_window(actor, [], deadline=time.monotonic()+1, stopped=lambda: False)
+        self.assertEqual(self.runtime.lexical_status(self.access).indexed_messages, 0)
 
     def test_configured_embedding_is_maintained_without_a_host(self) -> None:
-        self.runtime.submit(self.access, Event(Source("test", "semantic-idle", "main", "1"),
-            "user", 1, None, "complete", "合成：辛辣"))
+        self.runtime.submit_many(self.access, tuple(Event(Source("test", "semantic-idle", "main", str(i)),
+            "user", i, None, "complete", "合成：辛辣") for i in range(17)))
         backend = SyntheticEmbedding()
         with patch("evernook.service_maintenance.load_embedding", return_value=backend):
             maintenance = ServiceMaintenance(self.runtime, self.access_path, 1, (), threading.Event(),
                 embedding_config=self.config.parent / "synthetic-embedding.json")
-        result = maintenance.tick()
-        self.assertEqual(result["semantic"]["state"], "ready")
+        with patch.object(self.runtime, 'lexical_status', side_effect=AssertionError('duplicate lexical status scan')):
+            result = maintenance.tick()
+        self.assertEqual((result['semantic']['indexed_messages'], result['semantic']['pending_messages']), (16, 1))
+        self.assertEqual(result['scheduler']['lexical'], result['lexical'])
+        self.assertEqual([len(call) for call in backend.calls], [16])
+        self.assertEqual(maintenance.tick()['semantic']['state'], 'ready')
         self.assertEqual(SemanticRecall(self.runtime, backend).recall(self.access, "饮食偏好").hits[0].evidence.role, "user")
 
     def test_foreground_arriving_during_embedding_cancels_publication(self) -> None:

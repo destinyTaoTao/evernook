@@ -1548,6 +1548,10 @@ class MemoryRuntime:
             return processed
 
     def _lexical_maintenance_status(self, access: Access) -> LexicalStatus:
+        self._reconcile_lexical_checkpoint(access)
+        return self.lexical_status(access)
+
+    def _reconcile_lexical_checkpoint(self, access: Access) -> None:
         from .lexical_checkpoint import enabled
         with self._connection() as db:
             db.execute("BEGIN")
@@ -1560,7 +1564,6 @@ class MemoryRuntime:
                 # the read check. The original index status remains authoritative.
                 if failure.code != "lexical_checkpoint_invalid":
                     raise
-        return self.lexical_status(access)
 
     def configure_lexical_id_acceleration(self, access: Access, *, enabled: bool) -> bool:
         self._require_scope(access, "maintain", "configure_lexical_id_acceleration")
@@ -1681,6 +1684,53 @@ class MemoryRuntime:
             return replace(self.lexical_status(access), state="unavailable")
         return self._lexical_maintenance_status(access)
 
+    def _service_lexical_window(self, access: Access, pending: list[str], *,
+                                deadline: float, stopped: Callable[[], bool]) -> None:
+        self._require_scope(access, 'maintain', 'refresh_lexical')
+
+        def interrupted() -> bool:
+            self._check_scope(access, 'maintain', 'refresh_lexical')
+            return stopped()
+
+        next_poll = 0.0
+
+        def poll() -> float:
+            nonlocal next_poll
+            now = time.monotonic()
+            if now >= next_poll:
+                if interrupted():
+                    raise MemoryFailure('lexical_refresh_canceled')
+                next_poll = now + 0.1
+            return 0.1
+
+        prepared = False
+        try:
+            with self._connection(check=poll) as db:
+                db.execute('BEGIN IMMEDIATE')
+                self._lexical_schema(db)
+                db.execute('COMMIT')
+                if not pending and time.monotonic() < deadline and not interrupted():
+                    db.execute('BEGIN')
+                    ids = self._lexical_pending(db, 16, ids_only=True)
+                    db.execute('COMMIT')
+                    pending.extend(row[0] for row in ids)
+                prepared = True
+                # A slow selection spends this tick's window; retain only its IDs
+                # for the next tick. Never start another source past the deadline.
+                while pending and time.monotonic() < deadline and not interrupted():
+                    rows = db.execute(f'SELECT event,receipt FROM messages WHERE id=? AND {_RECALLABLE}', (pending[0],)).fetchall()
+                    if rows and not self._refresh_lexical_rows(db, rows, expired=interrupted, service_commit=interrupted):
+                        return
+                    pending.pop(0)
+        except MemoryFailure as error:
+            if error.code == 'lexical_refresh_canceled':
+                return
+            if prepared or error.code != 'storage_unavailable':
+                raise
+            return  # A later scheduler status reads the authoritative lexical state.
+        if not interrupted():
+            self._reconcile_lexical_checkpoint(access)
+
     def refresh_lexical_window(self, access: Access, *, limit: int = 5000, budget_seconds: float = 120,
                                transaction_size: int = 1) -> LexicalStatus:
         self._require_scope(access, "maintain", "refresh_lexical_window")
@@ -1779,7 +1829,8 @@ class MemoryRuntime:
             raise
         return True
 
-    def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None) -> bool:
+    def _refresh_lexical_rows(self, db: sqlite3.Connection, rows: list[sqlite3.Row], *, expired: Callable[[], bool] | None = None,
+                              service_commit: Callable[[], bool] | None = None) -> bool:
         # Sample before the lookup, and compare only on this same connection.
         # A peer commit invalidates the optimization, including equal-version
         # FTS replacements or a rebuild that reuses old rowids.
@@ -1799,6 +1850,16 @@ class MemoryRuntime:
                 continue
             if rowids is not None and int(db.execute("PRAGMA data_version").fetchone()[0]) != version:
                 rowids = None
+            if service_commit is not None:
+                # A peer may already have indexed an ID retained between ticks.
+                message_id = message.receipt.message_id
+                if db.execute('SELECT 1 FROM lexical_docs WHERE message_id=? AND content_version=? AND normalization_version=?',
+                              (message_id, message.receipt.content_version, NORMALIZATION_IDENTITY)).fetchone():
+                    has_tokens = (bool(rowids.get(message_id)) if rowids is not None else
+                                  db.execute('SELECT 1 FROM lexical WHERE message_id=? LIMIT 1', (message_id,)).fetchone() is not None)
+                    if has_tokens:
+                        db.execute('ROLLBACK')
+                        continue
             if rowids is None:
                 db.execute("DELETE FROM lexical WHERE message_id=?", (message.receipt.message_id,))
             else:
@@ -1806,6 +1867,9 @@ class MemoryRuntime:
                     ((rowid, message.receipt.message_id) for rowid in rowids.get(message.receipt.message_id, ())))
             db.execute("INSERT INTO lexical VALUES (?,?)", (message.receipt.message_id, terms))
             db.execute("INSERT OR REPLACE INTO lexical_docs VALUES (?,?,?)", (message.receipt.message_id, message.receipt.content_version, NORMALIZATION_IDENTITY))
+            if service_commit is not None and service_commit():
+                db.execute('ROLLBACK')
+                return False
             db.execute("COMMIT")
         return True
 

@@ -31,6 +31,7 @@ class ServiceMaintenance:
         for scope in ("recall", "maintain", "accept"):
             runtime._require_scope(access, scope, "service_maintenance")
         self.interval, self.policies, self.stopping = interval, navigation_policies, stopping
+        self._lexical_ids: list[str] = []
         self.embedding_binding = embedding_binding
         self.semantic: SemanticRecall | None = None
         if embedding_config is not None:
@@ -80,16 +81,7 @@ class ServiceMaintenance:
         reason = signal.reason()
         if reason:
             return {"skipped": reason}
-        deadline = time.monotonic() + 1
-        for _ in range(16):
-            reason = signal.reason()
-            if reason:
-                return {"skipped": reason}
-            if time.monotonic() >= deadline:
-                break
-            lexical = self.runtime.refresh_lexical(access, limit=1)
-            if not lexical.pending_messages:
-                break
+        self.runtime._service_lexical_window(access, self._lexical_ids, deadline=time.monotonic() + 1, stopped=signal.is_set)
         navigation = NavigationMaintenance(self.runtime)
         navigation_status: dict[str, Any] = {}
         for policy in self.policies:
@@ -114,7 +106,7 @@ class ServiceMaintenance:
         if self.semantic is not None and binding_error is None:
             try:
                 checkpoint_repaired = self._repair_semantic_checkpoint(access, signal)
-                semantic = asdict(self.semantic.refresh(access, limit=1, timeout=5, cancel=signal))
+                semantic = asdict(self.semantic.refresh(access, limit=16, timeout=5, cancel=signal))
             except MemoryFailure as failure:
                 reason = signal.reason()
                 if reason:
@@ -147,8 +139,10 @@ class ServiceMaintenance:
                 raise
             views = {'state': 'unavailable', 'error_code': failure.code}
         tick = scheduler.trigger(access, reason="idle")
-        return {"skipped": tick.skipped, "scheduler": asdict(scheduler.status(access)),
-            "lexical": asdict(self.runtime.lexical_status(access)), "navigation": navigation_status, "semantic": semantic,
+        scheduler_status = scheduler.status(access)
+        assert scheduler_status.lexical is not None
+        return {"skipped": tick.skipped, "scheduler": asdict(scheduler_status),
+            "lexical": asdict(scheduler_status.lexical), "navigation": navigation_status, "semantic": semantic,
             "observations": observations, "topic_views": views, "semantic_checkpoint_repaired": checkpoint_repaired}
 
     def run(self) -> None:

@@ -1,0 +1,131 @@
+{
+  "wheel": "0.1.101",
+  "sha256": "0bbde6586ec11652100f8c31bdb2aa798195c534cc8b80554e80370797b3ac3a",
+  "cohort": 120,
+  "originals_and_receipts_sha256": "9e61db0f798935d3715caad1126b9102f2d5c2870bf460f59f449c2cb0a11c67",
+  "interval_seconds": 5,
+  "observation_count": 192,
+  "before": {
+    "semantic": {
+      "state": "behind",
+      "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+      "source_messages": 1000120,
+      "indexed_messages": 1000000,
+      "pending_messages": 120,
+      "source_watermark": "2026-11-28T11:28:10.234978+00:00",
+      "error_code": null,
+      "failed_chunks": 0,
+      "stored_vectors": 1000000
+    },
+    "lexical": {
+      "state": "behind",
+      "source_messages": 1000120,
+      "indexed_messages": 1000004,
+      "pending_messages": 116,
+      "source_watermark": "2026-11-28T11:28:10.234978+00:00",
+      "indexed_watermark": "2026-11-28T10:29:55.001118+00:00",
+      "normalization_version": 1
+    }
+  },
+  "progress": [
+    {
+      "seconds": 0.027,
+      "lexical": 4,
+      "vectors": 0
+    },
+    {
+      "seconds": 70.331,
+      "lexical": 4,
+      "vectors": 16
+    },
+    {
+      "seconds": 130.648,
+      "lexical": 20,
+      "vectors": 32
+    },
+    {
+      "seconds": 201.106,
+      "lexical": 20,
+      "vectors": 48
+    },
+    {
+      "seconds": 261.607,
+      "lexical": 36,
+      "vectors": 64
+    },
+    {
+      "seconds": 332.199,
+      "lexical": 36,
+      "vectors": 80
+    },
+    {
+      "seconds": 392.737,
+      "lexical": 52,
+      "vectors": 96
+    },
+    {
+      "seconds": 468.656,
+      "lexical": 52,
+      "vectors": 112
+    },
+    {
+      "seconds": 524.249,
+      "lexical": 68,
+      "vectors": 112
+    },
+    {
+      "seconds": 529.325,
+      "lexical": 68,
+      "vectors": 120
+    },
+    {
+      "seconds": 635.429,
+      "lexical": 84,
+      "vectors": 120
+    },
+    {
+      "seconds": 746.945,
+      "lexical": 100,
+      "vectors": 120
+    },
+    {
+      "seconds": 858.639,
+      "lexical": 116,
+      "vectors": 120
+    },
+    {
+      "seconds": 966.07,
+      "lexical": 120,
+      "vectors": 120
+    }
+  ],
+  "after": {
+    "semantic": {
+      "state": "ready",
+      "space_id": "d37c004d41b73a576aad1d8e6ed2b69dd299281a0991eb8d2269af3989e1695f",
+      "source_messages": 1000120,
+      "indexed_messages": 1000120,
+      "pending_messages": 0,
+      "source_watermark": "2026-11-28T11:28:10.234978+00:00",
+      "error_code": null,
+      "failed_chunks": 0,
+      "stored_vectors": 1000120
+    },
+    "lexical": {
+      "state": "ready",
+      "source_messages": 1000120,
+      "indexed_messages": 1000120,
+      "pending_messages": 0,
+      "source_watermark": "2026-11-28T11:28:10.234978+00:00",
+      "indexed_watermark": "2026-11-28T11:28:10.234978+00:00",
+      "normalization_version": 1
+    }
+  },
+  "public_recall": {
+    "last_original_recall_rank": 1,
+    "recall_degraded": [],
+    "scanned": 1000120,
+    "backend": "sqlite-vec-0.1.9-exact"
+  },
+  "ticks_at_final_public_observation": 15
+}

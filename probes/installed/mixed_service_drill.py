@@ -21,13 +21,15 @@ from evernook.service import ENDPOINT, ServiceClient
 
 
 @contextmanager
-def running_service(args, *, activate):
+def running_service(args, *, activate, maintenance_access=None):
     endpoint = args.config.parent / ENDPOINT
     previous = endpoint.read_bytes() if endpoint.exists() else None
     command = [sys.executable, "-m", "evernook.service", "--config", str(args.config),
                "--embedding-config", str(args.embedding_config), "--context-config", str(args.context_config)]
     if activate:
         command.extend(["--activate-owner", str(args.config.parent / "mcp-access-drill-admin.json")])
+    if maintenance_access is not None:
+        command.extend(["--maintenance-access", str(maintenance_access)])
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 120
